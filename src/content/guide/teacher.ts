@@ -151,13 +151,6 @@ export const TEACHER_GUIDE: RoleGuide = {
           ui: ["Nuevo estudiante", "Copiar credenciales", "Matricular en cursos"],
         },
         {
-          title: "Alumnos compartidos con otros maestros",
-          text: "En «Estudiantes» ves a quienes diste de alta y a quienes están o estuvieron en tus cursos. Un alumno puede tomar cursos con varios maestros: de él solo ves tus cursos, su avance y tus certificados. Al inscribir, el buscador encuentra a cualquier alumno de la plataforma. Puedes reactivar la cuenta de tus alumnos, pero solo puedes restablecer su contraseña o desactivarla si el alumno está únicamente en tus cursos; si también toma cursos con otro maestro, pídeselo al administrador. Para sacarlo solo de tu curso usa «Quitar del curso», que no afecta sus otros cursos.",
-          href: "/teach/students",
-          hrefLabel: "Estudiantes",
-          ui: ["Restablecer contraseña", "Desactivar cuenta", "Quitar del curso"],
-        },
-        {
           title: "Matrícula masiva desde el perfil",
           text: "En el perfil del alumno, «Matricular en cursos» abre una lista con todos tus cursos donde aún no está inscrito: marca varios (o «Seleccionar todos») y confírmalo de una vez. También puedes inscribir desde la pestaña Estudiantes de cada curso.",
           ui: ["Matricular en cursos", "Seleccionar todos"],
@@ -172,6 +165,13 @@ export const TEACHER_GUIDE: RoleGuide = {
           title: "Perfil del estudiante y portafolio",
           text: "Haz clic en un alumno para ver su última conexión, cursos con progreso, certificados (incluso revocados) y acciones: restablecer contraseña, desactivar. «Portafolio ZIP» descarga todos sus certificados para el expediente físico.",
           ui: ["Portafolio ZIP", "Restablecer contraseña"],
+        },
+        {
+          title: "Alumnos compartidos con otros maestros",
+          text: "En «Estudiantes» ves a quienes diste de alta y a quienes están o estuvieron en tus cursos. Un alumno puede tomar cursos con varios maestros: de él solo ves tus cursos, su avance y tus certificados. Al inscribir, el buscador encuentra a cualquier alumno de la plataforma. Puedes reactivar la cuenta de tus alumnos, pero solo puedes restablecer su contraseña o desactivarla si el alumno está únicamente en tus cursos; si también toma cursos con otro maestro, pídeselo al administrador. Para sacarlo solo de tu curso usa «Quitar del curso», que no afecta sus otros cursos.",
+          href: "/teach/students",
+          hrefLabel: "Estudiantes",
+          ui: ["Restablecer contraseña", "Desactivar cuenta", "Quitar del curso"],
         },
       ],
     },
