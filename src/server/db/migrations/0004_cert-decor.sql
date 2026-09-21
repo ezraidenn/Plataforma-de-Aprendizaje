@@ -1,0 +1,1 @@
+ALTER TABLE `certificate_templates` ADD `decor` text;

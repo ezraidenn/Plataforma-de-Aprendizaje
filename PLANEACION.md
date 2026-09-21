@@ -1,0 +1,326 @@
+# Plataforma de Aprendizaje — Plan Maestro
+
+> **ESTADO: las 5 fases (0–4) están COMPLETADAS y verificadas** (2026-07-27).
+> Suites de prueba: `scripts/smoke-f1|f2|f3|f4.ts` (dominio) y `scripts/smoke-http.cjs` (rutas).
+> Despliegue en el servidor de la empresa: ver `INSTALACION.md`. Gestor de paquetes: **pnpm**.
+
+> LMS local para capacitación corporativa. Servidor: una PC Windows en la LAN de la empresa, sin internet garantizado. Acceso vía navegador en `http://<IP-servidor>:3000`.
+>
+> **Escala confirmada**: 1,000–5,000 usuarios registrados; ~100 concurrentes máximo. LibreOffice puede instalarse en el servidor. Notificaciones **solo in-app** (sin correo).
+>
+> Documento generado el 2026-07-24 a partir de: (a) investigación de plataformas líderes (Moodle, LearnDash, TalentLMS, iSpring, Absorb, Docebo) y estándares (SCORM/xAPI/cmi5), y (b) diseño de arquitectura técnica.
+
+---
+
+## 1. Visión del producto
+
+Plataforma de capacitación interna donde:
+
+- **Maestros** registran estudiantes, crean cursos con estructura de carpetas ordenables (drag & drop) que contienen lecciones: **PPT, PDF, video, lectura de texto, examen y tarea entregable**.
+- **Estudiantes** consumen el contenido en orden forzado (configurable): no pueden abrir el elemento N+1 sin completar el N, y ningún contenido se marca completo sin consumirse al 100% real (todas las páginas vistas / todos los segundos reproducidos).
+- Al cumplir el **criterio de aprobación configurable del curso** (ej. promedio de exámenes ≥ 80% Y visualización = 100%): se notifica al maestro, se actualizan los listados de progreso y se emite automáticamente un **certificado PDF descargable** con plantilla del maestro, folio único y QR de verificación.
+
+### Principios de diseño (decisiones ya tomadas)
+
+1. **Completado ≠ Aprobado** (insight de cmi5/iSpring): son dos dimensiones separadas. "Completado" = consumió el contenido; "Aprobado" = cumplió la nota. Un ítem sin nota (PDF) solo tiene completado; un examen tiene ambos.
+2. **El cliente reporta, el servidor acredita**: todo el tracking se valida server-side con el reloj del servidor. El frontend solo mejora la UX (bloquear seek, deshabilitar botones); la regla dura vive en el backend.
+3. **Anti-trampa sensato, no vigilancia**: pool de preguntas aleatorias + tiempo límite + intentos limitados + tracking real de consumo. NO webcam, NO proctoring IA, NO lockdown browser.
+4. **Modelo de datos propio, no SCORM**: implementar un runtime SCORM/xAPI son semanas de trabajo y solo sirve para importar cursos de terceros. Los maestros suben PPT/PDF/video directo → modelo propio más simple y más rico. El ítem es polimórfico: si algún día se necesita SCORM, se agrega como un tipo más.
+5. **Mostrar lo bloqueado, no ocultarlo**: los ítems con candado se ven en el árbol con tooltip "Completa X primero" (patrón universal de la industria; motiva más que ocultar).
+
+---
+
+## 2. Stack tecnológico
+
+| Capa | Elección | Por qué |
+|---|---|---|
+| Framework | **Next.js 15 (App Router) + TypeScript** | Un solo proceso sirve todo en LAN; Server Actions eliminan backend separado; stack que ya dominas |
+| DB | **SQLite (WAL mode)** | Cero administración; backup = copiar un archivo; sobrado para cientos de usuarios en LAN |
+| ORM | **Drizzle + better-sqlite3** | Driver más rápido para SQLite en Node; sin binarios de motor (Prisma en Windows offline da problemas); migraciones SQL planas |
+| Auth | **Sesiones propias** (tabla `sessions` + cookie httpOnly + argon2id) | 100% offline, sin proveedor externo |
+| Archivos | **Filesystem local** `./storage/` (NUNCA en `public/`) servido por `/api/files/[id]` con auth + HTTP Range | Control de acceso por matrícula + streaming de video |
+| PPT → visualizable | **LibreOffice headless** (`soffice --headless --convert-to pdf`) | Única vía robusta y offline para PPT/PPTX. Todo documento se normaliza a PDF → un solo visor, un solo modelo de tracking |
+| Visor documentos | **pdf.js** embebido en componente propio (modo página por página, no scroll) | Control total de navegación para tracking y bloqueo |
+| Video | **Solo enlaces** (YouTube/Vimeo embed vía IFrame Player API) — sin subida ni procesamiento de video | El tráfico de video va al servicio externo, no al servidor. La API del iframe permite leer posición/velocidad para el tracking. Requiere internet en los equipos cliente solo para ítems de video. Uso esperado: marginal (los videos normalmente se proyectan en persona) |
+| Certificados | **pdf-lib + qrcode** | Estampa campos sobre el fondo subido por el maestro; QR → `/verify/[folio]` |
+| Jobs | **Tabla `jobs` en SQLite + worker en el mismo proceso** (arranca en `instrumentation.ts`) | Conversiones tardan; sin Redis ni colas externas; sobrevive reinicios |
+| UI | Tailwind + shadcn/ui + **dnd-kit** (árbol ordenable) + TanStack Query | dnd-kit es el estándar para sortable trees en React |
+| Despliegue | `next build && next start` como **servicio de Windows (NSSM)** | Arranque automático con la PC; reinicio ante crash; script diario de backup (`data.db` + `storage/`) |
+| Gestor de paquetes | **pnpm** (lockfile `pnpm-lock.yaml`) | Decisión por seguridad de cadena de suministro: pnpm bloquea scripts de instalación por defecto (solo los autorizados en `pnpm.onlyBuiltDependencies`); usar `pnpm install/run`, NO npm |
+
+**Descartado explícitamente**: Postgres (administración innecesaria), Electron (es multiusuario en red), servicios cloud (sin internet), runtime SCORM, proctoring.
+
+---
+
+## 3. Modelo de datos
+
+Convenciones: PK `id` texto (nanoid), `created_at`/`updated_at` en todas.
+
+### 3.1 Identidad
+- **`users`**: email único, password_hash, full_name, `role` (admin | teacher | student), active, `created_by` (el maestro que dio de alta al estudiante).
+- **`sessions`**: token hasheado, user_id, expires_at, ip, user_agent.
+
+### 3.2 Cursos y árbol de contenido (núcleo)
+- **`courses`**: title, description, cover, `owner_id` (maestro), `status` (draft | published | archived), `enforce_sequence` (flag "progresión lineal vs. libre", patrón LearnDash), `completion_rules` (JSON, ver §5), `certificate_template_id` (nullable).
+- **`enrollments`**: course_id + student_id únicos, enrolled_by, `status` (active | completed | dropped), completed_at.
+- **`course_items`** — árbol en una sola tabla (adjacency list): `parent_id` (nullable = raíz), `position` (orden entre hermanos; drag & drop = actualizar parent + renumerar hermanos en transacción), `kind` (folder | document | video | text | exam | assignment), title, `sequence_mode` (inherit | required | free — override por ítem), `required_for_completion` (permite ítems opcionales), visible.
+  - Regla de sanidad: anidación de carpetas máx. 1–2 niveles (la anidación infinita de Moodle es fuente de confusión).
+
+### 3.3 Detalle por tipo (Class Table Inheritance, 1:1 con course_items)
+- **`item_documents`** (PPT y PDF unificados): source_file (original), render_file (PDF resultante), source_type, `page_count`, `min_seconds_per_page` (default 3), processing_status.
+- **`item_videos`** (enlace externo, sin archivo): `url`, `provider` (youtube | vimeo | other), `video_id` extraído, `duration_seconds` (obtenida de la API del player al primer load y guardada; editable por el maestro como respaldo), `allow_speed_up`.
+- **`item_texts`**: content_md, min_read_seconds.
+- **`item_assignments`**: instructions_md, due_at, max_score, allowed_file_types, allow_resubmission.
+- **`exams`**: instructions, `opens_at`/`closes_at` (ambos null = siempre abierto), `max_attempts` (null = ilimitado), `attempt_score_policy` (best | last | average; default **best**), `time_limit_minutes` (autoenvío al agotarse), pass_score, `shuffle_questions`, `show_results_mode` (immediately | after_close | manual).
+
+### 3.4 Exámenes
+- **`questions`**: exam_item_id, position, `type`, prompt_md, points, imagen opcional.
+  - Tipos v1: `single_choice`, `multiple_choice` (puntaje parcial opcional), `true_false`, `short_text` (respuesta exacta con variantes aceptadas), `matching` (relacionar columnas), `open_text` (calificación manual).
+  - Fase posterior: **banco de preguntas por categoría + pool aleatorio** (el examen toma N preguntas al azar, distinto por alumno — reduce copiado ~65-70% según datos de la industria).
+- **`question_options`**: question_id, position, text_md, is_correct.
+- **`exam_attempts`**: attempt_number, started_at, submitted_at, auto_score, manual_score, final_score, max_score_snapshot, `status` (in_progress | submitted | graded), graded_by/at. Único por (exam, student, attempt_number).
+- **`attempt_answers`**: selected_option_ids (JSON) o answer_text, auto_points, manual_points, feedback_md.
+- Flujo: choice/TF/short se autocalifican al enviar; si hay open_text → status `submitted` y entra a la **cola de calificación** del maestro; al calificar todo → `graded` y `final_score` alimenta el motor de reglas.
+
+### 3.5 Tracking granular
+- **`item_progress`** (resumen por estudiante × ítem): `status` (locked | available | in_progress | completed), `percent`, completed_at, last_activity_at, `total_seconds` (tiempo invertido — los reportes corporativos siempre lo piden).
+- **`document_progress`**: `pages_viewed` como **bitmap BLOB** (bit N = página N vista ≥ tiempo mínimo; 100 páginas = 13 bytes), `current_page` (para reanudar), last_heartbeat_at.
+- **`video_progress`**: `watched_intervals` (JSON de intervalos fusionados `[[0,94],[120,300]]`), `max_position` (frontera del seek), last_position (para reanudar). Cobertura ≥ 97% ⇒ 100% (evita el problema de los créditos finales).
+- **`assignment_submissions`**: file, comment, score, feedback, status (submitted | graded | returned).
+
+### 3.6 Certificados, notificaciones, soporte
+- **`certificate_templates`**: owner (maestro), name, `background_file` (PDF/imagen carta o A4), `fields` JSON posicionables (`student_name`, `course_title`, `date`, `score`, `folio`, `qr`, `custom_text` — con x, y, fuente, tamaño, color, align), page_size, orientation. Editor visual con preview (probar con nombres largos — falla clásica).
+- **`certificates`**: `folio` único legible (`CERT-2026-000123-K7QX` = secuencia + sufijo aleatorio anti-adivinación), enrollment, `template_snapshot` (editar la plantilla NO altera certificados ya emitidos), pdf_file, verification_hash, `revoked` + reason. Página pública LAN `/verify/[folio]` (destino del QR).
+- **`notifications`**: user_id destinatario, `type` (course_completed | assignment_submitted | exam_needs_grading | certificate_issued | deadline_reminder), payload JSON, read_at.
+  - `deadline_reminder` (X días antes del cierre de un examen) es la notificación más valorada en corporativo.
+- **`files`**: original_name, stored_path, mime, size, sha256, uploaded_by, kind.
+- **`jobs`**: type (convert_ppt | process_pdf | process_video | generate_certificate), payload, status, attempts, error_message, run_after.
+- **`audit_log`**: user, action, entity, detail — barato y útil para disputas ("el sistema me borró el intento").
+
+---
+
+## 4. Tracking anti-salto (diseño detallado)
+
+**Heartbeat**: POST cada 10 s mientras el visor está activo y la pestaña visible (se pausa con `visibilitychange`), y en pause/ended/beforeunload: `{ itemId, kind, page?, position?, playbackRate? }`.
+
+**Documentos (PPT/PDF/texto)**:
+1. Una página se acredita en el bitmap solo si el heartbeat anterior ya reportaba esa página y pasaron ≥ `min_seconds_per_page` de **reloj del servidor**.
+2. Presupuesto de tiempo: nunca se acreditan más páginas que `tiempo_real_en_el_ítem / min_seconds_per_page` → anula scripts que manden 50 heartbeats seguidos.
+3. Navegar hacia atrás o adelante para *leer* es libre; solo el *crédito* exige permanencia. En modo secuencial, el botón "siguiente" se habilita tras el mínimo.
+4. `percent = popcount(bitmap) / page_count`. Guarda última página para "continuar donde te quedaste".
+
+**Video (embeds de YouTube/Vimeo)**:
+1. El player embebido (IFrame Player API) se sondea cada segundo: `getCurrentTime()` + `getPlaybackRate()`. Los heartbeats al servidor siguen el mismo esquema: intervalo `[last_position, position]` se acredita solo si `Δposición ≤ Δt_servidor × rate_max + 2s`. Seek adelante: se registra la posición pero NO se acredita el salto.
+2. Cliente detecta saltos más allá de `max_position` y hace `seekTo(maxWatched)`. Retroceder para repasar es libre y re-ver no duplica crédito (merge de intervalos).
+3. `percent` = cobertura de intervalos / `duration_seconds` guardada en el ítem.
+4. **Limitación asumida**: el video vive en YouTube — el alumno podría verlo directo en youtube.com sin que la plataforma lo registre, y el bloqueo de seek en un iframe es best-effort. Aceptable porque el uso de video es marginal (normalmente se proyecta en persona); el tracking estricto de verdad recae en documentos y exámenes.
+
+**Gating N+1**: `canAccess(enrollment, item)` calcula el orden lineal del árbol (DFS por position; una carpeta está completa cuando sus hijos requeridos lo están) y verifica que todo ítem anterior con secuencia efectiva `required` esté completado. Se valida al renderizar la página **y** en cada endpoint (`/api/files`, heartbeat, iniciar intento) → la URL directa no salta el candado.
+
+**Lo que NO se hace**: detección de mirada, bloqueo de multitarea, fingerprinting. El objetivo es impedir el "clic y completar", no vigilancia.
+
+---
+
+## 5. Motor de reglas de aprobación
+
+`courses.completion_rules` = árbol JSON de condiciones, editado con **constructor visual** (no texto libre). Default: `AND` plano.
+
+```json
+{
+  "op": "AND",
+  "conditions": [
+    { "type": "exam_average", "min_percent": 80, "scope": "all" },
+    { "type": "viewing_completion", "min_percent": 100 },
+    { "type": "assignments_graded", "min_percent": 70 }
+  ]
+}
+```
+
+Tipos de condición (cada uno una función pura `(ctx) => { passed, value, detail }`):
+- `exam_average` — promedio de exámenes (todos o lista específica), según `attempt_score_policy` de cada uno. No pasa si falta algún intento calificado.
+- `exam_specific` — un examen concreto ≥ X%.
+- `viewing_completion` — % de ítems document/video/text requeridos completados.
+- `all_items_completed` — todo lo requerido completado.
+- `assignments_graded` — promedio de tareas ≥ X.
+- `manual_approval` — aprobación manual del maestro como condición extra (útil en corporativo).
+- Nodos `AND`/`OR` anidables.
+
+**Evaluación por eventos, no por cron**: se dispara cuando un ítem pasa a completed, se publica un final_score, o se califica una tarea. Si pasa (idempotente, en transacción): `enrollment.completed_at`, job `generate_certificate`, notificaciones a maestro y alumno. **Nunca des-aprueba automáticamente**: una recalificación a la baja notifica al maestro para decisión manual (posible revocación de certificado).
+
+El desglose por condición se guarda y se muestra al alumno: *"Te falta: examen 2 (65% < 80%)"*.
+
+---
+
+## 6. Pipeline de subida de contenido
+
+**Subida**: `POST /api/uploads` con streaming directo a `storage/tmp/` (nunca buffer completo en memoria — hay PPTs pesados). Al terminar: sha256 → mover a `storage/{kind}/{yyyy}/{fileId}.ext` → fila en `files` → ítem `processing_status: pending` → job encolado. UI del maestro muestra estado con polling.
+
+**Worker** (en serie para conversiones — LibreOffice y ffmpeg son CPU-bound):
+- **PPT/PPTX**: `soffice --headless --convert-to pdf` (timeout 3 min) → sigue el flujo de PDF. El original se conserva re-descargable.
+- **PDF**: page_count con pdf-lib + thumbnail de página 1 → `ready`. (No se rasterizan todas las páginas; el visor usa pdf.js sobre el PDF.)
+- **Video**: no hay procesamiento — el maestro pega el enlace, se valida/extrae el `video_id` y el thumbnail se toma del servicio (`img.youtube.com`). Sin job.
+- **Errores**: visibles al maestro con mensaje y botón de reintento.
+
+---
+
+## 7. Estructura de la app (`src/app`)
+
+```
+src/
+├── app/
+│   ├── (auth)/login/
+│   ├── (student)/                    # guard role=student
+│   │   ├── dashboard/                # "Continuar donde te quedaste" + mis cursos con % + certificados
+│   │   └── courses/[courseId]/
+│   │       ├── page.tsx              # índice del curso (árbol con checkmarks y candados)
+│   │       └── items/[itemId]/       # despacha: DocumentViewer | VideoPlayer | TextReader | ExamRunner | AssignmentBox
+│   ├── (teacher)/teach/              # guard role=teacher|admin
+│   │   ├── dashboard/
+│   │   ├── courses/[courseId]/
+│   │   │   ├── content/              # editor del árbol (dnd-kit) + CRUD ítems
+│   │   │   ├── items/[itemId]/edit/  # editor por tipo (examen: CRUD preguntas)
+│   │   │   ├── rules/                # constructor visual de reglas de aprobación
+│   │   │   ├── students/             # matrícula + progreso detallado por alumno
+│   │   │   └── grading/              # cola: open_text y tareas por calificar
+│   │   ├── students/                 # CRUD estudiantes
+│   │   ├── templates/                # plantillas de certificado + editor visual
+│   │   └── reports/                  # matriz alumnos × ítems, export CSV
+│   ├── (admin)/admin/                # users / courses / settings
+│   ├── verify/[folio]/               # pública en LAN: validación de certificado (QR)
+│   └── api/
+│       ├── files/[fileId]/           # GET con auth + HTTP Range
+│       ├── progress/heartbeat/       # POST tracking
+│       └── uploads/                  # POST multipart streaming
+├── middleware.ts                     # sesión + gate por rol
+├── server/                           # dominio puro (sin React)
+│   ├── db/ (schema.ts, migrations/)
+│   ├── auth/
+│   ├── services/ (courses, tree, progress, exams, grading, rules-engine, certificates, notifications, media/)
+│   └── jobs/ (worker.ts, handlers/)
+├── components/ (viewers/, tree-editor/, exam/, template-editor/, ui/)
+└── instrumentation.ts                # arranca el job worker
+```
+
+CRUD vía Server Actions; route handlers solo para streaming y alta frecuencia.
+
+---
+
+## 8. UX de dashboards (patrones probados de la industria)
+
+**Estudiante**:
+- "**Continuar donde te quedaste**" como elemento principal (botón directo al último ítem en progreso).
+- Cursos con anillo de %, fechas límite próximas destacadas, sección de certificados.
+- Dentro del curso: sidebar tipo LearnDash Focus Mode — árbol con checkmarks verdes, ítem actual resaltado, futuros con candado + tooltip.
+
+**Maestro**:
+- **Matriz alumnos × cursos con semáforo** (no iniciado / en progreso / completado / vencido) — "quién va atrasado" de un vistazo.
+- Drill-down por alumno: por ítem, % visto, intentos, puntajes, tiempo invertido.
+- Cola de calificación pendiente. Export CSV/Excel (imprescindible en corporativo).
+
+**Gamificación — ligera**: badges por hitos (primer curso, >90%), barra de progreso prominente. Leaderboards solo por departamento si acaso, nunca global. NO economía de puntos.
+
+---
+
+## 9. Fases de implementación (~55 pts; 1 pt ≈ media jornada)
+
+**Fase 0 — Cimientos (5 pts)**: scaffolding Next + Drizzle + migraciones, auth con sesiones y roles, middleware, layout base shadcn, `files` + upload streaming + `/api/files` con Range.
+
+**Fase 1 — MVP de cursos (12 pts)**: CRUD cursos y estudiantes, árbol con drag & drop, lecciones `text` y `pdf` (pdf.js), matrícula, secuenciación básica, tracking de páginas (heartbeat + bitmap), dashboards mínimos. → **Al final, la plataforma ya es usable para cursos de lectura.**
+
+**Fase 2 — Video y exámenes (11 pts)**: worker de jobs, ítem de video por enlace (embed + tracking de intervalos vía IFrame API), CRUD exámenes/preguntas, ExamRunner con intentos, fechas y autocalificación, motor de reglas v1 (AND plano).
+
+**Fase 3 — Certificados y calificación manual (12 pts)**: pipeline PPT (LibreOffice), cola de grading (open_text + tareas), plantillas de certificado con editor visual + preview, emisión con folio + QR + `/verify`, notificaciones in-app.
+
+**Fase 4 — Reportes y endurecimiento (12 pts)**: matriz ítem × alumno, export CSV, panel admin, `sequence_mode` por ítem, condiciones OR/anidadas, banco de preguntas + pool aleatorio, audit log, backup, servicio Windows (NSSM), doc de instalación (Node, LibreOffice, firewall).
+
+Dependencias: F0 → todo; worker (F2) antes que PPT (F3); motor de reglas antes que certificados.
+
+**Fase 6 — Ajustes, contenidos y guía (hecha 2026-08-21)**: ruta `/ajustes` para los 3 roles (contraseña con cierre de otras sesiones; nombre solo maestro/admin; identidad de la empresa para admin y maestros con `users.can_edit_branding`); portada opcional (6 presets SVG en `src/lib/cover-presets.ts` o foto) para login y/o panel con miniatura de previsualización; tipos de contenido **Recurso descargable** (`item_resource_files`) y **Enlace externo** (`item_links`) que se completan al descargar/abrir; tarea estilo Teams (adjuntos del maestro en `assignment_attachments`, respuesta con texto HTML + varios archivos en `submission_files`); editor TipTap que guarda **HTML saneado** (`src/lib/rich-html.ts`, allowlist de estilos; el pegado conserva colores/tamaños/tablas/alineación/sangrías y descarta fuentes; imágenes pegadas se suben como `editor_image`); guía de uso por rol en `/guia` (datos en `src/content/guide/*.ts`) con descarga HTML autocontenido (`/api/guide?role=`). Migración 0005.
+
+**Fase 7 — Almacenamiento en NAS (hecha 2026-09-09)**: carpeta de archivos configurable desde Admin → Configuración (`app_settings.storage_path` → `STORAGE_PATH` → `./storage`), con validación de acceso y escritura real antes de aceptarla; estructura legible en disco `Cursos\<Curso>\<NN Módulo>\<NN Lección>`, `Entregas\<Curso>\<Tarea>\<Alumno> — <fecha>` y `_Sistema\` (`src/server/services/storage-paths.ts` + `storage-layout.ts`), con saneado de nombres para Windows/SMB; renombrar un curso o lección mueve las carpetas en segundo plano (job `relocate_files`) y borrar contenido retira los archivos huérfanos (`cleanup_files`); los certificados dejan de guardarse como PDF y se generan al descargar desde `template_snapshot` (~22 ms) en `/api/certificates/<folio>`; herramientas `pnpm storage plan|apply|check|where|move`. La base de datos permanece siempre en disco local (SQLite WAL no es fiable sobre SMB). Además, `APP_URL` pasa a ser opcional: sin ella la plataforma detecta sola la IPv4 del equipo (socket UDP a la ruta por defecto, descartando adaptadores virtuales) y esa es la dirección que llevan los QR de los certificados; se muestra en Admin → Configuración → Dirección en la red.
+
+**Fase 8 — Vigencia, recertificación, grupos y papelera (hecha 2026-09-10)**: **Vigencia por curso** (`courses.validity_mode`: vitalicio | año calendario | N meses desde que se aprueba; cálculo en `src/lib/validity.ts`); cada certificado congela su `expires_at` al emitirse (cambiar la política no toca los ya emitidos), la plantilla admite el campo «Vigencia» y `/verify` distingue «vigente hasta…», «vencido — fue válido del … al …» y permanente. **Ciclos de recertificación**: `enrollments.cycle` (único por curso × alumno × ciclo); intentos de examen y entregas se atan a su matrícula (`enrollment_id`), así que el ciclo nuevo empieza en cero sin tocar el historial; las vistas muestran solo el ciclo más reciente (`latestCycleOnly` en `enrollment-scope.ts`). **Panel de vencimientos** `/teach/renewals` (por vencer ≤ 30 días / vencidos): sin avisos ni reinscripción automática — el maestro elige a quién reinscribir (abre el ciclo n+1, en su grupo o en otro) o descarta con motivo (baja, reemplazado por otro curso/NOM, no aplica, otro); todo queda en `certificates.renewal_*` y en la auditoría. **Grupos con nombre, propios de cada curso** (`cohorts.course_id`, `/teach/groups`; migración 0007 repartió los grupos existentes por curso): los filtros de un curso solo muestran sus grupos; la matrícula elige o crea un grupo del curso o **trae un grupo de otro curso** (`importCohortIntoCourse`: inscribe a sus miembros en un grupo con el mismo nombre; el original no cambia y los ya inscritos se quedan igual); cerrar un grupo lo saca de las vistas diarias (lista del curso, reportes, estadísticas) sin borrar nada, y el filtro `?grupo=` (abiertos por defecto | all | none | id) permite verlo de nuevo. **Papelera de bajas**: dar de baja guarda `dropped_at/by/from` y no toca progreso, calificaciones ni certificado; restaurar (o volver a inscribir) devuelve al alumno exactamente con el estatus que tenía. Además se corrigió el consecutivo del folio (antes `COUNT(*)+1`, que repetía números si se borraba un certificado; ahora el mayor emitido + 1). Migración 0006 con relleno de `enrollment_id`. Datos demo: `scripts/seed-demo-cycles.ts`. Prueba: `scripts/smoke-f6.ts`.
+
+**Contador de tiempo y login (hecho 2026-09-10)**: cada lección con tiempo mínimo muestra arriba a la derecha un contador (`src/components/student/study-timer.tsx`): lecturas («Faltan 1:30» del mínimo de lectura; el latido devuelve `creditedSeconds` para corregirlo con el reloj del servidor), documentos (segundos de la página actual + estimado del documento) y videos (lo que falta por ver, contra la duración guardada en el servidor; «En pausa» si no se reproduce). Es informativo: quien acredita sigue siendo el servidor. En el login, los textos sobre la foto de portada llevan relieve negro (`.text-halo`) y un degradado en la columna del texto; el carrusel de cursos pasó de vidrio translúcido a tarjeta sólida con sombra, más grande, con flechas discretas a los lados y puntos centrados.
+
+**Notificaciones y mantenimiento de la base (hecho 2026-09-10)**: la campana permite borrar una notificación o todas (con confirmación), al estilo Facebook; el clic en una notificación espera a que el servidor guarde el «leído» antes de navegar. Las pruebas automáticas (`scripts/lib/smoke-cleanup.ts`) borran al terminar las notificaciones que generan sobre sus cursos de prueba, porque usan las cuentas demo reales (eso hacía creer que las leídas «volvían»). Se descubrió que drizzle-kit omite `ON DELETE` en `ALTER TABLE ADD … REFERENCES`: la 0006 se corrigió y la base se reconstruyó desde cero con `pnpm db:rebuild` (semilla SQL + todas las migraciones + recarga verificada); `pnpm db:check` compara las claves foráneas de la base con `schema.ts` y debe correrse tras cada migración nueva.
+
+**Ayuda visual con animaciones (hecha 2026-09-10)**: Junto a 34 ajustes hay un «?» (`src/components/help/help-tip.tsx`) que abre una escena animada causa → efecto hecha con piezas que copian la interfaz real (`src/components/help/mini/*`) y el valor actual del formulario, aunque no esté guardado. Cada escena es una historia pura `(fase, valor) → estado` (`scenes/*.story.ts`, probada en `pnpm smoke:help`) más su vista; se descargan solo al abrir el «?» (`registry.ts`) y con «reducir movimiento» muestran el cuadro final. Textos por área en `topics/`; catálogo en `/teach/ayuda` (menú Cuenta) armado con `catalog-config.ts`. Además, el editor de reglas ya permite **combinar condiciones con Y u O** (antes solo guardaba Y aunque el motor evaluaba O; prueba `pnpm smoke:rules`) y los tipos de archivo permitidos de las tareas se interpretan en un solo lugar (`src/lib/file-types.ts`). Revisión visual: `pnpm help:shots` (fotos de cada escena en dos instantes y en su cuadro final) y `pnpm help:tips` (abre cada «?» en 16 pantallas reales con ratón, clic, teclado y a 390 px).
+
+**Publicar resultados de exámenes (hecha 2026-09-11)**: Una regla única (`src/lib/exam-results.ts`) decide cuándo ve el alumno su calificación: «Al enviar»; «Al cerrar el examen», o antes si el maestro publica; y «Cuando yo decida», al pulsar «Publicar resultados» en los ajustes del examen, con opción de ocultar. Antes, «Cuando yo decida» no tenía cómo publicar y «Al cerrar» ya mostraba el % en «Intentos anteriores». Mientras están ocultos no viaja ningún % al alumno: «Intentos anteriores» y la página del curso dicen «resultados pendientes», y calificar preguntas abiertas no avisa. Al volverse visibles, el alumno recibe un aviso en la campana, una sola vez por examen; el worker revisa cada 5 min los exámenes que cierran. Publicar y ocultar quedan en la auditoría. Migración 0008 (`exams.results_published_at`, `results_notified_at`). Prueba: `pnpm smoke:results`. También se corrigió el doble punto «p.m..» en las fechas del examen.
+
+**Guías animadas (hecha 2026-09-14)**: Los 32 pasos de las guías donde el movimiento explica mejor que una foto (10 del alumno, 14 del maestro y 8 del administrador) (tiempo mínimo de lectura, tramos de video, candado secuencial, intentos, entrega devuelta, vigencia; del lado del maestro el árbol, la conversión de PPT, las reglas, el CSV, la cola de calificar y los campos del diploma; y del lado del administrador la contraseña temporal, desactivar una cuenta, reasignar un curso, la cola de trabajos y los certificados que se arman al descargarlos) llevan una escena animada arriba del texto; la captura real queda en el plegable «Ver la pantalla real». Cada paso declara su escena en `GuideStep.scene` y `src/components/guide/scenes/registry.tsx` la carga solo cuando hace falta; `guide-scene.tsx` la monta al entrar en pantalla y después solo **pausa su reloj** mientras no se ve (así corre solo a la vista, sin volver a descargarse ni reiniciarse al regresar; con «reducir movimiento» se ve el cuadro final). La pausa viaja por el contexto `SceneClockPaused` de `use-scene-clock.ts`, que el «?» no provee. 14 de las 32 reutilizan una escena del «?» con valores fijos; las 18 nuevas viven en `src/components/guide/scenes/*.story.ts` (historia pura) más su vista. La guía descargable no cambia: texto y captura. Pruebas: `pnpm smoke:guide` (historias y registro) y `pnpm guide:scenes` (fotos de cada escena en dos instantes y en su cuadro final).
+
+**Tipo de pregunta «Ordenar pasos» (hecha 2026-09-21)**: El maestro escribe de 3 a 10 pasos en el orden correcto; el alumno los ve revueltos (nunca en el orden correcto) y los acomoda con flechas o arrastrándolos (dnd-kit, también con teclado). Como en «relacionar», al navegador solo viajan tokens opacos por intento (`orderingToken`), así el orden correcto no se filtra. Se califica por **pares consecutivos**: con n pasos hay n−1 pares y cuenta cada paso que quedó justo después del que le toca, de modo que un paso fuera de lugar solo quita lo que rompe. La matemática es pura y vive en `src/lib/ordering.ts`. CSV: tipo `ordenar` y columna nueva `pasos` (opcional para los demás tipos). Nuevo «?» `exam.ordering` (35 escenas en el catálogo). Prueba: `pnpm smoke:ordering`.
+
+**Importar preguntas con IA (hecha 2026-09-21)**: El maestro sube un Word, Excel, CSV, PDF, PowerPoint o texto con sus preguntas y OpenAI las **transcribe** (no inventa preguntas ni respuestas) a los 7 tipos. El servidor extrae el texto sin paquetes nuevos (`src/server/services/text-extract.ts`: pdfjs-dist para PDF y LibreOffice para Word/Excel/PowerPoint), lo parte en tramos de ~12 000 caracteres cortando antes de una pregunta, y el diálogo manda un tramo a la vez (`analyzeChunkAction`) con avance y botón Cancelar. OpenAI responde con Structured Outputs (`json_schema` estricto, Responses API); si la respuesta llega mal formada se reintenta una vez. Antes de crear nada el maestro revisa cada pregunta (corrige la correcta con un clic, cambia puntos, quita) y la prueba en «Ver como alumno»: una vista previa en la que puede avanzar sin responder, elegir, ordenar y mostrar las respuestas correctas, sin guardar ni calificar. Las preguntas con problemas se señalan en rojo y se omiten al importar; también puede descargarlas como CSV. Importar (agregar o reemplazar) reusa la misma validación que el editor y el CSV (`src/lib/question-validation.ts`, `src/server/services/exam-import.ts`) y queda en la auditoría. «Ver como alumno» también está en el editor para exámenes ya guardados. La clave de OpenAI vive en Administración → Configuración, cifrada con AES-256-GCM derivada de `APP_SECRET` (solo se muestra enmascarada); sin clave el botón no aparece. Modelo por defecto `gpt-5.6-terra` (editable). El archivo nunca se guarda. Pruebas: `pnpm smoke:ai` (sin gastar) y `pnpm smoke:ai --live` (una llamada real con la clave guardada).
+
+**Importar con IA: varios archivos e imágenes (hecha 2026-09-21)**: El diálogo acepta hasta 5 archivos (10 MB cada uno) y además imágenes (JPG, PNG, WEBP, GIF) y PDF escaneados. Las reglas de selección (límites, tipos, repetidos, mensajes) son puras y viven en `src/lib/ai-import-files.ts`. Los archivos con texto siguen por `ai-extract` y tramos; `ai-extract` ahora responde `{ scanned, pages }` cuando un PDF no tiene texto (`ScannedPdfError`). Las imágenes (todas juntas, en orden, para que una pregunta repartida entre dos fotos llegue completa) y los PDF escaneados de hasta 20 páginas van a la ruta nueva `/api/teach/ai-vision`, que endereza y reduce las fotos a 2048 px en JPEG sin metadatos con `sharp` (`image-prep.ts`, ahora dependencia directa, la misma 0.34.5 que trae Next) y llama a la Responses API con `input_image` / `input_file`, el mismo esquema estricto y el mismo prompt. La guarda del examen se compartió (`exam-access.ts`). Cada pregunta muestra de qué archivo salió; ese dato vive solo en el navegador. HEIC no se lee: el mensaje pide JPG. Se corrigió además un problema previo: el middleware también interceptaba `/api` y Next 15.5 recorta a 10 MB el cuerpo de toda petición que pasa por él (`middlewareClientMaxBodySize`), así que las subidas de más de 10 MB llegaban cortadas sin error; `/api` quedó fuera del matcher. Pruebas: `pnpm smoke:ai` (secciones de archivos, imágenes, PDF escaneado y visión) y `--live` (también lee una imagen).
+
+**Contexto del admin y alumnos por maestro (hecha 2026-09-21)**: El admin es el «profesor general». La base de alumnos es una sola, pero cada maestro ve solo a los suyos (los que dio de alta y los que tienen o tuvieron matrícula en sus cursos) y, de ellos, solo sus cursos, avance y certificados (`src/server/services/student-scope.ts`). Al inscribir, el buscador encuentra a cualquier alumno (nombre, correo y estado), y `enrollStudents` solo acepta cuentas con rol alumno. Cuenta del alumno (`studentAccountPermissions`): cualquiera de sus maestros la reactiva; restablecer la contraseña y desactivarla solo si el alumno está únicamente con ese maestro (si es compartido, solo el admin). Restablecer, activar, desactivar e inscribir quedan en la auditoría. Las listas reciben un `ViewScope` (`src/server/auth/view-scope.ts`: own | teacher | all) en lugar de «si es admin, todo»; los permisos (`getOwnedCourse`, `canManageCohort`, `ownedPending`…) no cambian, y los selectores de permiso (plantilla del curso, importar grupo) usan `fullScope`. El admin elige el contexto en un selector junto a la campana («Mi contenido», «General — todos», «Ver como maestro X», con conteos de una sola consulta agregada `visibleStudentCountsByOwner`) y ve una franja «Volver a Mi contenido». Se guarda en la cookie `vista` (`setViewContextAction`), que el middleware quita en cada carga completa del documento fuera de `/api` y de las páginas públicas (`isDocumentLoad` en `src/lib/view-context.ts`; Next quita la cabecera `RSC` antes del middleware, así que deciden `Sec-Fetch-Dest` y `Accept`), además de al iniciar y cerrar sesión: siempre se arranca en «Mi contenido». Los buscadores usan `Form` de `next/form` para no provocar cargas completas. Las pestañas se sincronizan con `BroadcastChannel` (y `pageshow` para el bfcache). Lo que se crea viendo como un maestro queda a su nombre (auditoría con `onBehalfOf`); un CSV que inscribe en un curso crea a los alumnos a nombre del dueño del curso. La campana y los números del menú siempre cuentan solo lo propio. En «General» los cursos llevan la etiqueta de su dueño. El nombre del alumno, el título del curso y el nombre del maestro quedan fijos en el certificado al emitirse (`template_snapshot`); los ya emitidos se completan al arrancar (`src/instrumentation.ts`) o con `pnpm certs:backfill` (alias `certs:backfill-teacher`). Sin migración. Prueba: `pnpm smoke:scope` (incluye el middleware en proceso).
+
+**Archivos por maestro, diplomas fijos y títulos en celular (hecha 2026-09-21)**: `/api/files` ya revisa a los maestros: cada uno abre solo los archivos de sus cursos (documentos, recursos, adjuntos, entregas, certificados, fondos de plantilla propias o que use un curso suyo, imágenes de pregunta) más lo que subió él; portadas, identidad e imágenes pegadas en textos siguen abiertas (`src/server/services/file-access.ts`). Enlazar un documento, recurso o adjunto exige que el archivo lo haya subido quien edita (o el admin) y del tipo correcto, para que nadie enganche a su curso el archivo de otro. Además, `/api/files` manda `X-Content-Type-Options: nosniff` y solo muestra en el navegador PDF, imágenes (sin SVG), video y audio; lo demás se descarga (`src/lib/inline-mime.ts`), así un HTML subido no puede correr código. Los diplomas fijan al emitirse también el nombre del alumno y el título del curso (`backfillCertificateSnapshots`, `pnpm certs:backfill`). En celular el título de cada página se muestra en hasta dos líneas. Pendiente recomendado: índices en las columnas `*_file_id` (requiere migración).
+
+**Guía de primeros pasos (hecha 2026-09-21)**: Banda de una línea en el Inicio del maestro (`src/components/teach/onboarding-band.tsx`) con los 5 primeros pasos (curso, lección, estudiantes, matricular y publicar, diploma), marcados solos con los datos propios (`src/server/services/onboarding.ts`; regla pura en `src/lib/onboarding.ts`). El admin la ve solo en «Mi contenido». «Ver todos» despliega la lista; «Ocultar» la guarda en localStorage por usuario y deja un enlace de recuperación; desaparece al completarse. Cada botón lleva a la acción ya lista: abre «Nuevo curso» o «Nuevo estudiante», despliega el menú «+ Agregar» del contenido (`?agregar=1`), abre «Matricular estudiantes» (`?matricular=1`) o desplaza y resalta el bloque del certificado (`#diploma`). En la misma página no navega: avisa al diálogo con un evento (`src/lib/open-dialog.ts`), porque Next descarta la navegación que solo cambia la búsqueda. Prueba: `pnpm smoke:scope`.
+
+---
+
+## 10. Qué copiar vs. qué evitar (resumen de investigación)
+
+| ✅ Copiar | ❌ Evitar |
+|---|---|
+| Jerarquía Curso→Carpeta→Ítem con drag & drop (LearnDash) | Runtime SCORM/xAPI/LRS propio |
+| Flag "lineal vs. libre" por curso + override por ítem | Candados condicionales manuales estilo Moodle Restrict Access |
+| Completado ≠ Aprobado (cmi5/iSpring) | Anidación ilimitada de carpetas |
+| Intervalos de video con merge + seek bloqueado solo hacia adelante | Ocultar todos los controles del video |
+| PPT→PDF (LibreOffice) + pdf.js + tiempo mínimo por página | Visor nativo de PPTX en browser |
+| Pool aleatorio + shuffle + intentos + ventana + tiempo límite | Proctoring IA/webcam, lockdown browser |
+| 6 tipos de pregunta básicos | Cloze, drag-drop sobre imagen, preguntas matemáticas |
+| % visualización + % exámenes configurables por curso | Gradebook complejo estilo Moodle |
+| Notificaciones por evento + recordatorios de fecha límite | Motor de workflows genérico |
+| Plantilla de certificado con variables + folio + `/verify` + QR | Blockchain, Open Badges, firmas criptográficas |
+| "Continuar donde quedaste", matriz con semáforo, export CSV | Leaderboards globales, economía de puntos |
+
+---
+
+## 10.5 Operación masiva (CSV/Excel) y trazabilidad
+
+Todas las operaciones masivas siguen el mismo contrato: **exportar → editar en
+Excel → subir → previsualizar cambios fila por fila → aplicar**. Formato CSV
+UTF-8 con BOM (Excel abre acentos bien), acepta separador `,` o `;` (Excel-ES).
+Nada se aplica sin pasar por la pantalla de revisión con conteos y motivos de
+rechazo por fila.
+
+| Operación | Servicio | Columnas clave |
+|---|---|---|
+| Preguntas de examen | `exam-csv.ts` | tipo, pregunta, puntos, opcion_1..6, correctas (`2` o `1\|3` o `V/F`), respuestas_aceptadas (`a\|b`), pares (`izq=der \| ...`) — modos reemplazar/agregar |
+| Propiedades de lecciones | `bulk-lessons.ts` | id (inmutable), titulo, requerido SI/NO, secuencia heredar/obligatoria/libre, visible, segundos_minimos |
+| Matrícula del curso | `bulk-roster.ts` | correo, accion matricular/quitar (vacío = mantener); re-matricular reactiva bajas conservando progreso |
+| Alta de estudiantes | `csv-import.ts` (F4) | nombre, correo, contrasena (vacía = autogenerada) |
+| Certificados físicos | `/api/certificates/zip` | ZIP streaming `<curso>/<folio>-<estudiante>.pdf`, global o por curso; PDF individual por fila |
+
+**Trazabilidad**: cada import/export masivo y descarga de ZIP escribe en
+`audit_log` (quién, qué, cuántos, cuándo) — visible en Administración →
+Configuración → Auditoría. Los certificados nunca pierden su folio verificable.
+
+**Señalización visual por tipo de contenido** (rompe la monocromía café):
+documento azul `#1E43BC` · video fucsia `#D33BE0` · examen bermellón `#D55E00`
+· tarea teal `#0D9488` · lectura café. Paleta validada contra daltonismo
+(todos los pares ΔE ≥ 8.3) y SIEMPRE acompañada del icono del tipo. El café
+queda como color de marca/acciones; verde/ámbar/rojo siguen siendo semánticos.
+
+## 11. Requisitos del servidor y notas de escala
+
+**Escala objetivo**: 1,000–5,000 usuarios registrados, ~100 concurrentes.
+
+- **SQLite aguanta sobrado**: ~100 concurrentes con heartbeat cada 10 s ≈ 10 escrituras/seg; WAL + better-sqlite3 (proceso único) maneja miles/seg. Los heartbeats hacen un solo UPDATE por fila de progreso (bitmap/intervalos), no insertan histórico.
+- **Sin video alojado, el servidor respira**: el tráfico pesado (video) va a YouTube/Vimeo; el servidor solo sirve PDFs y la app. **Hardware recomendado**: CPU 4+ núcleos, 8–16 GB RAM, SSD de 250 GB+ (documentos y entregas), red estándar de la LAN.
+- Los equipos cliente necesitan **internet solo para ítems de video** (embeds); todo lo demás funciona 100% en LAN.
+- PC Windows con Node.js LTS, **LibreOffice** instalado (confirmado; ruta en `.env`), puerto 3000 abierto en firewall.
+- Servicio de Windows vía NSSM para arranque automático.
+- Backup diario automatizado: copiar `data.db` + carpeta `storage/` a otra ubicación (con 5k usuarios el `.db` seguirá siendo de decenas de MB; el peso está en `storage/`).
+
+**Decisiones cerradas**:
+- Notificaciones solo in-app (campana en el header + badge de no leídas). El modelo `notifications` queda listo para agregar email después si la empresa monta servidor de correo interno.
+- Con 1k–5k estudiantes, las vistas de listados (estudiantes, matriz de progreso) se diseñan **paginadas y con búsqueda desde el día uno** — no listas completas en memoria.
+- Alta masiva de estudiantes: además del alta individual, **importación por CSV** (nombre, email, contraseña inicial) — con miles de empleados, capturar uno por uno no es viable. Se agrega a Fase 4.

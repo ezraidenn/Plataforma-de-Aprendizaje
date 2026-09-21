@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Usuarios de prueba · YCC Capacitación</title>
+<style>
+  body{font-family:Segoe UI,Inter,system-ui,sans-serif;margin:0;background:#f8fafc;color:#0f172a}
+  header{background:linear-gradient(120deg,#0f172a,#1e1b4b);color:#fff;padding:22px 28px}
+  header h1{margin:0;font-size:20px} header p{margin:6px 0 0;color:#cbd5e1;font-size:13px}
+  main{padding:20px 28px;max-width:1100px}
+  .bar{display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+  input[type=search]{flex:1;min-width:220px;padding:8px 10px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px}
+  .chip{border:1px solid #cbd5e1;background:#fff;border-radius:999px;padding:5px 12px;font-size:13px;cursor:pointer}
+  .chip.on{background:#1e1b4b;color:#fff;border-color:#1e1b4b}
+  table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden}
+  th,td{padding:9px 10px;border-bottom:1px solid #eef2f7;text-align:left;font-size:14px;vertical-align:middle}
+  th{background:#f1f5f9;font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:#475569}
+  code{background:#f1f5f9;padding:2px 6px;border-radius:6px;font-size:13px}
+  .cp{border:1px solid #cbd5e1;background:#fff;border-radius:6px;padding:3px 7px;cursor:pointer;font-size:12px;margin-left:4px}
+  .cp:hover{background:#eef2ff;border-color:#818cf8} .cp.ok{background:#dcfce7;border-color:#22c55e}
+  .both{padding:4px 10px}
+  .role{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px}
+  .role.admin{background:#f1f5f9;color:#334155}.role.teacher{background:#e0f2fe;color:#0369a1}.role.student{background:#d1fae5;color:#047857}
+  .unk{color:#b45309;font-size:12px} .off{color:#dc2626;font-size:11px;font-weight:600}
+  .hint{color:#64748b;font-size:12px;margin-top:10px}
+  tr.hide{display:none}
+</style></head><body>
+<header><h1>Usuarios de prueba · YCC Capacitación</h1><p>Generado el 24/8/2026, 11:47:59 a.m. desde la base de datos · 32 usuarios · Solo para pruebas en red local</p></header>
+<main>
+  <div class="bar">
+    <input type="search" id="q" placeholder="Buscar nombre o correo…" aria-label="Buscar">
+    <button class="chip on" data-f="all">Todos</button>
+    <button class="chip" data-f="admin">Admin</button>
+    <button class="chip" data-f="teacher">Maestros</button>
+    <button class="chip" data-f="student">Estudiantes</button>
+  </div>
+  <table><thead><tr><th>Rol</th><th>Nombre</th><th>Correo</th><th>Contraseña</th><th></th></tr></thead>
+  <tbody><tr data-role="admin">
+  <td><span class="role admin">Administrador</span></td>
+  <td class="name">Administrador General</td>
+  <td><code>admin@empresa.local</code> <button class="cp" data-copy="admin@empresa.local" title="Copiar correo">⧉</button></td>
+  <td><code>admin1234</code> <button class="cp" data-copy="admin1234" title="Copiar contraseña">⧉</button></td>
+  <td><button class="cp both" data-copy="admin@empresa.local	admin1234" title="Copiar correo y contraseña">Copiar ambos</button></td>
+</tr>
+<tr data-role="teacher">
+  <td><span class="role teacher">Maestro</span></td>
+  <td class="name">Prof. Roberto Martínez</td>
+  <td><code>maestro@empresa.local</code> <button class="cp" data-copy="maestro@empresa.local" title="Copiar correo">⧉</button></td>
+  <td><code>maestro1234</code> <button class="cp" data-copy="maestro1234" title="Copiar contraseña">⧉</button></td>
+  <td><button class="cp both" data-copy="maestro@empresa.local	maestro1234" title="Copiar correo y contraseña">Copiar ambos</button></td>
+</tr>
+<tr data-role="student">
+  <td><span class="role student">Estudiante</span></td>
+  <td class="name">Alejandra Vargas Ríos</td>
+  <td><code>alejandra.vargas@empresa.local</code> <button class="cp" data-copy="alejandra.vargas@empresa.local" title="Copiar correo">⧉</button></td>
+  <td><code>demo1234</code> <button class="cp" data-copy="demo1234" title="Copiar contraseña">⧉</button></td>
+  <td><button class="cp both" data-copy="alejandra.vargas@empresa.local	demo1234" title="Copiar correo y contraseña">Copiar ambos</button></td>
+</tr>
+<tr data-role="student">
+  <td><span class="role student">Estudiante</span></td>
+  <td class="name">Alumna Guía (tarea)</td>
+  <td><code>guia.tarea@empresa.local</code> <button class="cp" data-copy="guia.tarea@empresa.local" title="Copiar correo">⧉</button></td>
+  <td><code>demo1234</code> <button class="cp" data-copy="demo1234" title="Copiar contraseña">⧉</button></td>
+  <td><button class="cp both" data-copy="guia.tarea@empresa.local	demo1234" title="Copiar correo y contraseña">Copiar ambos</button></td>
+</tr>
+<tr data-role="student">
+  <td><span class="role student">Estudiante</span></td>
+  <td class="name">Alumno Guía (examen)</td>
+  <td><code>guia.examen@empresa.local</code> <button class="cp" data-copy="guia.examen@empresa.local" title="Copiar correo">⧉</button></td>
+  <td><code>demo1234</code> <button class="cp" data-copy="demo1234" title="Copiar contraseña">⧉</button></td>
+  <td><button class="cp both" data-copy="guia.examen@empresa.local	demo1234" title="Copiar correo y contraseña">Copiar ambos</button></td>
+</tr>
+<tr data-role="student">
+  <td><span class="role student">Estudiante</span></td>
+  <td class="name">Ana Karen Martínez Flores</td>
+  <td><code>ana.martinez@empresa.local</code> <button class="cp" data-copy="ana.martinez@empresa.local" title="Copiar correo">⧉</button></td>
+  <td><code>demo1234</code> <button class="cp" data-copy="demo1234" title="Copiar contraseña">⧉</button></td>
+  <td><button class="cp both" data-copy="ana.martinez@empresa.local	demo1234" title="Copiar correo y contraseña">Copiar ambos</button></td>
+</tr>
+<tr data-role="student">
+  <td><span class="role student">Estudiante</span></td>
+  <td class="name">Andrés Felipe Navarro Campos</td>
+  <td><code>andres.navarro@empresa.local</code> <button class="cp" data-copy="andres.navarro@empresa.local" title="Copiar correo">⧉</button></td>
+  <td><code>demo1234</code> <button class="cp" data-copy="demo1234" title="Copiar contraseña">⧉</button></td>
+  <td><button class="cp both" data-copy="andres.navarro@empresa.local	demo1234" title="Copiar correo y contraseña">Copiar ambos</button></td>
+</tr>
+<tr data-role="student">
+  <td><span class="role student">Estudiante</span></td>
+  <td class="name">Brenda Lizeth Cortés Peña</td>
+  <td><code>brenda.cortes@empresa.local</code> <button class="cp" data-copy="brenda.cortes@empresa.local" title="Copiar correo">⧉</button></td>
+  <td><code>demo1234</code> <button class="cp" data-copy="demo1234" title="Copiar contraseña">⧉</button></td>
+  <td><button class="cp both" data-copy="brenda.cortes@empresa.local	demo1234" title="Copiar correo y contraseña">Copiar ambos</button></td>
+</tr>
+<tr data-role="student">
+  <td><span class="role student">Estudiante</span></td>
+  <td class="name">Carlos Alberto Sánchez Torres</td>
+  <td><code>carlos.sanchez@empresa.local</code> <button class="cp" data-copy="carlos.sanchez@empresa.local" title="Copiar correo">⧉</button></td>
+  <td><code>demo1234</code> <button class="cp" data-copy="demo1234" title="Copiar contraseña">⧉</button></td>
+  <td><button class="cp both" data-copy="carlos.sanchez@empresa.local	demo1234" title="Copiar correo y contraseña">Copiar ambos</button></td>
+</tr>
+<tr data-role="student">
+  <td><span class="role student">Estudiante</span></td>
+  <td class="name">Daniela Guzmán Paredes</td>
+  <td><code>daniela.guzman@empresa.local</code> <button class="cp" data-copy="daniela.guzman@empresa.local" title="Copiar correo">⧉</button></td>
+  <td><code>demo1234</code> <button class="cp" data-copy="demo1234" title="Copiar contraseña">⧉</button></td>
+  <td><button class="cp both" data-copy="daniela.guzman@empresa.local	demo1234" title="Copiar correo y contraseña">Copiar ambos</button></td>
+</tr>
+<tr data-role="student">
+  <td><span class="role student">Estudiante</span></td>
+  <td class="name">Diego Armando Torres Luna</td>
+  <td><code>diego.torres@empresa.local</code> <button class="cp" data-copy="diego.torres@empresa.local" title="Copiar correo">⧉</button></td>
+  <td><code>demo1234</code> <button class="cp" data-copy="demo1234" title="Copiar contraseña">⧉</button></td>
+  <td><button class="cp both" data-copy="diego.torres@empresa.local	demo1234" title="Copiar correo y contraseña">Copiar ambos</button></td>
+</tr>
+<tr data-role="student">
+  <td><span class="role student">Estudiante</span></td>
+  <td class="name">Emilio Zapata Fuentes</td>
+  <td><code>emilio.zapata@empresa.local</code> <button class="cp" data-copy="emilio.zapata@empresa.local" title="Copiar correo">⧉</button></td>
+  <td><code>demo1234</code> <button class="cp" data-copy="demo1234" title="Copiar contraseña">⧉</button></td>
+  <td><button class="cp both" data-copy="emilio.zapata@empresa.local	demo1234" title="Copiar correo y contraseña">Copiar ambos</button></td>
+</tr>
+<tr data-role="student">
+  <td><span class="role student">Estudiante</span></td>
+  <td class="name">Fernando Castro Salazar</td>
+  <td><code>fernando.castro@empresa.local</code> <button class="cp" data-copy="fernando.castro@empresa.local" title="Copiar correo">⧉</button></td>
+  <td><code>demo1234</code> <button class="cp" data-copy="demo1234" title="Copiar contraseña">⧉</button></td>
+  <td><button class="cp both" data-copy="fernando.castro@empresa.local	demo1234" title="Copiar correo y contraseña">Copiar ambos</button></td>
+</tr>
+<tr data-role="student">
+  <td><span class="role student">Estudiante</span></td>
+  <td class="name">Gabriela Reyes Domínguez</td>
+  <td><code>gabriela.reyes@empresa.local</code> <button class="cp" data-copy="gabriela.reyes@empresa.local" title="Copiar correo">⧉</button></td>
+  <td><code>demo1234</code> <button class="cp" data-copy="demo1234" title="Copiar contraseña">⧉</button></td>
+  <td><button class="cp both" data-copy="gabriela.reyes@empresa.local	demo1234" title="Copiar correo y contraseña">Copiar ambos</button></td>
+</tr>
+<tr data-role="student">
+  <td><span class="role student">Estudiante</span></td>
+  <td class="name">Héctor Manuel Flores Cabrera</td>
+  <td><code>hector.flores@empresa.local</code> <button class="cp" data-copy="hector.flores@empresa.local" title="Copiar correo">⧉</button></td>
+  <td><code>demo1234</code> <button class="cp" data-copy="demo1234" title="Copiar contraseña">⧉</button></td>
+  <td><button class="cp both" data-copy="hector.flores@empresa.local	demo1234" title="Copiar correo y contraseña">Copiar ambos</button></td>
+</tr>
+<tr data-role="student">
+  <td><span class="role student">Estudiante</span></td>
+  <td class="name">Import Dos</td>
+  <td><code>imp-dos@empresa.local</code> <button class="cp" data-copy="imp-dos@empresa.local" title="Copiar correo">⧉</button></td>
+  <td><span class="unk">desconocida · restablecer en Admin → Usuarios</span></td>
+  <td></td>
+</tr>
+<tr data-role="student">
+  <td><span class="role student">Estudiante</span></td>
+  <td class="name">Import Uno</td>
+  <td><code>imp-uno@empresa.local</code> <button class="cp" data-copy="imp-uno@empresa.local" title="Copiar correo">⧉</button></td>
+  <td><span class="unk">desconocida · restablecer en Admin → Usuarios</span></td>
+  <td></td>
+</tr>
+<tr data-role="student">
+  <td><span class="role student">Estudiante</span></td>
+  <td class="name">José Luis Hernández Ramírez</td>
+  <td><code>jose.hernandez@empresa.local</code> <button class="cp" data-copy="jose.hernandez@empresa.local" title="Copiar correo">⧉</button></td>
+  <td><code>demo1234</code> <button class="cp" data-copy="demo1234" title="Copiar contraseña">⧉</button></td>
+  <td><button class="cp both" data-copy="jose.hernandez@empresa.local	demo1234" title="Copiar correo y contraseña">Copiar ambos</button></td>
+</tr>
+<tr data-role="student">
+  <td><span class="role student">Estudiante</span></td>
+  <td class="name">Juan Pablo González Ortiz</td>
+  <td><code>juan.gonzalez@empresa.local</code> <button class="cp" data-copy="juan.gonzalez@empresa.local" title="Copiar correo">⧉</button></td>
+  <td><code>demo1234</code> <button class="cp" data-copy="demo1234" title="Copiar contraseña">⧉</button></td>
+  <td><button class="cp both" data-copy="juan.gonzalez@empresa.local	demo1234" title="Copiar correo y contraseña">Copiar ambos</button></td>
+</tr>
+<tr data-role="student">
+  <td><span class="role student">Estudiante</span></td>
+  <td class="name">Karla Patricia Silva Montes</td>
+  <td><code>karla.silva@empresa.local</code> <button class="cp" data-copy="karla.silva@empresa.local" title="Copiar correo">⧉</button></td>
+  <td><code>demo1234</code> <button class="cp" data-copy="demo1234" title="Copiar contraseña">⧉</button></td>
+  <td><button class="cp both" data-copy="karla.silva@empresa.local	demo1234" title="Copiar correo y contraseña">Copiar ambos</button></td>
+</tr>
+<tr data-role="student">
+  <td><span class="role student">Estudiante</span></td>
+  <td class="name">Laura Pérez</td>
+  <td><code>estudiante@empresa.local</code> <button class="cp" data-copy="estudiante@empresa.local" title="Copiar correo">⧉</button></td>
+  <td><code>estudiante1234</code> <button class="cp" data-copy="estudiante1234" title="Copiar contraseña">⧉</button></td>
+  <td><button class="cp both" data-copy="estudiante@empresa.local	estudiante1234" title="Copiar correo y contraseña">Copiar ambos</button></td>
+</tr>
+<tr data-role="student">
+  <td><span class="role student">Estudiante</span></td>
+  <td class="name">Luisa Daniela Pérez Aguilar</td>
+  <td><code>luisa.perez@empresa.local</code> <button class="cp" data-copy="luisa.perez@empresa.local" title="Copiar correo">⧉</button></td>
+  <td><code>demo1234</code> <button class="cp" data-copy="demo1234" title="Copiar contraseña">⧉</button></td>
+  <td><button class="cp both" data-copy="luisa.perez@empresa.local	demo1234" title="Copiar correo y contraseña">Copiar ambos</button></td>
+</tr>
+<tr data-role="student">
+  <td><span class="role student">Estudiante</span></td>
+  <td class="name">María Fernanda López Gutiérrez</td>
+  <td><code>maria.lopez@empresa.local</code> <button class="cp" data-copy="maria.lopez@empresa.local" title="Copiar correo">⧉</button></td>
+  <td><code>demo1234</code> <button class="cp" data-copy="demo1234" title="Copiar contraseña">⧉</button></td>
+  <td><button class="cp both" data-copy="maria.lopez@empresa.local	demo1234" title="Copiar correo y contraseña">Copiar ambos</button></td>
+</tr>
+<tr data-role="student">
+  <td><span class="role student">Estudiante</span></td>
+  <td class="name">Mauricio Lara Cisneros</td>
+  <td><code>mauricio.lara@empresa.local</code> <button class="cp" data-copy="mauricio.lara@empresa.local" title="Copiar correo">⧉</button></td>
+  <td><code>demo1234</code> <button class="cp" data-copy="demo1234" title="Copiar contraseña">⧉</button></td>
+  <td><button class="cp both" data-copy="mauricio.lara@empresa.local	demo1234" title="Copiar correo y contraseña">Copiar ambos</button></td>
+</tr>
+<tr data-role="student">
+  <td><span class="role student">Estudiante</span></td>
+  <td class="name">Miguel Ángel Rodríguez Cruz</td>
+  <td><code>miguel.rodriguez@empresa.local</code> <button class="cp" data-copy="miguel.rodriguez@empresa.local" title="Copiar correo">⧉</button></td>
+  <td><code>demo1234</code> <button class="cp" data-copy="demo1234" title="Copiar contraseña">⧉</button></td>
+  <td><button class="cp both" data-copy="miguel.rodriguez@empresa.local	demo1234" title="Copiar correo y contraseña">Copiar ambos</button></td>
+</tr>
+<tr data-role="student">
+  <td><span class="role student">Estudiante</span></td>
+  <td class="name">Paola Andrea Ruiz Medina</td>
+  <td><code>paola.ruiz@empresa.local</code> <button class="cp" data-copy="paola.ruiz@empresa.local" title="Copiar correo">⧉</button></td>
+  <td><code>demo1234</code> <button class="cp" data-copy="demo1234" title="Copiar contraseña">⧉</button></td>
+  <td><button class="cp both" data-copy="paola.ruiz@empresa.local	demo1234" title="Copiar correo y contraseña">Copiar ambos</button></td>
+</tr>
+<tr data-role="student">
+  <td><span class="role student">Estudiante</span></td>
+  <td class="name">Raúl Cetina</td>
+  <td><code>abelcetina@gmail.com</code> <button class="cp" data-copy="abelcetina@gmail.com" title="Copiar correo">⧉</button></td>
+  <td><span class="unk">desconocida · restablecer en Admin → Usuarios</span></td>
+  <td></td>
+</tr>
+<tr data-role="student">
+  <td><span class="role student">Estudiante</span></td>
+  <td class="name">Regina Espinosa Valdés</td>
+  <td><code>regina.espinosa@empresa.local</code> <button class="cp" data-copy="regina.espinosa@empresa.local" title="Copiar correo">⧉</button></td>
+  <td><code>demo1234</code> <button class="cp" data-copy="demo1234" title="Copiar contraseña">⧉</button></td>
+  <td><button class="cp both" data-copy="regina.espinosa@empresa.local	demo1234" title="Copiar correo y contraseña">Copiar ambos</button></td>
+</tr>
+<tr data-role="student">
+  <td><span class="role student">Estudiante</span></td>
+  <td class="name">Ricardo Morales Vázquez</td>
+  <td><code>ricardo.morales@empresa.local</code> <button class="cp" data-copy="ricardo.morales@empresa.local" title="Copiar correo">⧉</button></td>
+  <td><code>demo1234</code> <button class="cp" data-copy="demo1234" title="Copiar contraseña">⧉</button></td>
+  <td><button class="cp both" data-copy="ricardo.morales@empresa.local	demo1234" title="Copiar correo y contraseña">Copiar ambos</button></td>
+</tr>
+<tr data-role="student">
+  <td><span class="role student">Estudiante</span></td>
+  <td class="name">Sofía Alejandra García Mendoza</td>
+  <td><code>sofia.garcia@empresa.local</code> <button class="cp" data-copy="sofia.garcia@empresa.local" title="Copiar correo">⧉</button></td>
+  <td><code>demo1234</code> <button class="cp" data-copy="demo1234" title="Copiar contraseña">⧉</button></td>
+  <td><button class="cp both" data-copy="sofia.garcia@empresa.local	demo1234" title="Copiar correo y contraseña">Copiar ambos</button></td>
+</tr>
+<tr data-role="student">
+  <td><span class="role student">Estudiante</span></td>
+  <td class="name">Valeria Jiménez Castillo</td>
+  <td><code>valeria.jimenez@empresa.local</code> <button class="cp" data-copy="valeria.jimenez@empresa.local" title="Copiar correo">⧉</button></td>
+  <td><code>demo1234</code> <button class="cp" data-copy="demo1234" title="Copiar contraseña">⧉</button></td>
+  <td><button class="cp both" data-copy="valeria.jimenez@empresa.local	demo1234" title="Copiar correo y contraseña">Copiar ambos</button></td>
+</tr>
+<tr data-role="student">
+  <td><span class="role student">Estudiante</span></td>
+  <td class="name">Óscar Iván Ramos Delgado</td>
+  <td><code>oscar.ramos@empresa.local</code> <button class="cp" data-copy="oscar.ramos@empresa.local" title="Copiar correo">⧉</button></td>
+  <td><code>demo1234</code> <button class="cp" data-copy="demo1234" title="Copiar contraseña">⧉</button></td>
+  <td><button class="cp both" data-copy="oscar.ramos@empresa.local	demo1234" title="Copiar correo y contraseña">Copiar ambos</button></td>
+</tr></tbody></table>
+  <p class="hint">Los estudiantes del seed demo usan <code>demo1234</code>. Las cuentas creadas a mano o por CSV tienen contraseña temporal propia: si no la tienes, restablécela desde Admin → Usuarios (o Estudiantes → menú del alumno). Regenera este archivo con <code>node scripts/usuarios-prueba.cjs</code>.</p>
+</main>
+<script>
+  function norm(s){return s.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase()}
+  const rows=[...document.querySelectorAll("tbody tr")];let filter="all";
+  function apply(){const q=norm(document.getElementById("q").value);rows.forEach(r=>{const ok=(filter==="all"||r.dataset.role===filter)&&(!q||norm(r.textContent).includes(q));r.classList.toggle("hide",!ok)})}
+  document.getElementById("q").addEventListener("input",apply);
+  document.querySelectorAll(".chip").forEach(b=>b.addEventListener("click",()=>{filter=b.dataset.f;document.querySelectorAll(".chip").forEach(c=>c.classList.toggle("on",c===b));apply()}));
+  document.querySelectorAll(".cp").forEach(b=>b.addEventListener("click",async()=>{
+    const t=b.dataset.copy;try{await navigator.clipboard.writeText(t)}catch{const ta=document.createElement("textarea");ta.value=t;document.body.appendChild(ta);ta.select();document.execCommand("copy");ta.remove()}
+    const prev=b.textContent;b.textContent="✓";b.classList.add("ok");setTimeout(()=>{b.textContent=prev;b.classList.remove("ok")},900)}));
+</script>
+</body></html>

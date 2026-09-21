@@ -1,0 +1,1 @@
+ALTER TABLE `document_progress` ADD `page_accum_seconds` integer DEFAULT 0 NOT NULL;

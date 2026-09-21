@@ -1,0 +1,411 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-geist-mono);
+  --font-heading: var(--font-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+  /* Tokens propios del LMS: bg-cta, text-warning, text-locked, etc. */
+  --color-cta: var(--cta);
+  --color-cta-foreground: var(--cta-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-locked: var(--locked);
+  --color-progress-ring: var(--progress-ring);
+  --color-brand-deep: var(--brand-deep);
+  --color-brand-soft: var(--brand-soft);
+  --color-brand-tint: var(--brand-tint);
+  --color-section: var(--section);
+  --color-section-strong: var(--section-strong);
+  --color-section-soft: var(--section-soft);
+  --color-section-fg: var(--section-fg);
+  --color-kind-document: var(--kind-document);
+  --color-kind-document-tint: var(--kind-document-tint);
+  --color-kind-video: var(--kind-video);
+  --color-kind-video-tint: var(--kind-video-tint);
+  --color-kind-exam: var(--kind-exam);
+  --color-kind-exam-tint: var(--kind-exam-tint);
+  --color-kind-assignment: var(--kind-assignment);
+  --color-kind-assignment-tint: var(--kind-assignment-tint);
+  --color-kind-text: var(--kind-text);
+  --color-kind-text-tint: var(--kind-text-tint);
+  --color-kind-document-strong: var(--kind-document-strong);
+  --color-kind-video-strong: var(--kind-video-strong);
+  --color-kind-exam-strong: var(--kind-exam-strong);
+  --color-kind-assignment-strong: var(--kind-assignment-strong);
+  --color-kind-text-strong: var(--kind-text-strong);
+  --color-kind-link: var(--kind-link);
+  --color-kind-link-tint: var(--kind-link-tint);
+  --color-kind-link-strong: var(--kind-link-strong);
+  --color-kind-resource: var(--kind-resource);
+  --color-kind-resource-tint: var(--kind-resource-tint);
+  --color-kind-resource-strong: var(--kind-resource-strong);
+  --font-heading: var(--font-sora);
+}
+
+/* Paleta v3 — Dirección B: neutros slate, índigo como acción, sidebar azul
+   noche y UN color vivo por SECCIÓN (ver [data-section] abajo). Semánticos
+   (verde/ámbar/rojo) y colores por tipo de lección se conservan. */
+:root {
+  --background: #f8fafc;
+  --foreground: #0f172a;
+  --card: #ffffff;
+  --card-foreground: #0f172a;
+  --popover: #ffffff;
+  --popover-foreground: #0f172a;
+  --primary: #4f46e5;
+  --primary-foreground: #ffffff;
+  --secondary: #f1f5f9;
+  --secondary-foreground: #0f172a;
+  --muted: #f1f5f9;
+  --muted-foreground: #64748b;
+  --accent: #eef2ff;
+  --accent-foreground: #3730a3;
+  --destructive: #dc2626;
+  --border: #e2e8f0;
+  --input: #e2e8f0;
+  --ring: #4f46e5;
+  --chart-1: #4f46e5;
+  --chart-2: #16a34a;
+  --chart-3: #d97706;
+  --chart-4: #0ea5e9;
+  --chart-5: #dc2626;
+  --radius: 0.75rem;
+  /* Sidebar azul noche */
+  --sidebar: #0f172a;
+  --sidebar-foreground: #cbd5e1;
+  --sidebar-primary: #818cf8;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: rgba(255, 255, 255, 0.1);
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: rgba(255, 255, 255, 0.08);
+  --sidebar-ring: #818cf8;
+  /* Tokens propios del LMS */
+  --cta: #4f46e5;
+  --cta-foreground: #ffffff;
+  --success: #16a34a;
+  --success-foreground: #ffffff;
+  --warning: #d97706;
+  --locked: #94a3b8;
+  --progress-ring: #22c55e;
+  /* Marca (gradientes, chips, adornos de UI) */
+  --brand-deep: #1e1b4b;
+  --brand-soft: #818cf8;
+  --brand-tint: #eef2ff;
+  /* Sección actual (la fija [data-section] en el shell; default = índigo) */
+  --section: #6366f1;
+  --section-strong: #4338ca;
+  --section-soft: #eef2ff;
+  --section-fg: #ffffff;
+  /* Colores por TIPO de contenido (validados CVD todos-los-pares). Documento
+     pasa a índigo profundo para no chocar con el cielo de "Cursos". */
+  --kind-document: #1e43bc;
+  --kind-document-tint: #e9edf9;
+  --kind-video: #d33be0;
+  --kind-video-tint: #fae9fb;
+  --kind-exam: #d55e00;
+  --kind-exam-tint: #fbeee2;
+  --kind-assignment: #0d9488;
+  --kind-assignment-tint: #e3f2f0;
+  --kind-text: #475569;
+  --kind-text-tint: #f1f5f9;
+  --kind-document-strong: #1e43bc;
+  --kind-video-strong: #97279f;
+  --kind-exam-strong: #a34700;
+  --kind-assignment-strong: #0b6b62;
+  --kind-text-strong: #334155;
+  --kind-link: #0e7490;
+  --kind-link-tint: #e0f7fa;
+  --kind-link-strong: #155e75;
+  --kind-resource: #7c3aed;
+  --kind-resource-tint: #f1ebfe;
+  --kind-resource-strong: #5b21b6;
+}
+
+/* ─── Identidad por SECCIÓN (orientación automática en todas las pantallas) ── */
+[data-section="home"]        { --section: #6366f1; --section-strong: #4338ca; --section-soft: #eef2ff; }
+[data-section="courses"]     { --section: #0ea5e9; --section-strong: #0369a1; --section-soft: #e0f2fe; }
+[data-section="grading"]     { --section: #f59e0b; --section-strong: #b45309; --section-soft: #fef3c7; }
+[data-section="students"]    { --section: #10b981; --section-strong: #047857; --section-soft: #d1fae5; }
+[data-section="reports"]     { --section: #8b5cf6; --section-strong: #6d28d9; --section-soft: #ede9fe; }
+[data-section="certificates"]{ --section: #f43f5e; --section-strong: #be123c; --section-soft: #ffe4e6; }
+[data-section="admin"]       { --section: #64748b; --section-strong: #334155; --section-soft: #f1f5f9; }
+[data-section="settings"]    { --section: #475569; --section-strong: #1e293b; --section-soft: #f1f5f9; }
+[data-section="renewals"]    { --section: #ea580c; --section-strong: #c2410c; --section-soft: #ffedd5; }
+[data-section="focus"]       { --section: #64748b; --section-strong: #334155; --section-soft: #f1f5f9; }
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  button:not(:disabled), [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+  html {
+    @apply font-sans;
+    scroll-behavior: smooth;
+  }
+  ::selection {
+    background: #c7d2fe;
+    color: #1e1b4b;
+  }
+  /* Scrollbar sutil acorde a la marca */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e1 transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+/* ─── Animaciones del sistema (150–300 ms, con reduced-motion) ─────────────── */
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Latido de la guía: señala el control exacto al llegar desde primeros pasos */
+@keyframes guide-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--section) 65%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 10px color-mix(in srgb, var(--section) 0%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--section) 0%, transparent);
+  }
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@layer utilities {
+  /* Entrada de secciones/cards: usar en contenedores de página */
+  .anim-rise {
+    animation: rise-in 0.28s cubic-bezier(0.21, 0.9, 0.35, 1) both;
+  }
+  .anim-pop {
+    animation: pop-in 0.2s cubic-bezier(0.21, 0.9, 0.35, 1) both;
+  }
+  /* Se pone y se quita desde `pulseHighlight` (src/lib/guide-pulse.ts) */
+  .guide-pulse {
+    border-radius: var(--radius);
+    animation: guide-pulse 1.6s ease-out 2;
+  }
+  /* Escalonado para listas: aplicar .anim-rise + .anim-d1/.anim-d2/... */
+  .anim-d1 { animation-delay: 0.04s; }
+  .anim-d2 { animation-delay: 0.08s; }
+  .anim-d3 { animation-delay: 0.12s; }
+  .anim-d4 { animation-delay: 0.16s; }
+  .anim-d5 { animation-delay: 0.2s; }
+
+  /* Card interactiva: elevación suave al pasar el cursor (sin mover layout) */
+  .card-lift {
+    transition:
+      box-shadow 0.2s ease,
+      border-color 0.2s ease,
+      transform 0.2s ease;
+  }
+  .card-lift:hover {
+    box-shadow:
+      0 8px 24px -8px rgb(15 23 42 / 0.18),
+      0 2px 6px -2px rgb(15 23 42 / 0.08);
+    border-color: var(--brand-soft);
+  }
+
+  /* Adorno de marca: franja degradada para heros/encabezados */
+  .brand-gradient {
+    background-image: linear-gradient(120deg, var(--brand-deep), #4f46e5 55%, #22d3ee);
+  }
+  .brand-gradient-text {
+    background-image: linear-gradient(120deg, #1e1b4b, #4f46e5 60%, #0ea5e9);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* Relieve negro para texto claro sobre fotos (portada del login): contorno
+     corto + halo amplio, legible sobre cielo, pasto o azoteas */
+  .text-halo {
+    text-shadow:
+      0 1px 2px rgb(0 0 0 / 0.8),
+      0 0 1px rgb(0 0 0 / 0.6),
+      0 2px 14px rgb(0 0 0 / 0.55);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .anim-rise,
+  .anim-pop {
+    animation: none;
+  }
+  /* Sin animación, pero el anillo se queda: es la señal de «aquí es» */
+  .guide-pulse {
+    animation: none;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--section) 55%, transparent);
+  }
+  .card-lift,
+  .card-lift:hover {
+    transition: none;
+    transform: none;
+  }
+  html {
+    scroll-behavior: auto;
+  }
+}
+/* ─── Utilidades de sección (v3) ─────────────────────────────────────────── */
+@layer utilities {
+  .section-gradient {
+    background-image: linear-gradient(100deg, var(--section-strong), var(--section));
+  }
+  .section-glow {
+    box-shadow: 0 12px 28px -14px color-mix(in srgb, var(--section) 70%, transparent);
+  }
+  /* Fondo de página con un halo muy sutil del color de sección */
+  .section-halo {
+    background-image: radial-gradient(
+      900px 260px at 20% -10%,
+      color-mix(in srgb, var(--section) 9%, transparent),
+      transparent 70%
+    );
+  }
+}
+
+/* ─── Contenido enriquecido (editor + visores) ─────────────────────────────── */
+.rich-content { font-size: 15px; line-height: 1.65; overflow-wrap: anywhere; max-width: none; }
+.rich-content > * + * { margin-top: 0.6em; }
+.rich-content h1 { font-family: var(--font-heading); font-size: 1.75rem; font-weight: 700; line-height: 1.2; margin-top: 1.2em; }
+.rich-content h2 { font-family: var(--font-heading); font-size: 1.375rem; font-weight: 600; line-height: 1.25; margin-top: 1.1em; }
+.rich-content h3 { font-family: var(--font-heading); font-size: 1.125rem; font-weight: 600; margin-top: 1em; }
+.rich-content h4, .rich-content h5, .rich-content h6 { font-weight: 600; }
+.rich-content strong { font-weight: 600; }
+.rich-content ul { list-style: disc; padding-left: 1.5rem; }
+.rich-content ol { list-style: decimal; padding-left: 1.5rem; }
+.rich-content li + li { margin-top: 0.2em; }
+.rich-content li > p { margin: 0; }
+.rich-content blockquote { border-left: 4px solid var(--section, #6366f1); background: color-mix(in oklab, var(--section, #6366f1) 8%, transparent); padding: 0.4rem 0.9rem; border-radius: 0 0.5rem 0.5rem 0; }
+.rich-content a { color: var(--section-strong, #4338ca); text-decoration: underline; text-underline-offset: 2px; }
+.rich-content img { max-width: 100%; height: auto; border-radius: 0.5rem; }
+.rich-content hr { border: 0; border-top: 1px solid var(--border); margin: 1.25em 0; }
+.rich-content mark { padding: 0 0.15em; border-radius: 0.2em; }
+.rich-content table { border-collapse: collapse; width: 100%; table-layout: fixed; margin: 0.75em 0; overflow: hidden; border-radius: 0.5rem; }
+.rich-content th, .rich-content td { border: 1px solid var(--border); padding: 0.4rem 0.6rem; vertical-align: top; min-width: 2rem; }
+.rich-content th { background: var(--secondary); font-weight: 600; text-align: left; }
+.rich-content td > p, .rich-content th > p { margin: 0; }
+.rich-content .selectedCell { outline: 2px solid var(--section, #6366f1); outline-offset: -2px; }
+.rich-content p.is-editor-empty:first-child::before { content: attr(data-placeholder); color: var(--muted-foreground); float: left; pointer-events: none; height: 0; }
