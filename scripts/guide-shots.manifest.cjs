@@ -25,6 +25,12 @@ module.exports = (d) => {
       actions: [{ type: "click", sel: 'header button:not([aria-label="Abrir menú"])', wait: 900 }],
       hl: [{ sel: "[data-radix-popper-content-wrapper]", label: "Notificaciones: entregas, cursos completados, certificados", pad: 4 }],
     }),
+    // El maestro demo ya completó los 5 pasos (la banda no sale): se toma con el
+    // admin en «Mi contenido», que no tiene cursos (sesión nueva, sin cookie de vista)
+    A("teacher-inicio-3", "/teach/dashboard", {
+      actions: [{ type: "click", text: "Ver todos", tag: "button", exact: true, wait: 700 }],
+      hl: [{ sel: 'section[aria-label="Primeros pasos"]', label: "Se marca solo; el botón te lleva al siguiente paso", pad: 6 }],
+    }),
     T("teacher-curso-1", "/teach/courses", {
       actions: [{ type: "click", text: "Nuevo curso", tag: "button", wait: 700 }],
       hl: dlg("Completa y crea"),
@@ -113,6 +119,10 @@ module.exports = (d) => {
         { text: "Certificados", tag: "h2,h3,h4,div", label: "Certificados del alumno", pad: 8, dim: false },
       ],
     }),
+    T("teacher-alumnos-5", "/teach/students", {
+      actions: [{ type: "click", sel: 'table tbody tr:first-child button[aria-label^="Opciones de "]', wait: 800 }],
+      hl: menu("Restablecer y desactivar: solo si el alumno está solo contigo"),
+    }),
     // Grupos y papelera (F8)
     T("teacher-grupos-1", "/teach/groups", {
       hl: [
@@ -162,6 +172,8 @@ module.exports = (d) => {
       hl: [{ text: "Distribución de avance", tag: "h2,h3,h4,div", label: "Distribución de avance", pad: 12 }],
     }),
     T("teacher-certificados-1", `/teach/templates/${d.templateId}`, {
+      // La plantilla es general (del admin): el maestro no puede abrir su editor
+      as: "admin",
       height: 1250,
       hl: [
         { text: "Generar PDF de prueba", tag: "button", label: "Prueba el resultado en PDF", dim: false },
@@ -170,6 +182,8 @@ module.exports = (d) => {
       ],
     }),
     T("teacher-certificados-2", `/teach/templates/${d.templateId}`, {
+      // La plantilla es general (del admin): el maestro no puede abrir su editor
+      as: "admin",
       height: 1100,
       actions: [{ type: "click", sel: '[aria-label^="Campo "]', wait: 500 }],
       hl: [{ sel: '[aria-label="Herramientas del lienzo"]', label: "Alinear · distribuir · imán · cuadrícula · reglas", pad: 4, dim: false }],
@@ -181,12 +195,17 @@ module.exports = (d) => {
     T("teacher-certificados-4", "/teach/templates", {
       hl: [{ text: "ZIP", tag: "a,button", label: "Descarga física en ZIP", dim: false }],
     }),
+    T("teacher-certificados-5", "/teach/templates", {
+      hl: [{ text: "Plantillas generales", tag: "section", label: "Las diseña el administrador; elígelas en Ajustes del curso", pad: 10 }],
+    }),
     // Vigencia y recertificación (F8)
     T("teacher-vencimientos-1", `/teach/courses/${d.auxCourseId}/settings`, {
       scrollTo: { sel: "#vigencia" },
       hl: [{ sel: "#vigencia", label: "Vitalicio · año calendario · meses", pad: 6 }],
     }),
     T("teacher-vencimientos-2", `/teach/templates/${d.templateId}`, {
+      // La plantilla es general (del admin): el maestro no puede abrir su editor
+      as: "admin",
       height: 1100,
       settle: 2500,
       // La página hace scroll suave: primero llevar el botón a la vista y luego abrir el menú
@@ -330,6 +349,13 @@ module.exports = (d) => {
     A("admin-cursos-1", "/admin/courses", {
       actions: [{ type: "click", sel: "table tbody tr:first-child button:last-of-type", wait: 800 }],
       hl: menu("Reasignar dueño"),
+    }),
+    A("admin-cursos-2", "/teach/courses", {
+      actions: [{ type: "click", sel: 'header button[aria-label^="Viendo:"]', wait: 900 }],
+      hl: [{ sel: "[data-radix-popper-content-wrapper]", label: "Mi contenido, General o ver como un maestro", pad: 4 }],
+    }),
+    A("admin-cursos-3", "/teach/templates", {
+      hl: [{ text: "General", tag: "li", label: "General: todos los maestros pueden usarla", pad: 6 }],
     }),
     A("admin-identidad-1", "/ajustes", {
       scrollTo: { text: "Identidad de la empresa", tag: "h3,h4,div" },
