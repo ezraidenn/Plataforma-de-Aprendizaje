@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { apiUser } from "@/server/auth/guards";
 import { saveStream, type FileKind } from "@/server/services/storage";
 import { canEditBranding } from "@/server/services/profile";
+import { resolveUploadMime } from "@/lib/upload-types";
 
 export const runtime = "nodejs";
 
@@ -64,10 +65,11 @@ export async function POST(request: NextRequest) {
 
   if (!request.body) return NextResponse.json({ error: "Cuerpo vacío" }, { status: 400 });
 
-  const mimeType = request.headers.get("content-type") ?? "application/octet-stream";
-  if (kind === "editor_image" && !/^image\/(png|jpeg|webp|gif)$/.test(mimeType)) {
-    return NextResponse.json({ error: "Solo imágenes PNG, JPG, WEBP o GIF" }, { status: 400 });
-  }
+  // Cada clase admite ciertos tipos (imágenes, PDF/PPT…); el tipo guardado es
+  // el que se usará al servirlo, así que no se acepta cualquier declaración
+  const resolved = resolveUploadMime(kind, originalName, request.headers.get("content-type"));
+  if (!resolved.ok) return NextResponse.json({ error: resolved.error }, { status: 400 });
+  const mimeType = resolved.mime;
 
   try {
     const result = await saveStream({

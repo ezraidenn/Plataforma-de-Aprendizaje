@@ -36,6 +36,7 @@ import { addResourceFile, resourceItemForFile } from "../src/server/services/res
 import { addAssignmentAttachment, attachmentItemForFile } from "../src/server/services/assignments";
 import { attachDocumentFile } from "../src/server/services/documents";
 import { inlineAllowed } from "../src/lib/inline-mime";
+import { resolveUploadMime } from "../src/lib/upload-types";
 import { isDocumentLoad, stripCookie, titleWithOwner, initialsOf, contextWords, VIEW_ALL } from "../src/lib/view-context";
 import { actingOwnerId, fullScope, ownScope, resolveViewScope } from "../src/server/auth/view-scope";
 import { isStudentVisible, studentAccountPermissions } from "../src/server/services/student-scope";
@@ -204,6 +205,26 @@ function pure() {
     "descarga: HTML, SVG, texto y desconocidos",
     ["text/html", "image/svg+xml", "application/xhtml+xml", "text/plain", "application/octet-stream", ""].every((m) => !inlineAllowed(m))
   );
+
+  console.log("\n— Archivos: qué tipo se admite al subir");
+  const mimeOf = (kind: string, name: string, declared: string | null) => {
+    const r = resolveUploadMime(kind, name, declared);
+    return r.ok ? r.mime : `error: ${r.error}`;
+  };
+  check("Portada PNG: se admite", mimeOf("cover", "foto.png", "image/png") === "image/png");
+  check("Portada con HTML disfrazado: se rechaza", mimeOf("cover", "x.png", "text/html").startsWith("error"));
+  check("Portada SVG: se rechaza", mimeOf("cover", "logo.svg", "image/svg+xml").startsWith("error"));
+  check("Logo con alias image/jpg: se guarda como image/jpeg", mimeOf("branding", "logo.jpg", "image/jpg") === "image/jpeg");
+  check(
+    "PPTX sin tipo del navegador: se deduce por extensión",
+    mimeOf("course_source", "clase.PPTX", "") === "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+  );
+  check("Documento .docx como fuente de curso: se rechaza", mimeOf("course_source", "notas.docx", "application/octet-stream").startsWith("error"));
+  check("Fondo de plantilla PDF: se admite", mimeOf("template_bg", "fondo.pdf", "application/pdf; charset=binary") === "application/pdf");
+  check("Imagen pegada GIF: se admite", mimeOf("editor_image", "imagen.png", "image/gif") === "image/gif");
+  check("Entrega de cualquier tipo: se conserva", mimeOf("submission", "tarea.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document").startsWith("application/vnd.openxml"));
+  check("Entrega con tipo inválido: queda como binario", mimeOf("submission", "x.bin", "no es un tipo") === "application/octet-stream");
+  check("Recurso sin tipo pero .pdf: se deduce", mimeOf("resource", "guia.pdf", null) === "application/pdf");
 }
 
 function onboardingSection() {
