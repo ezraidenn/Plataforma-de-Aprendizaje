@@ -64,6 +64,13 @@
       "when": 1789153556895,
       "tag": "0008_publicar-resultados",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1790032330144,
+      "tag": "0009_indices-archivos",
+      "breakpoints": true
     }
   ]
 }

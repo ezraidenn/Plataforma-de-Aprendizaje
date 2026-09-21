@@ -237,7 +237,13 @@ export const itemDocuments = sqliteTable("item_documents", {
     .notNull()
     .default("pending"),
   processingError: text("processing_error"),
-});
+}, (t) => [
+  // Buscar a qué documento pertenece un archivo (permisos de /api/files y
+  // ubicación en disco): sin índice se recorría la tabla completa
+  index("item_documents_source_idx").on(t.sourceFileId),
+  index("item_documents_render_idx").on(t.renderFileId),
+  index("item_documents_thumbnail_idx").on(t.thumbnailFileId),
+]);
 
 // Video por ENLACE externo (YouTube/Vimeo) — sin archivo ni procesamiento
 export const itemVideos = sqliteTable("item_videos", {
@@ -294,7 +300,10 @@ export const itemResourceFiles = sqliteTable(
       .references(() => files.id),
     position: integer("position").notNull().default(0),
   },
-  (t) => [index("item_resource_files_item_idx").on(t.itemId, t.position)]
+  (t) => [
+    index("item_resource_files_item_idx").on(t.itemId, t.position),
+    index("item_resource_files_file_idx").on(t.fileId),
+  ]
 );
 
 // Adjuntos del maestro en una tarea (PDF de instrucciones, plantillas...)
@@ -310,7 +319,10 @@ export const assignmentAttachments = sqliteTable(
       .references(() => files.id),
     position: integer("position").notNull().default(0),
   },
-  (t) => [index("assignment_attachments_item_idx").on(t.itemId, t.position)]
+  (t) => [
+    index("assignment_attachments_item_idx").on(t.itemId, t.position),
+    index("assignment_attachments_file_idx").on(t.fileId),
+  ]
 );
 
 export const exams = sqliteTable("exams", {
@@ -360,7 +372,10 @@ export const questions = sqliteTable(
     config: text("config", { mode: "json" }),
     ...timestamps,
   },
-  (t) => [index("questions_exam_idx").on(t.examItemId, t.position)]
+  (t) => [
+    index("questions_exam_idx").on(t.examItemId, t.position),
+    index("questions_image_idx").on(t.imageFileId),
+  ]
 );
 
 export const questionOptions = sqliteTable(
@@ -523,6 +538,7 @@ export const assignmentSubmissions = sqliteTable(
     index("submissions_item_idx").on(t.itemId),
     index("submissions_student_idx").on(t.studentId),
     index("submissions_status_idx").on(t.status),
+    index("submissions_file_idx").on(t.fileId),
   ]
 );
 
@@ -538,7 +554,10 @@ export const submissionFiles = sqliteTable(
       .references(() => files.id),
     position: integer("position").notNull().default(0),
   },
-  (t) => [index("submission_files_sub_idx").on(t.submissionId, t.position)]
+  (t) => [
+    index("submission_files_sub_idx").on(t.submissionId, t.position),
+    index("submission_files_file_idx").on(t.fileId),
+  ]
 );
 
 // ═══════════════════ Certificados, notificaciones, jobs ═════════════════════
@@ -562,7 +581,10 @@ export const certificateTemplates = sqliteTable(
     decor: text("decor"),
     ...timestamps,
   },
-  (t) => [index("cert_templates_owner_idx").on(t.ownerId)]
+  (t) => [
+    index("cert_templates_owner_idx").on(t.ownerId),
+    index("cert_templates_background_idx").on(t.backgroundFileId),
+  ]
 );
 
 export const certificates = sqliteTable(
@@ -605,6 +627,7 @@ export const certificates = sqliteTable(
   (t) => [
     index("certificates_student_idx").on(t.studentId),
     index("certificates_course_idx").on(t.courseId),
+    index("certificates_pdf_idx").on(t.pdfFileId),
   ]
 );
 
