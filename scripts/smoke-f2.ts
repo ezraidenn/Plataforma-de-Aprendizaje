@@ -5,7 +5,7 @@
  *
  * Uso: NODE_OPTIONS=--conditions=react-server pnpm exec tsx scripts/smoke-f2.ts
  */
-import { cleanupSmokeNotifications } from "./lib/smoke-cleanup";
+import { cleanupSmokeNotifications, removeDemoCourses } from "./lib/smoke-cleanup";
 import { eq, and } from "drizzle-orm";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 import { Readable } from "node:stream";
@@ -206,6 +206,7 @@ async function main() {
   console.log(failures === 0 ? "\n✅ TODO PASÓ (F2)" : `\n❌ ${failures} fallas`);
   // No dejar la campana de las cuentas demo llena de avisos de prueba
   cleanupSmokeNotifications([course.id]);
+  if (failures === 0) removeDemoCourses([TITLE], teacher.id);
   process.exit(failures === 0 ? 0 : 1);
 }
 

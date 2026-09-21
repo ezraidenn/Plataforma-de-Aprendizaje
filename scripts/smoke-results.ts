@@ -5,7 +5,7 @@
  * Uso: pnpm smoke:results
  */
 import { resultsVisible, type ExamResultsMode } from "../src/lib/exam-results";
-import { cleanupSmokeNotifications } from "./lib/smoke-cleanup";
+import { cleanupSmokeNotifications, removeDemoCourses } from "./lib/smoke-cleanup";
 import { and, eq, like, sql } from "drizzle-orm";
 import { db } from "../src/server/db";
 import { courses as coursesTable, notifications, users } from "../src/server/db/schema";
@@ -190,6 +190,7 @@ async function main() {
     console.log(`\n❌ ${failures} falla(s)`);
     process.exit(1);
   }
+  removeDemoCourses(courseIds.map((id) => courses.getCourse(id)!.title), teacher().id);
   console.log("\n✅ PUBLICAR RESULTADOS OK");
   process.exit(0);
 }

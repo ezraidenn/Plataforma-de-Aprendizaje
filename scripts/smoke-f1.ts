@@ -4,10 +4,10 @@
  * reloj real → anti-trampa → completado.
  *
  * Uso: NODE_OPTIONS=--conditions=react-server pnpm exec tsx scripts/smoke-f1.ts
- * Crea un "Curso de demostración" que se deja en la base para probar en el
- * navegador (se recrea limpio en cada corrida).
+ * Crea un "Curso de demostración" que se borra al terminar bien (si falla, se
+ * queda para revisarlo y la siguiente corrida lo recrea limpio).
  */
-import { cleanupSmokeNotifications } from "./lib/smoke-cleanup";
+import { cleanupSmokeNotifications, removeDemoCourses } from "./lib/smoke-cleanup";
 import { eq } from "drizzle-orm";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 import { Readable } from "node:stream";
@@ -197,11 +197,12 @@ async function main() {
 
   console.log(
     failures === 0
-      ? "\n✅ TODO PASÓ — el curso demo queda en la base para probar en el navegador"
+      ? "\n✅ TODO PASÓ (F1)"
       : `\n❌ ${failures} fallas`
   );
   // No dejar la campana de las cuentas demo llena de avisos de prueba
   cleanupSmokeNotifications([course.id]);
+  if (failures === 0) removeDemoCourses([course.title], teacher.id);
   process.exit(failures === 0 ? 0 : 1);
 }
 

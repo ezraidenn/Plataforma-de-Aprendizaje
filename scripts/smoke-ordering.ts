@@ -13,7 +13,7 @@ import * as tree from "../src/server/services/tree";
 import * as examsSvc from "../src/server/services/exams";
 import { buildRunnerQuestions } from "../src/components/student/lesson-data";
 import { EXAM_CSV_TEMPLATE, exportExamCsv, validateExamCsv } from "../src/server/services/exam-csv";
-import { cleanupSmokeNotifications } from "./lib/smoke-cleanup";
+import { cleanupSmokeNotifications, removeDemoCourses } from "./lib/smoke-cleanup";
 
 let failures = 0;
 function check(name: string, cond: boolean, detail?: unknown) {
@@ -108,6 +108,7 @@ function endToEnd() {
   check("La plantilla trae los 7 tipos y todas sus filas son válidas", template.ok === 7 && template.invalid === 0, { ok: template.ok, invalid: template.invalid });
 
   cleanupSmokeNotifications([course.id]);
+  if (!failures) removeDemoCourses([PREFIX], teacher.id);
 }
 
 async function main() {

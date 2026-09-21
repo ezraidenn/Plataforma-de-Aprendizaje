@@ -4,7 +4,7 @@
  *
  * Uso: NODE_OPTIONS=--conditions=react-server pnpm exec tsx scripts/smoke-f6.ts
  */
-import { cleanupSmokeNotifications } from "./lib/smoke-cleanup";
+import { cleanupSmokeNotifications, removeDemoCourses } from "./lib/smoke-cleanup";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../src/server/db";
 import { ownScope } from "../src/server/auth/view-scope";
@@ -288,7 +288,7 @@ async function main() {
   check("Un nombre de grupo cerrado no se reutiliza en silencio", closedNameErr.includes("cerrado"));
   cohorts.setCohortStatus(grupoB.id, "open", teacher.id);
 
-  // La plantilla de prueba no se queda: el curso demo sigue, ya sin plantilla
+  // La plantilla de prueba no se queda (el curso demo se borra al final)
   if (!failures) {
     db.update(coursesTable)
       .set({ certificateTemplateId: null })
@@ -304,6 +304,7 @@ async function main() {
     console.log(`\n❌ ${failures} falla(s)`);
     process.exit(1);
   }
+  removeDemoCourses([TITLE, TITLE2], teacher.id);
   console.log("\n✅ TODO PASÓ (F6)");
 }
 

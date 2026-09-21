@@ -4,7 +4,7 @@
  *
  * Uso: pnpm smoke:rules
  */
-import { cleanupSmokeNotifications } from "./lib/smoke-cleanup";
+import { cleanupSmokeNotifications, removeDemoCourses } from "./lib/smoke-cleanup";
 import { eq } from "drizzle-orm";
 import { db } from "../src/server/db";
 import { courses as coursesTable, enrollments, itemTexts, users } from "../src/server/db/schema";
@@ -75,6 +75,7 @@ async function main() {
     console.log(`\n❌ ${failures} falla(s)`);
     process.exit(1);
   }
+  removeDemoCourses([TITLE], teacher.id);
   console.log("\n✅ REGLAS Y/O OK");
   process.exit(0);
 }

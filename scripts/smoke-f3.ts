@@ -4,7 +4,7 @@
  *
  * Uso: NODE_OPTIONS=--conditions=react-server pnpm exec tsx scripts/smoke-f3.ts
  */
-import { cleanupSmokeNotifications } from "./lib/smoke-cleanup";
+import { cleanupSmokeNotifications, removeDemoCourses } from "./lib/smoke-cleanup";
 import { and, eq, sql } from "drizzle-orm";
 import { Readable } from "node:stream";
 
@@ -305,7 +305,7 @@ async function main() {
   } catch (e) { foreignErr = (e as Error).message; }
   check("Archivo ajeno (kind attachment) rechazado en entrega", foreignErr.length > 0);
 
-  // La plantilla de prueba no se queda: el curso demo sigue, ya sin plantilla
+  // La plantilla de prueba no se queda (el curso demo se borra al final)
   if (failures === 0) {
     db.update(coursesTable)
       .set({ certificateTemplateId: null })
@@ -318,6 +318,7 @@ async function main() {
   console.log(failures === 0 ? "\n✅ TODO PASÓ (F3)" : `\n❌ ${failures} fallas`);
   // No dejar la campana de las cuentas demo llena de avisos de prueba
   cleanupSmokeNotifications([course.id]);
+  if (failures === 0) removeDemoCourses([TITLE], teacher.id);
   process.exit(failures === 0 ? 0 : 1);
 }
 
