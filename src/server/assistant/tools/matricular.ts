@@ -12,9 +12,9 @@ import { appendMessage } from "@/server/services/ai-conversations";
 import { schema, str, strList, param, paramList, type AssistantTool, type ToolCtx } from "../tool-types";
 
 /**
- * Matricular: con un alumno se hace al momento (deshacer = desmatricular);
- * con varios se propone una tabla para revisar. Desmatricular siempre se
- * revisa, salvo cuando es el «deshacer» de una matrícula.
+ * Matricular: con un alumno se hace al momento (deshacer = su propio `undo`,
+ * que da de baja); con varios se propone una tabla para revisar.
+ * Desmatricular siempre se revisa.
  */
 
 type Named = { id: string; fullName: string; email: string };
@@ -67,6 +67,26 @@ function proposalAnchor(ctx: ToolCtx): string {
   return appendMessage(ctx.conversationId, "assistant", [], "").id;
 }
 
+/**
+ * Aplica una propuesta ya revisada. Revalida todo: el curso sigue siendo del
+ * usuario y cada fila se recalcula; lo que hoy esté bloqueado no se aplica.
+ */
+function applyRows(rows: ProposalRow[], payload: Record<string, unknown>, ctx: ToolCtx, action: "enroll" | "unenroll") {
+  const courseId = String(payload.courseId);
+  const course = getOwnedCourse(courseId, ctx.user);
+  if (!course) return { text: "El curso ya no está disponible." };
+  const ids = rowsFor(rows.map((r) => r.id), course.id, ctx, action)
+    .filter((r) => !r.blocked)
+    .map((r) => r.id);
+  if (action === "enroll") {
+    const count = ids.length ? enrollStudents(course.id, ids, ctx.user.id) : 0;
+    return { text: `${count} alumno(s) matriculado(s) en ${course.title}.` };
+  }
+  let count = 0;
+  for (const id of ids) if (unenrollStudent(course.id, id, ctx.user.id)) count++;
+  return { text: `${count} alumno(s) dado(s) de baja de ${course.title}.` };
+}
+
 export const matricular: AssistantTool = {
   name: "matricular",
   description: "Matricula uno o varios alumnos en un curso. Con un alumno se aplica al momento; con varios se muestra una tabla para revisar.",
@@ -97,8 +117,7 @@ export const matricular: AssistantTool = {
           { type: "result", text, undoable: true },
           { type: "links", links: [{ label: "Ver alumnos del curso", href: `/teach/courses/${course.id}/students`, icon: "user" }] },
         ],
-        // __undo no está en el esquema estricto: solo el servidor puede mandarlo
-        undo: { tool: "desmatricular", params: { alumno_ids: [row.id], curso_id: course.id, __undo: true } },
+        undo: { tool: "matricular", params: { alumno_id: row.id, curso_id: course.id } },
       };
     }
 
@@ -113,11 +132,19 @@ export const matricular: AssistantTool = {
     return { forModel: `Se creó una propuesta con ${rows.length} fila(s), ${ok} listas para matricular en ${course.title}. El usuario la revisará.`, proposalId };
   },
   apply(rows, payload, ctx) {
-    const courseId = String(payload.courseId);
-    const courseTitle = String(payload.courseTitle);
-    const ids = rows.map((r) => r.id);
-    const count = ids.length ? enrollStudents(courseId, ids, ctx.user.id) : 0;
-    return { text: `${count} alumno(s) matriculado(s) en ${courseTitle}.` };
+    return applyRows(rows, payload, ctx, "enroll");
+  },
+  /** Deshacer la matrícula instantánea: baja del alumno, sin pasar por revisión. */
+  undo(params, ctx) {
+    const studentId = param(params, "alumno_id");
+    const course = getOwnedCourse(param(params, "curso_id"), ctx.user);
+    if (!studentId || !course) return { forModel: "No encontramos ese curso o no te pertenece." };
+    const [row] = rowsFor([studentId], course.id, ctx, "unenroll");
+    if (row.blocked) return { forModel: `No se pudo deshacer: ${row.warning}.` };
+    unenrollStudent(course.id, row.id, ctx.user.id);
+    audit(ctx.user.id, "assistant_matricular_undo", "enrollment", `${course.id}:${row.id}`, { via: "assistant", conversationId: ctx.conversationId });
+    const text = `${row.cells.nombre} quedó dado de baja de ${course.title}.`;
+    return { forModel: text, blocks: [{ type: "result", text }] };
   },
 };
 
@@ -137,14 +164,6 @@ export const desmatricular: AssistantTool = {
     const course = getOwnedCourse(courseId, ctx.user);
     if (!course) return { forModel: "No encontramos ese curso o no te pertenece." };
     const rows = rowsFor(studentIds, course.id, ctx, "unenroll");
-
-    // «Deshacer» de una matrícula instantánea: se aplica sin revisión. La IA no
-    // puede mandar __undo (el esquema estricto no lo admite); solo el servidor.
-    if (params.__undo === true && rows.length === 1 && !rows[0].blocked) {
-      unenrollStudent(course.id, rows[0].id, ctx.user.id);
-      return { forModel: `${rows[0].cells.nombre} quedó dado de baja de ${course.title}.` };
-    }
-
     const proposalId = createProposal("desmatricular", ctx, proposalAnchor(ctx), {
       title: `Dar de baja de ${course.title}`,
       applyLabel: "Dar de baja",
@@ -155,9 +174,6 @@ export const desmatricular: AssistantTool = {
     return { forModel: `Se creó una propuesta para dar de baja ${rows.filter((r) => !r.blocked).length} alumno(s) de ${course.title}. El usuario la revisará.`, proposalId };
   },
   apply(rows, payload, ctx) {
-    const courseId = String(payload.courseId);
-    let count = 0;
-    for (const r of rows) if (unenrollStudent(courseId, r.id, ctx.user.id)) count++;
-    return { text: `${count} alumno(s) dado(s) de baja de ${String(payload.courseTitle)}.` };
+    return applyRows(rows, payload, ctx, "unenroll");
   },
 };

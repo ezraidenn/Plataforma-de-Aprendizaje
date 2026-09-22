@@ -22,7 +22,7 @@ export type ToolCtx = {
   conversationId: string;
 };
 
-/** Cómo revertir una acción instantánea: otra herramienta con sus parámetros. */
+/** Cómo revertir una acción instantánea: la herramienta y los parámetros para su `undo`. */
 export type UndoSpec = { tool: string; params: Record<string, unknown> };
 
 export type ToolResult = {
@@ -61,7 +61,14 @@ export type AssistantTool = {
   run(params: Record<string, unknown>, ctx: ToolCtx): Promise<ToolResult> | ToolResult;
   /** Solo herramientas `review`: aplica las filas ya revisadas (revalida). */
   apply?(rows: ProposalRow[], payload: Record<string, unknown>, ctx: ToolCtx): Promise<ApplyResult> | ApplyResult;
+  /** Solo herramientas `instant`: revierte lo hecho. El servidor llama a esto con `UndoSpec.params`, nunca a `run`. */
+  undo?(params: Record<string, unknown>, ctx: ToolCtx): Promise<ToolResult> | ToolResult;
 };
+
+/** Defensa extra ante la IA: fuera cualquier clave interna (`__…`) que no esté en el esquema. */
+export function cleanParams(params: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(params).filter(([k]) => !k.startsWith("__")));
+}
 
 /** Esquema estricto: sin propiedades extra y todas requeridas (OpenAI lo exige). */
 export function schema(properties: Record<string, unknown>): JsonSchema {

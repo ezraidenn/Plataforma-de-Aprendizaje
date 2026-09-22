@@ -24,6 +24,7 @@ import {
   getConversation,
   listConversations,
   patchProposalBlock,
+  recentModelText,
 } from "../src/server/services/ai-conversations";
 import { applyProposal, cancelProposal, expireProposals, getProposal } from "../src/server/assistant/proposals";
 
@@ -117,7 +118,7 @@ async function clientChecks() {
 }
 
 const P = "zasst";
-const ids = { teacher: nanoid(), admin: nanoid(), s1: nanoid(), s2: nanoid(), course: "" };
+const ids = { teacher: nanoid(), admin: nanoid(), s1: nanoid(), s2: nanoid(), s3: nanoid(), course: "" };
 
 function makeUser(id: string, key: string, name: string, role: "teacher" | "admin" | "student", createdBy: string | null) {
   db.insert(users).values({ id, email: `${P}-${key}@test.local`, passwordHash: "x", fullName: `${P} ${name}`, role, createdBy }).run();
@@ -129,6 +130,8 @@ function setup() {
   makeUser(ids.admin, "admin", "Admin", "admin", null);
   makeUser(ids.s1, "ana", "Ana López", "student", ids.teacher);
   makeUser(ids.s2, "beto", "Beto Ruiz", "student", ids.teacher);
+  // Alumno de otro maestro: el asistente no debe poder matricularlo
+  makeUser(ids.s3, "carla", "Carla Ajena", "student", ids.admin);
   ids.course = createCourse({ ownerId: ids.teacher, title: `${P} Extintores` }).id;
   enrollStudents(ids.course, [ids.s1], ids.teacher);
 }
@@ -146,6 +149,7 @@ function cleanup() {
     db.delete(aiConversations).where(like(aiConversations.title, `${P}%`)).run();
     const courseIds = db.select({ id: coursesTable.id }).from(coursesTable).where(like(coursesTable.title, `${P}%`)).all().map((c) => c.id);
     for (const id of courseIds) {
+      // Cubre assistant_matricular y assistant_matricular_undo
       db.delete(auditLog).where(and(eq(auditLog.entity, "enrollment"), like(auditLog.entityId, `${id}:%`))).run();
       db.delete(enrollments).where(eq(enrollments.courseId, id)).run();
       db.delete(coursesTable).where(eq(coursesTable.id, id)).run();
@@ -219,6 +223,11 @@ async function conversationChecks() {
   check("Otro usuario no la ve", getConversation(ids.admin, conv.id) === null);
   check("Aparece en el historial con su título", listConversations(ids.teacher).some((c) => c.id === conv.id && c.title === `${P} primera`));
   check("Historial filtra por texto", listConversations(ids.teacher, "primera").length >= 1 && listConversations(ids.teacher, "zzz-nada").length === 0);
+  // Historial para la IA: mensaje vacío (ancla de propuesta) fuera, orden cronológico
+  appendMessage(conv.id, "assistant", [], "");
+  appendMessage(conv.id, "user", [{ type: "text", text: "otra" }], "otra");
+  const recent = recentModelText(conv.id, 3);
+  check("recentModelText: últimos 3 → 2 con texto, en orden", recent.map((m) => `${m.role}:${m.text}`).join("|") === "assistant:¿En qué te ayudo?|user:otra", recent);
   check("Borrar: desaparece", deleteConversation(ids.teacher, conv.id) && getConversation(ids.teacher, conv.id) === null);
 }
 
@@ -230,17 +239,25 @@ async function proposalChecks() {
 
   // 1 alumno: instantánea con deshacer
   const one = await toolByName("matricular")!.run({ alumno_ids: [ids.s2], curso_id: ids.course }, ctx);
-  check("1 alumno: se matricula al momento", one.forModel.includes("Beto Ruiz") && one.undo?.tool === "desmatricular");
+  check("1 alumno: se matricula al momento", one.forModel.includes("Beto Ruiz") && one.undo?.tool === "matricular" && !("__undo" in (one.undo?.params ?? {})));
   const enrolled = db.select().from(enrollments).where(and(eq(enrollments.courseId, ids.course), eq(enrollments.studentId, ids.s2))).get();
   check("…y la matrícula existe", enrolled?.status === "active");
-  const undone = await toolByName(one.undo!.tool)!.run(one.undo!.params, ctx);
+  const undoTool = toolByName(one.undo!.tool)!;
+  const undone = await undoTool.undo!(one.undo!.params, ctx);
   check("Deshacer la desmatricula", undone.forModel.includes("baja") && db.select().from(enrollments).where(eq(enrollments.id, enrolled!.id)).get()?.status === "dropped");
+  check("Deshacer deja auditoría", db.select().from(auditLog).where(and(eq(auditLog.action, "assistant_matricular_undo"), eq(auditLog.entityId, `${ids.course}:${ids.s2}`))).get() !== undefined);
+
+  // Alumno de otro maestro: fila bloqueada
+  const foreign = await toolByName("matricular")!.run({ alumno_ids: [ids.s2, ids.s3], curso_id: ids.course }, ctx);
+  const foreignRows = getProposal(foreign.proposalId!)!.rows;
+  check("Alumno ajeno: fila bloqueada «No es uno de tus alumnos»", foreignRows.some((r) => r.id === ids.s3 && r.blocked && r.warning === "No es uno de tus alumnos") && foreignRows.some((r) => r.id === ids.s2 && !r.blocked), foreignRows);
+  cancelProposal(foreign.proposalId!, ids.teacher);
 
   // Varios: propuesta
   const many = await toolByName("matricular")!.run({ alumno_ids: [ids.s1, ids.s2, "no-existe"], curso_id: ids.course }, ctx);
   check("Varios: crea una propuesta", typeof many.proposalId === "string" && many.forModel.includes("propuesta"));
   const proposal = getProposal(many.proposalId!);
-  check("3 filas: 1 bloqueada (id inexistente) y 1 con aviso (ya matriculado)", proposal?.rows.length === 3 && proposal.rows.filter((r) => r.blocked).length === 2 && proposal.rows.some((r) => r.warning?.includes("Ya está matriculado")), proposal?.rows);
+  check("3 filas: 2 bloqueadas (id inexistente y ya matriculado)", proposal?.rows.length === 3 && proposal.rows.filter((r) => r.blocked).length === 2 && proposal.rows.some((r) => r.warning?.includes("Ya está matriculado")), proposal?.rows);
 
   // Se quita una fila y se aplica
   const kept = proposal!.rows.filter((r) => r.cells.nombre.includes("Beto"));

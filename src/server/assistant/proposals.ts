@@ -47,9 +47,24 @@ export async function applyProposal(
   const safe = rows
     .filter((r) => original.has(r.id))
     .map((r) => ({ ...r, blocked: original.get(r.id)!.blocked, warning: original.get(r.id)!.warning }));
-  const result = await tool.apply(applicableRows(safe), proposal.payload, ctx);
 
-  db.update(aiProposals).set({ status: "applied", result: { text: result.text, rows: safe.length } }).where(eq(aiProposals.id, id)).run();
+  // Se reclama antes de aplicar: dos clics a la vez no la aplican dos veces
+  const claimed = db
+    .update(aiProposals)
+    .set({ status: "applied" })
+    .where(and(eq(aiProposals.id, id), eq(aiProposals.status, "pending")))
+    .run().changes;
+  if (claimed !== 1) return { error: "Esta revisión ya se aplicó o se canceló." };
+  let result: ApplyResult;
+  try {
+    result = await tool.apply(applicableRows(safe), proposal.payload, ctx);
+  } catch (err) {
+    // Si la herramienta falla, la propuesta vuelve a estar disponible
+    db.update(aiProposals).set({ status: "pending" }).where(eq(aiProposals.id, id)).run();
+    throw err;
+  }
+
+  db.update(aiProposals).set({ result: { text: result.text, rows: safe.length } }).where(eq(aiProposals.id, id)).run();
   patchProposalBlock(proposal.conversationId, id, { status: "applied", rows: safe, resultText: result.text });
   audit(ctx.user.id, `assistant_${proposal.tool}`, "ai_proposal", id, { via: "assistant", conversationId: proposal.conversationId, rows: safe.length });
   return result;
