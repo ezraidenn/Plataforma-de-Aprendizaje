@@ -30,6 +30,13 @@ import {
   recentModelText,
 } from "../src/server/services/ai-conversations";
 import { applyProposal, cancelProposal, expireProposals, getProposal } from "../src/server/assistant/proposals";
+import {
+  MAX_SUMMARY_CHARS,
+  colorFamily,
+  suggestionsFor,
+  summaryForModel,
+  type AttachmentSummary,
+} from "../src/lib/attachment-summary";
 
 let failures = 0;
 function check(name: string, cond: boolean, detail?: unknown) {
@@ -467,9 +474,70 @@ async function agentChecks() {
   check("Texto vacío: error", "error" in (await runTurn({ user, scope: ownScope(user), route: "/", conversationId: null, text: "  ", ai: { key: "k", model: "m", fetchImpl: failing } })));
 }
 
+function attachmentSummaryChecks() {
+  console.log("\n— Resumen de adjunto");
+  check("Color: rojo", colorFamily("#FF0000") === "rojo" && colorFamily("#C00000") === "rojo");
+  check("Color: verde", colorFamily("#00B050") === "verde");
+  check("Color: amarillo", colorFamily("#FFFF00") === "amarillo" && colorFamily("#FFC000") === "amarillo");
+  check("Color: blanco o casi, sin color", colorFamily("#FFFFFF") === null && colorFamily("#FAFAFA") === null);
+  check("Color: otro tono, sin familia", colorFamily("#7030A0") === "otro");
+  check("Color: basura", colorFamily("no-es-color") === null);
+
+  const summary: AttachmentSummary = {
+    fileName: "alumnos.xlsx",
+    kind: "sheet",
+    sheets: [
+      {
+        name: "Matutino",
+        rowCount: 84,
+        headers: ["Nombre", "Correo", "Grupo"],
+        sample: [["Ana López", "ana@x.com", "A"], ["Beto Ruiz", "beto@x.com", "B"]],
+        colors: { rojo: 6, verde: 2 },
+      },
+      { name: "Vespertino", rowCount: 10, headers: ["Nombre", "Correo"], sample: [["Carla", "c@x.com"]], colors: {} },
+    ],
+    chars: 4200,
+  };
+
+  const text = summaryForModel(summary);
+  check("Para la IA: nombre, hojas y filas", text.includes("alumnos.xlsx") && text.includes("Matutino") && text.includes("84"));
+  check("Para la IA: encabezados y muestra", text.includes("Nombre") && text.includes("ana@x.com"));
+  check("Para la IA: avisa de los colores", text.includes("rojo") && text.includes("6"));
+  check("Para la IA: cabe en el tope", text.length <= MAX_SUMMARY_CHARS, text.length);
+
+  const chips = suggestionsFor(summary);
+  check("Sugerencias de lista de personas", chips.includes("Da de alta a estos alumnos") && chips.some((c) => c.includes("Matricúlalos")));
+  check("Sugerencia de baja por color", chips.some((c) => c.includes("rojo")));
+  check("Siempre ofrece solo revisar", chips.some((c) => c.toLowerCase().includes("qué contiene")));
+
+  const cursos: AttachmentSummary = {
+    fileName: "cursos.xlsx",
+    kind: "sheet",
+    sheets: [{ name: "Hoja1", rowCount: 4, headers: ["Título", "Descripción", "Vigencia"], sample: [["Extintores", "NOM-002", "12"]], colors: {} }],
+    chars: 200,
+  };
+  check("Sugerencia de crear cursos", suggestionsFor(cursos).some((c) => c.includes("Crea estos cursos")));
+  check("Sin encabezados conocidos: solo revisar", suggestionsFor({ fileName: "x.pdf", kind: "doc", sheets: [], chars: 100 }).length === 1);
+
+  const largo: AttachmentSummary = {
+    fileName: "grande.xlsx",
+    kind: "sheet",
+    sheets: Array.from({ length: 12 }, (_, i) => ({
+      name: `Hoja ${i + 1}`,
+      rowCount: 500,
+      headers: ["Nombre muy largo ".repeat(6), "Correo"],
+      sample: [["x".repeat(300), "y".repeat(300)]],
+      colors: {},
+    })),
+    chars: 60_000,
+  };
+  check("Un archivo enorme no desborda el resumen", summaryForModel(largo).length <= MAX_SUMMARY_CHARS, summaryForModel(largo).length);
+}
+
 async function main() {
   placeholderChecks();
   await clientChecks();
+  attachmentSummaryChecks();
   setup();
   try {
     await catalogChecks();
