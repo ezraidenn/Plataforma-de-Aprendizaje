@@ -712,3 +712,69 @@ export const auditLog = sqliteTable(
   },
   (t) => [index("audit_entity_idx").on(t.entity, t.entityId)]
 );
+
+// ═══════════════════════════════ Asistente de IA ════════════════════════════
+
+export const aiConversations = sqliteTable(
+  "ai_conversations",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    title: text("title").notNull().default(""),
+    // Resumen de los mensajes viejos (entrega 3); hasta qué mensaje cubre
+    summary: text("summary"),
+    summaryUpto: integer("summary_upto").notNull().default(0),
+    ...timestamps,
+  },
+  (t) => [index("ai_conversations_user_idx").on(t.userId, t.updatedAt)]
+);
+
+export const aiMessages = sqliteTable(
+  "ai_messages",
+  {
+    id: text("id").primaryKey(),
+    conversationId: text("conversation_id")
+      .notNull()
+      .references(() => aiConversations.id, { onDelete: "cascade" }),
+    role: text("role", { enum: ["user", "assistant"] }).notNull(),
+    // Bloques que ve el usuario (src/lib/assistant-blocks.ts)
+    content: text("content", { mode: "json" }).notNull(),
+    // Lo que se le reenvía a la IA como historial (texto corto)
+    modelText: text("model_text").notNull().default(""),
+    // Cómo deshacer lo que hizo este mensaje (solo acciones instantáneas)
+    undo: text("undo", { mode: "json" }),
+    undoneAt: integer("undone_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (t) => [index("ai_messages_conversation_idx").on(t.conversationId, t.createdAt)]
+);
+
+export const aiProposals = sqliteTable(
+  "ai_proposals",
+  {
+    id: text("id").primaryKey(),
+    conversationId: text("conversation_id")
+      .notNull()
+      .references(() => aiConversations.id, { onDelete: "cascade" }),
+    messageId: text("message_id")
+      .notNull()
+      .references(() => aiMessages.id, { onDelete: "cascade" }),
+    tool: text("tool").notNull(),
+    // Filas propuestas y datos fijos de la herramienta (JSON)
+    rows: text("rows", { mode: "json" }).notNull(),
+    payload: text("payload", { mode: "json" }),
+    status: text("status", { enum: ["pending", "applied", "cancelled", "expired"] })
+      .notNull()
+      .default("pending"),
+    result: text("result", { mode: "json" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (t) => [index("ai_proposals_status_idx").on(t.status, t.expiresAt)]
+);
