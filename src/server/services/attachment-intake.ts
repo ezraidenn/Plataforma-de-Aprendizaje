@@ -4,7 +4,7 @@ import { nanoid } from "nanoid";
 import { db } from "@/server/db";
 import { aiAttachments, aiConversations, files } from "@/server/db/schema";
 import { extractText, formatOf, ScannedPdfError } from "./text-extract";
-import { readSheetRows } from "./sheet-colors";
+import { readSheetRows, type SheetData } from "./sheet-colors";
 import { readFileBytes } from "./storage";
 import type { AttachmentSummary, ColorFamily, SheetSummary } from "@/lib/attachment-summary";
 
@@ -31,23 +31,17 @@ function trimRight(cells: string[]): string[] {
 /** Resumen de un archivo ya leído (sin tocar la base). */
 export async function summarizeAttachment(bytes: Buffer, fileName: string): Promise<AttachmentSummary> {
   const format = formatOf(fileName);
+  // Un CSV de alumnos también es una hoja: LibreOffice lo abre igual, así que
+  // se ven sus columnas. Si no se pudo leer así (sin LibreOffice), sigue por la
+  // rama de documento como cualquier texto.
+  const isCsv = fileName.toLowerCase().endsWith(".csv");
 
-  if (format === "sheet") {
-    const sheets = await readSheetRows(bytes, fileName);
-    const summarized: SheetSummary[] = sheets.map((sheet) => {
-      const [header, ...rows] = sheet.rows;
-      const colors: Partial<Record<ColorFamily, number>> = {};
-      for (const row of rows) if (row.color) colors[row.color] = (colors[row.color] ?? 0) + 1;
-      return {
-        name: sheet.name,
-        rowCount: rows.length,
-        headers: trimRight(header?.cells ?? []),
-        sample: rows.slice(0, SAMPLE_ROWS).map((r) => trimRight(r.cells)),
-        colors,
-      };
+  if (format === "sheet" || isCsv) {
+    const sheets = await readSheetRows(bytes, fileName).catch((err: unknown) => {
+      if (isCsv) return [] as SheetData[];
+      throw err;
     });
-    const chars = sheets.reduce((n, s) => n + s.rows.reduce((m, r) => m + r.cells.join("").length, 0), 0);
-    return { fileName, kind: "sheet", sheets: summarized, chars };
+    if (sheets.length > 0) return sheetSummary(fileName, sheets);
   }
 
   if (format === null) return { fileName, kind: "image", sheets: [], chars: 0 };
@@ -60,6 +54,24 @@ export async function summarizeAttachment(bytes: Buffer, fileName: string): Prom
     if (err instanceof ScannedPdfError) return { fileName, kind: "image", sheets: [], chars: 0 };
     throw err;
   }
+}
+
+/** Hojas ya leídas → resumen: encabezados, muestra y colores de cada una. */
+function sheetSummary(fileName: string, sheets: SheetData[]): AttachmentSummary {
+  const summarized: SheetSummary[] = sheets.map((sheet) => {
+    const [header, ...rows] = sheet.rows;
+    const colors: Partial<Record<ColorFamily, number>> = {};
+    for (const row of rows) if (row.color) colors[row.color] = (colors[row.color] ?? 0) + 1;
+    return {
+      name: sheet.name,
+      rowCount: rows.length,
+      headers: trimRight(header?.cells ?? []),
+      sample: rows.slice(0, SAMPLE_ROWS).map((r) => trimRight(r.cells)),
+      colors,
+    };
+  });
+  const chars = sheets.reduce((n, s) => n + s.rows.reduce((m, r) => m + r.cells.join("").length, 0), 0);
+  return { fileName, kind: "sheet", sheets: summarized, chars };
 }
 
 /** Guarda el adjunto en la conversación y devuelve su id y resumen. */

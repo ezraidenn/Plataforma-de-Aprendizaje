@@ -39,6 +39,7 @@ import {
 } from "../src/lib/attachment-summary";
 import { readSheetRows } from "../src/server/services/sheet-colors";
 import { summarizeAttachment } from "../src/server/services/attachment-intake";
+import { peopleRows, headerIndex } from "../src/server/assistant/rows-from-attachment";
 import { resolveUploadMime } from "../src/lib/upload-types";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -189,7 +190,7 @@ function cleanup() {
 const teacherUser: SessionUser = { id: "", email: "", fullName: `${P} Maestro`, role: "teacher" };
 function ctxFor(user: SessionUser, scope: ViewScope, route = "/teach/dashboard"): ToolCtx {
   // Las herramientas de lectura no usan conversationId ni messageId; las de propuesta reciben uno real
-  return { user, scope, actingOwnerId: scope.kind === "teacher" ? scope.ownerId : user.id, route, conversationId: "conv-test", messageId: "msg-test" };
+  return { user, scope, actingOwnerId: scope.kind === "teacher" ? scope.ownerId : user.id, route, conversationId: "conv-test", messageId: "msg-test", attachments: [] };
 }
 
 async function catalogChecks() {
@@ -629,6 +630,64 @@ async function intakeChecks() {
   check("Documento de texto: sin hojas y con caracteres", doc.sheets.length === 0 && doc.chars > 20 && doc.kind === "doc");
   const img = await summarizeAttachment(Buffer.from("no importa"), "foto.jpg");
   check("Imagen: se admite sin leer texto", img.kind === "image" && img.sheets.length === 0);
+
+  const csv = await summarizeAttachment(Buffer.from("Nombre,Correo\nAna Lopez,ana@x.com\nBeto Ruiz,beto@x.com\n", "utf8"), "lista.csv");
+  check("CSV: se resume como hoja", csv.kind === "sheet" && csv.sheets.length === 1, csv.kind);
+  check("CSV: encabezados", csv.sheets[0]?.headers.join("|") === "Nombre|Correo", csv.sheets[0]?.headers);
+  check("CSV: no cuenta el encabezado como fila", csv.sheets[0]?.rowCount === 2, csv.sheets[0]?.rowCount);
+  check("CSV: sugiere dar de alta", suggestionsFor(csv).includes("Da de alta a estos alumnos"), suggestionsFor(csv));
+}
+
+async function rowsFromAttachmentChecks() {
+  console.log("\n— Filas del adjunto");
+  check("Encabezados: nombre y correo", JSON.stringify(headerIndex(["Nombre completo", "Correo electrónico", "Grupo"])) === JSON.stringify({ name: 0, email: 1, group: 2 }));
+  check("Encabezados: en otro orden y sin acentos", JSON.stringify(headerIndex(["e-mail", "alumno"])) === JSON.stringify({ name: 1, email: 0, group: -1 }));
+  check("Encabezados: sin columnas útiles", headerIndex(["a", "b"]) === null);
+
+  const sinIa = await peopleRows({ text: "Gina Soto gina@x.com" }, {}).catch((e: Error) => e.message);
+  check("Texto sin clave de IA: lo dice", typeof sinIa === "string" && sinIa.includes("necesita la IA"), sinIa);
+
+  // La IA no se llama de verdad: se le responde con el JSON que espera «Importar con IA»
+  const respuesta = fakeOutput([
+    say(
+      JSON.stringify({
+        students: [
+          { fullName: "Gina   Soto", email: " GINA@X.COM ", group: "Matutino", issues: [] },
+          { fullName: "Hugo Vela", email: "hugo@x.com", group: "", issues: [] },
+        ],
+      })
+    ),
+  ]);
+  const deTexto = await peopleRows(
+    { text: "Gina Soto gina@x.com\nHugo Vela hugo@x.com" },
+    { ai: { key: "k", model: "m", fetchImpl: respuesta }, color: "rojo" }
+  );
+  check("Texto pegado: lo lee la IA", deTexto.rows.length === 2 && deTexto.rows[0].fullName === "Gina Soto", deTexto.rows);
+  check("Texto pegado: correo y grupo normalizados", deTexto.rows[0].email === "gina@x.com" && deTexto.rows[0].group === "Matutino", deTexto.rows[0]);
+  check("Texto pegado: el color no aplica y lo avisa", deTexto.note.includes("hojas de cálculo"), deTexto.note);
+
+  const bytes = await makeColoredXlsx();
+  if (!bytes) {
+    console.log("  (sin LibreOffice: se omite)");
+    return;
+  }
+  const all = await peopleRows({ bytes, fileName: "prueba.xlsx" }, {});
+  check("Todas las personas de la hoja", all.rows.length === 3 && all.rows[0].fullName === "Ana Lopez", all.rows);
+  check("Correo normalizado", all.rows[1].email === "beto@x.com");
+  check("Varias hojas: avisa de cuál usó", all.note.includes("Turno A"), all.note);
+  const rojas = await peopleRows({ bytes, fileName: "prueba.xlsx" }, { color: "rojo" });
+  check("Filtro por color: solo las rojas", rojas.rows.length === 1 && rojas.rows[0].fullName === "Beto Ruiz", rojas.rows);
+  const sinColor = await peopleRows({ bytes, fileName: "prueba.xlsx" }, { color: "azul" });
+  check("Color sin filas: lo dice", sinColor.rows.length === 0 && sinColor.note.includes("azul"), sinColor.note);
+  const hoja = await peopleRows({ bytes, fileName: "prueba.xlsx" }, { sheet: "Turno B" });
+  check("Hoja por nombre", hoja.rows.length === 1 && hoja.rows[0].fullName === "Dani Mora", hoja.rows);
+  const hojaMala = await peopleRows({ bytes, fileName: "prueba.xlsx" }, { sheet: "No existe" });
+  check("Hoja inexistente: lo dice y usa la primera", hojaMala.note.includes("No existe") && hojaMala.rows.length === 3);
+
+  const csv = Buffer.from("Nombre,Correo,Grupo\nEva Ruiz,eva@x.com,Matutino\nFabian Paz,FABIAN@X.COM,Vespertino\n", "utf8");
+  const deCsv = await peopleRows({ bytes: csv, fileName: "lista.csv" }, {});
+  check("CSV: dos personas con su grupo", deCsv.rows.length === 2 && deCsv.rows[0].group === "Matutino", deCsv.rows);
+  check("CSV: correo en minúsculas", deCsv.rows[1].email === "fabian@x.com");
 }
 
 async function main() {
@@ -637,6 +696,7 @@ async function main() {
   attachmentSummaryChecks();
   await sheetColorChecks();
   await intakeChecks();
+  await rowsFromAttachmentChecks();
   setup();
   try {
     await catalogChecks();

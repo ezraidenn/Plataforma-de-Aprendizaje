@@ -2,6 +2,7 @@ import "server-only";
 import type { SessionUser } from "@/server/auth/sessions";
 import type { ViewScope } from "@/server/auth/view-scope";
 import type { AssistantBlock, ProposalColumn, ProposalRow } from "@/lib/assistant-blocks";
+import type { StoredAttachment } from "@/server/services/attachment-intake";
 
 /**
  * Una herramienta del asistente. La IA solo puede pedir estas; `run` llama a
@@ -22,6 +23,8 @@ export type ToolCtx = {
   conversationId: string;
   /** Mensaje del asistente de este turno (ancla de propuestas) */
   messageId: string;
+  /** Adjuntos del mensaje (sus resúmenes ya los vio la IA) */
+  attachments: StoredAttachment[];
 };
 
 /** Cómo revertir una acción instantánea: la herramienta y los parámetros para su `undo`. */

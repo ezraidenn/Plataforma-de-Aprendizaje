@@ -53,7 +53,7 @@ export async function sendTurnAction(input: { conversationId: string | null; tex
 /** Contexto de herramienta para acciones fuera del bucle (aplicar, deshacer). */
 async function toolContext(user: Awaited<ReturnType<typeof requireTeacher>>, conversationId: string, messageId: string): Promise<ToolCtx> {
   const scope = await getViewScope(user);
-  return { user, scope, actingOwnerId: actingOwnerId(scope, user), route: "/", conversationId, messageId };
+  return { user, scope, actingOwnerId: actingOwnerId(scope, user), route: "/", conversationId, messageId, attachments: [] };
 }
 
 export async function applyProposalAction(input: { proposalId: string; rows: ProposalRow[] }): Promise<{ ok: true; text: string } | { error: string }> {

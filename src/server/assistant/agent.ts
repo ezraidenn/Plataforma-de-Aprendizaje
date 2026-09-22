@@ -61,6 +61,7 @@ export async function runTurn(input: TurnInput): Promise<TurnOutput> {
     route: input.route,
     conversationId,
     messageId: reply.id,
+    attachments: [],
   };
   const tools: ToolDef[] = toolDefsForRole(role);
 
