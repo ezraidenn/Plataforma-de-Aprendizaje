@@ -3,8 +3,11 @@ packages:
 # pnpm >= 10.x lee aquí la allowlist de scripts de instalación (seguridad de
 # cadena de suministro): solo estos paquetes pueden ejecutar postinstall.
 onlyBuiltDependencies:
-  - better-sqlite3
   - esbuild
   - sharp
   - '@tailwindcss/oxide'
   - unrs-resolver
+# better-sqlite3 >= 13 ya trae el binario de cada plataforma (prebuilds/):
+# compilarlo exigía Visual Studio C++ y rompía `pnpm install` en el servidor.
+ignoredBuiltDependencies:
+  - better-sqlite3

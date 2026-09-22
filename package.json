@@ -5,11 +5,13 @@
   "packageManager": "pnpm@10.4.1",
   "pnpm": {
     "onlyBuiltDependencies": [
-      "better-sqlite3",
       "esbuild",
       "sharp",
       "@tailwindcss/oxide",
       "unrs-resolver"
+    ],
+    "ignoredBuiltDependencies": [
+      "better-sqlite3"
     ]
   },
   "scripts": {
