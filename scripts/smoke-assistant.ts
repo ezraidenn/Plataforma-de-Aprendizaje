@@ -12,7 +12,7 @@ import { and, eq, inArray, like } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { db } from "../src/server/db";
 import { aiConversations, aiProposals, auditLog, courses as coursesTable, enrollments, users } from "../src/server/db/schema";
-import { createCourse, enrollStudents, unenrollStudent } from "../src/server/services/courses";
+import { createCourse, enrollStudents, setStudentActive, unenrollStudent } from "../src/server/services/courses";
 import { ownScope, type ViewScope } from "../src/server/auth/view-scope";
 import type { SessionUser } from "../src/server/auth/sessions";
 import { toolsForRole, toolByName, toolDefsForRole } from "../src/server/assistant/registry";
@@ -425,6 +425,32 @@ async function altaAlumnosChecks() {
   const nueva3 = db.select({ id: users.id }).from(users).where(eq(users.email, `${P}-nueva3@test.local`)).get();
   check("Se matricula al crearla", !!nueva3 && db.select().from(enrollments).where(and(eq(enrollments.courseId, ids.course), eq(enrollments.studentId, nueva3!.id))).get() !== undefined);
 
+  // Lista mixta con curso: quien ya tiene cuenta no se bloquea, solo se matricula
+  const cursoMixto = createCourse({ ownerId: ids.teacher, title: `${P} Mixto` }).id;
+  const conv4 = createConversation(ids.teacher, `${P} altas4`);
+  const anchor4 = appendMessage(conv4.id, "assistant", [], "");
+  const ctx4 = { ...ctxFor(user, ownScope(user)), conversationId: conv4.id, messageId: anchor4.id };
+  const mixta = await toolByName("alta_alumnos")!.run(
+    {
+      origen: "texto",
+      texto: `Nombre,Correo\n${P} Ana López,${P}-ana@test.local\n${P} Nueva Cuatro,${P}-nueva4@test.local`,
+      hoja: "",
+      filtro_color: "",
+      curso_id: cursoMixto,
+      grupo: "",
+    },
+    ctx4
+  );
+  const pMixta = getProposal(mixta.proposalId!)!;
+  check("Con curso, quien ya tiene cuenta no se bloquea", !pMixta.rows[0].blocked && (pMixta.rows[0].warning ?? "").toLowerCase().includes("solo se matricul"), pMixta.rows[0]);
+  check("La IA distingue nuevas de las que ya existen", mixta.forModel.includes("1 nueva") && mixta.forModel.includes("1 que ya"), mixta.forModel);
+  await applyProposal(mixta.proposalId!, pMixta.rows, ctx4, "");
+  check(
+    "Ana queda matriculada y no se creó otra cuenta con su correo",
+    db.select().from(enrollments).where(and(eq(enrollments.courseId, cursoMixto), eq(enrollments.studentId, ids.s1))).get()?.status === "active" &&
+      db.select().from(users).where(eq(users.email, `${P}-ana@test.local`)).all().length === 1
+  );
+
   // Curso ajeno
   const ajeno = await toolByName("alta_alumnos")!.run(
     { origen: "texto", texto: `Nombre,Correo\nX,x@test.local`, hoja: "", filtro_color: "", curso_id: "no-existe", grupo: "" },
@@ -446,6 +472,77 @@ async function altaAlumnosChecks() {
     const fallo = await toolByName("alta_alumnos")!.run({ origen: "adjunto", texto: "", hoja: "", filtro_color: "", curso_id: "", grupo: "" }, ctx3);
     check("Adjunto sin archivo guardado: error claro, sin reventar", !fallo.proposalId && fallo.forModel.length > 0, fallo.forModel);
   }
+}
+
+async function bajaAlumnosChecks() {
+  console.log("\n— Baja de alumnos");
+  const user = { ...teacherUser, id: ids.teacher };
+  const conv = createConversation(ids.teacher, `${P} bajas`);
+  const anchor = appendMessage(conv.id, "assistant", [], "");
+  const ctx = { ...ctxFor(user, ownScope(user)), conversationId: conv.id, messageId: anchor.id };
+
+  const falta = await toolByName("baja_alumnos")!.run(
+    { modo: "", origen: "texto", texto: `Nombre,Correo\n${P} Ana López,${P}-ana@test.local`, hoja: "", filtro_color: "", alumno_ids: [] },
+    ctx
+  );
+  check("Sin modo: pregunta y no propone", !falta.proposalId && falta.forModel.toLowerCase().includes("deshabilitar"), falta.forModel);
+
+  const result = await toolByName("baja_alumnos")!.run(
+    {
+      modo: "deshabilitar",
+      origen: "texto",
+      // En columnas se lee sin gastar IA; una sola columna pediría la API
+      texto: `Nombre,Correo\n${P} Ana López,${P}-ana@test.local\n${P} Carla Ajena,${P}-carla@test.local\nSin Cuenta,desconocido@test.local`,
+      hoja: "",
+      filtro_color: "",
+      alumno_ids: [],
+    },
+    ctx
+  );
+  const proposal = getProposal(result.proposalId!)!;
+  check("Tres filas", proposal.rows.length === 3, proposal.rows);
+  check("Ana (alumna del maestro): se puede", !proposal.rows[0].blocked, proposal.rows[0]);
+  check("Carla (de otro maestro): bloqueada", proposal.rows[1].blocked === true, proposal.rows[1]);
+  check("Correo desconocido: bloqueado", proposal.rows[2].blocked === true, proposal.rows[2]);
+  check("Columnas no editables", proposal.draft.columns.every((c) => c.editable === false));
+  check("Deshabilitar no pide palabra", !proposal.draft.confirmWord);
+  check("La IA no recibe correos", !result.forModel.includes("@test.local"), result.forModel);
+
+  await applyProposal(result.proposalId!, proposal.rows, ctx, "");
+  check("Ana queda deshabilitada", db.select({ active: users.active }).from(users).where(eq(users.id, ids.s1)).get()?.active === false);
+  check("Carla sigue activa", db.select({ active: users.active }).from(users).where(eq(users.id, ids.s3)).get()?.active === true);
+  check("Auditoría de la baja", db.select().from(auditLog).where(eq(auditLog.action, "assistant_baja_alumnos")).get() !== undefined);
+  setStudentActive(ids.s1, true); // se restaura para el resto de las pruebas
+
+  // Por ids, en vez de por archivo
+  const porIds = await toolByName("baja_alumnos")!.run(
+    { modo: "deshabilitar", origen: "ids", texto: "", hoja: "", filtro_color: "", alumno_ids: [ids.s2] },
+    ctx
+  );
+  check("Por ids también propone", typeof porIds.proposalId === "string" && getProposal(porIds.proposalId!)!.rows.length === 1);
+
+  // Borrar: solo admin y con palabra
+  const maestroBorra = await toolByName("baja_alumnos")!.run(
+    { modo: "borrar", origen: "ids", texto: "", hoja: "", filtro_color: "", alumno_ids: [ids.s4] },
+    ctx
+  );
+  check("Maestro no puede borrar cuentas", !maestroBorra.proposalId && maestroBorra.forModel.toLowerCase().includes("administrador"), maestroBorra.forModel);
+
+  const admin = { ...teacherUser, id: ids.admin, role: "admin" as const };
+  const convA = createConversation(ids.admin, `${P} bajas admin`);
+  const anchorA = appendMessage(convA.id, "assistant", [], "");
+  const ctxA = { ...ctxFor(admin, ownScope(admin)), conversationId: convA.id, messageId: anchorA.id };
+  const borrar = await toolByName("baja_alumnos")!.run(
+    { modo: "borrar", origen: "ids", texto: "", hoja: "", filtro_color: "", alumno_ids: [ids.s4] },
+    ctxA
+  );
+  const pBorrar = getProposal(borrar.proposalId!)!;
+  check("Borrar pide la palabra", pBorrar.draft.confirmWord === "BORRAR");
+  check("El título avisa de que es definitivo", pBorrar.draft.title.toLowerCase().includes("definitiv") || pBorrar.draft.applyLabel.toLowerCase().includes("borrar"));
+  const sinPalabra = await applyProposal(borrar.proposalId!, pBorrar.rows, ctxA, "");
+  check("Sin palabra no borra", "error" in sinPalabra && db.select().from(users).where(eq(users.id, ids.s4)).get() !== undefined);
+  const conPalabra = await applyProposal(borrar.proposalId!, pBorrar.rows, ctxA, "BORRAR");
+  check("Con palabra sí borra", "text" in conPalabra && db.select().from(users).where(eq(users.id, ids.s4)).get() === undefined, conPalabra);
 }
 
 /** IA de guion: cada llamada devuelve el siguiente `output`. */
@@ -822,6 +919,8 @@ async function main() {
     await confirmWordChecks();
     await altaAlumnosChecks();
     await agentChecks();
+    // Al final: borrar a Dora dejaría sin alumno a las demás secciones
+    await bajaAlumnosChecks();
   } finally {
     cleanup();
   }

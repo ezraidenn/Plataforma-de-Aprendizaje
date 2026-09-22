@@ -26,12 +26,19 @@ const COLUMNS = [
   { key: "grupo", label: "Grupo" },
 ];
 
-/** Avisos por fila: los del CSV, más los repetidos dentro del propio archivo. */
-function toRows(people: PersonRow[]): ProposalRow[] {
+/** Aviso de quien ya tiene cuenta cuando hay curso: no se bloquea, solo se matricula. */
+const ONLY_ENROLL = "Ya tiene cuenta: solo se matriculará";
+
+/**
+ * Avisos por fila: los del CSV, más los repetidos dentro del propio archivo.
+ * Un correo que ya tiene cuenta solo bloquea la fila cuando NO hay curso: con
+ * curso, la lista mixta es lo normal y a esa persona se le matricula sin más.
+ */
+function toRows(people: PersonRow[], hasCourse: boolean): ProposalRow[] {
   const emails = people.map((p) => p.email).filter(Boolean);
-  const existing = new Set(
+  const existing = new Map(
     emails.length
-      ? db.select({ email: users.email }).from(users).where(inArray(users.email, emails)).all().map((u) => u.email)
+      ? db.select({ email: users.email, role: users.role }).from(users).where(inArray(users.email, emails)).all().map((u) => [u.email, u.role] as const)
       : []
   );
   const seen = new Set<string>();
@@ -41,12 +48,18 @@ function toRows(people: PersonRow[]): ProposalRow[] {
     if (problem) return { id: `f${i}`, cells, warning: problem, blocked: true };
     if (seen.has(p.email)) return { id: `f${i}`, cells, warning: "Repetida en el archivo", blocked: true };
     seen.add(p.email);
-    if (existing.has(p.email)) return { id: `f${i}`, cells, warning: "Ese correo ya tiene cuenta", blocked: true };
+    const role = existing.get(p.email);
+    if (role) {
+      // Solo una cuenta de alumno se puede matricular: la de un maestro no
+      if (!hasCourse || role !== "student") return { id: `f${i}`, cells, warning: "Ese correo ya tiene cuenta", blocked: true };
+      return { id: `f${i}`, cells, warning: ONLY_ENROLL };
+    }
     return { id: `f${i}`, cells };
   });
 }
 
-async function readPeople(params: Record<string, unknown>, ctx: ToolCtx): Promise<RowsResult | { error: string }> {
+/** También la usa `baja_alumnos`: el origen (adjunto o texto pegado) se lee igual. */
+export async function readPeople(params: Record<string, unknown>, ctx: ToolCtx): Promise<RowsResult | { error: string }> {
   const origen = param(params, "origen") || "adjunto";
   const color = (param(params, "filtro_color") || undefined) as ColorFamily | undefined;
   const sheet = param(params, "hoja") || undefined;
@@ -95,7 +108,7 @@ export const altaAlumnos: AssistantTool = {
       return { forModel: `No encontré personas en esa lista. ${people.note}`.trim() };
     }
 
-    const rows = toRows(people.rows);
+    const rows = toRows(people.rows, !!course);
     const grupo = param(params, "grupo");
     const proposalId = createProposal("alta_alumnos", ctx, ctx.messageId, {
       title: course ? `Dar de alta y matricular en ${course.title}` : "Dar de alta alumnos",
@@ -106,9 +119,11 @@ export const altaAlumnos: AssistantTool = {
     });
 
     // La IA solo ve cuántas son: los nombres y correos se quedan en la tabla
-    const ok = rows.filter((r) => !r.blocked).length;
-    const blocked = rows.length - ok;
-    const parts = [`Se creó una propuesta con ${rows.length} fila(s): ${ok} lista(s) para dar de alta`];
+    const yaExisten = rows.filter((r) => r.warning === ONLY_ENROLL).length;
+    const ok = rows.filter((r) => !r.blocked).length - yaExisten;
+    const blocked = rows.length - ok - yaExisten;
+    const parts = [`Se creó una propuesta con ${rows.length} fila(s): ${ok} nueva(s) para dar de alta`];
+    if (yaExisten > 0) parts.push(`${yaExisten} que ya tienen cuenta y solo se matriculan`);
     if (blocked > 0) parts.push(`${blocked} con aviso (sin correo, repetidas o con cuenta ya creada)`);
     if (course) parts.push(`se matricularán en ${course.title}`);
     if (people.note) parts.push(people.note);
@@ -146,7 +161,8 @@ export const altaAlumnos: AssistantTool = {
       createdBy: course ? course.ownerId : ctx.actingOwnerId,
       actorId: ctx.user.id,
       enrollCourseId: course?.id ?? null,
-      enrollDuplicates: false,
+      // Con curso, quien ya tenía cuenta no se crea de nuevo pero sí se matricula
+      enrollDuplicates: !!course,
       cohortByEmail,
       auditAction: "assistant_alta_alumnos",
     });
