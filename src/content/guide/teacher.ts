@@ -66,8 +66,9 @@ export const TEACHER_GUIDE: RoleGuide = {
       steps: [
         {
           title: "El árbol y el botón «Agregar»",
-          text: "Con el botón «+ Agregar» eliges qué crear: carpeta o alguno de los 7 tipos de lección. Se inserta al final de la carpeta seleccionada; luego lo arrastras a su lugar.",
+          text: "Con el botón «+ Agregar» eliges qué crear: carpeta o alguno de los 7 tipos de lección; siempre se agrega al final del curso (primer nivel). Para crear algo dentro de una carpeta usa su menú ⋮ → «Agregar dentro», o arrastra la lección y suéltala sobre la carpeta.",
           scene: "teacher-contenido-1",
+          tip: "Atajos con un elemento seleccionado: flechas para moverte, Alt+↑/↓ para reordenar, Ctrl+C / Ctrl+V para copiar y pegar (también en otro curso), Ctrl+X para mover, Ctrl+D para duplicar, Supr para eliminar (con unos segundos para deshacer) y Ctrl+Z para deshacer. El botón del teclado junto a «Agregar» los muestra todos.",
         },
         {
           title: "Documento (PDF o PowerPoint)",
