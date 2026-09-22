@@ -42,11 +42,21 @@ export function clearStorageRootCache(): void {
   cachedRoot = null;
 }
 
+/**
+ * ¿`p` está DENTRO de `root` (sin ser la raíz misma)? La raíz de un recurso
+ * del NAS (`\\NAS\Capacitacion`) ya termina en separador tras `path.resolve`:
+ * sumarle otro dejaba todos los archivos «fuera» de la raíz.
+ */
+function isInsideRoot(p: string, root: string): boolean {
+  const prefix = root.endsWith(path.sep) ? root : root + path.sep;
+  return p !== root && p.startsWith(prefix);
+}
+
 export function absolutePathFor(storedPath: string): string {
   const root = storageRoot();
   const abs = path.resolve(root, storedPath);
   // Nunca servir nada fuera de la raíz (path traversal)
-  if (!abs.startsWith(root + path.sep) && abs !== root) {
+  if (!isInsideRoot(abs, root) && abs !== root) {
     throw new Error("Ruta de archivo inválida");
   }
   return abs;
@@ -205,7 +215,7 @@ export async function moveFile(fileId: string, desiredRelPath: string): Promise<
 export async function pruneEmptyDirs(startDir: string): Promise<void> {
   const root = storageRoot();
   let dir = startDir;
-  while (dir.startsWith(root + path.sep)) {
+  while (isInsideRoot(dir, root)) {
     try {
       const entries = await fsp.readdir(dir);
       if (entries.length > 0) return;
