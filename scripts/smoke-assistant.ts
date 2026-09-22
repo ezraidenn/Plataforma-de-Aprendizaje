@@ -12,10 +12,12 @@ import { and, eq, inArray, like } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { db } from "../src/server/db";
 import { aiConversations, aiProposals, auditLog, courses as coursesTable, enrollments, users } from "../src/server/db/schema";
-import { createCourse, enrollStudents } from "../src/server/services/courses";
+import { createCourse, enrollStudents, unenrollStudent } from "../src/server/services/courses";
 import { ownScope, type ViewScope } from "../src/server/auth/view-scope";
 import type { SessionUser } from "../src/server/auth/sessions";
 import { toolsForRole, toolByName, toolDefsForRole } from "../src/server/assistant/registry";
+import { runTurn } from "../src/server/assistant/agent";
+import { systemPrompt } from "../src/server/assistant/prompt";
 import type { ToolCtx } from "../src/server/assistant/tool-types";
 import {
   appendMessage,
@@ -23,6 +25,7 @@ import {
   deleteConversation,
   getConversation,
   listConversations,
+  messageUndo,
   patchProposalBlock,
   recentModelText,
 } from "../src/server/services/ai-conversations";
@@ -298,6 +301,90 @@ async function proposalChecks() {
   check("desmatricular varios: propuesta", typeof un.proposalId === "string");
 }
 
+/** IA de guion: cada llamada devuelve el siguiente `output`. */
+function scripted(outputs: unknown[][]) {
+  let i = 0;
+  const bodies: unknown[] = [];
+  const fetchImpl = (async (_url: string | URL | Request, init?: RequestInit) => {
+    bodies.push(JSON.parse(String(init?.body)));
+    const output = outputs[Math.min(i, outputs.length - 1)];
+    i++;
+    return new Response(JSON.stringify({ output }), { status: 200, headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+  return { fetchImpl, bodies, calls: () => i };
+}
+
+const say = (text: string) => ({ type: "message", content: [{ type: "output_text", text }] });
+const call = (id: string, name: string, args: unknown) => ({ type: "function_call", call_id: id, name, arguments: JSON.stringify(args) });
+
+async function agentChecks() {
+  console.log("\n— Bucle del agente");
+  const user = { ...teacherUser, id: ids.teacher };
+  // Beto quedó matriculado en proposalChecks; la matrícula instantánea de abajo lo necesita fuera
+  unenrollStudent(ids.course, ids.s2, ids.teacher);
+  const prompt = systemPrompt({ user, scope: ownScope(user), route: "/teach/students", now: new Date("2026-09-22T10:00:00") });
+  check("Prompt: rol, ruta y fecha", prompt.includes("maestro") && prompt.includes("/teach/students") && prompt.includes("22"));
+  check("Prompt: lista lo que aún no puede", prompt.includes("Aún no puedes"));
+
+  // buscar_alumno → ficha_alumno → texto
+  const ai = scripted([
+    [call("c1", "buscar_alumno", { texto: "ana" })],
+    [call("c2", "ficha_alumno", { alumno_id: ids.s1 })],
+    [say("Ana lleva un curso en progreso.")],
+  ]);
+  const turn = await runTurn({ user, scope: ownScope(user), route: "/teach/students", conversationId: null, text: `${P} ¿cómo va Ana?`, ai: { key: "k", model: "m", fetchImpl: ai.fetchImpl } });
+  check("Crea la conversación y devuelve el mensaje", "conversationId" in turn && turn.message.role === "assistant");
+  if (!("conversationId" in turn)) return;
+  check("Tres vueltas a la IA", ai.calls() === 3);
+  const blocks = turn.message.blocks;
+  check("Mensaje: tiles de la ficha + texto final", blocks.some((b) => b.type === "tiles") && blocks.some((b) => b.type === "text" && b.text.includes("Ana lleva")));
+  const second = ai.bodies[1] as { input: { type?: string; call_id?: string; output?: string }[] };
+  check("La segunda llamada lleva la salida de la herramienta", second.input.some((i) => i.type === "function_call_output" && i.call_id === "c1" && (i.output ?? "").includes("Ana López")));
+  const saved = getConversation(ids.teacher, turn.conversationId)!;
+  check("Se guardan usuario y asistente", saved.messages.length === 2 && saved.messages[0].role === "user");
+  check("Título automático", saved.title === `${P} ¿cómo va Ana?`);
+
+  // Navegación
+  const nav = scripted([[call("c1", "ir_a", { destino: "alumno", id: ids.s1 })], [say("Te llevo al perfil.")]]);
+  const t2 = await runTurn({ user, scope: ownScope(user), route: "/teach/dashboard", conversationId: turn.conversationId, text: "llévame al perfil de Ana", ai: { key: "k", model: "m", fetchImpl: nav.fetchImpl } });
+  check("Navegación: bloque navigate con la URL", "message" in t2 && t2.message.blocks.some((b) => b.type === "navigate" && b.href === `/teach/students/${ids.s1}`));
+  const third = nav.bodies[0] as { input: { role?: string; content?: string }[] };
+  check("El historial anterior viaja como texto", third.input.some((i) => i.role === "assistant" && (i.content ?? "").includes("Ana lleva")));
+
+  // Herramienta desconocida y parámetros con __
+  const unknown = scripted([[call("c1", "borrar_todo", {})], [call("c2", "buscar_curso", { texto: "extintores", __undo: true })], [say("No puedo hacer eso.")]]);
+  const t3 = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: turn.conversationId, text: "borra todo", ai: { key: "k", model: "m", fetchImpl: unknown.fetchImpl } });
+  const u = unknown.bodies[1] as { input: { type?: string; output?: string }[] };
+  check("Herramienta desconocida: se le dice a la IA y sigue", "message" in t3 && u.input.some((i) => i.type === "function_call_output" && (i.output ?? "").includes("no existe")));
+  check("Termina con el texto final", "message" in t3 && t3.message.blocks.some((b) => b.type === "text" && b.text.includes("No puedo")));
+
+  // Propuesta: la IA redacta una línea y el turno termina
+  const prop = scripted([[call("c1", "matricular", { alumno_ids: [ids.s1, ids.s2], curso_id: ids.course })], [say("Revisa la tabla.")]]);
+  const t4 = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: turn.conversationId, text: "matricula a Ana y Beto en extintores", ai: { key: "k", model: "m", fetchImpl: prop.fetchImpl } });
+  check("Propuesta: bloque proposal pendiente + texto", "message" in t4 && t4.message.blocks.some((b) => b.type === "proposal" && b.status === "pending") && t4.message.blocks.some((b) => b.type === "text"));
+  const p = prop.bodies[1] as { tools?: unknown[]; tool_choice?: string };
+  check("Tras la propuesta, la IA ya no puede llamar herramientas", p.tool_choice === "none");
+
+  // Matrícula instantánea: el mensaje guarda el undo
+  const inst = scripted([[call("c1", "matricular", { alumno_ids: [ids.s2], curso_id: ids.course })], [say("Listo.")]]);
+  const t5 = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: turn.conversationId, text: "matricula a Beto", ai: { key: "k", model: "m", fetchImpl: inst.fetchImpl } });
+  check("Instantánea: bloque result deshacible", "message" in t5 && t5.message.blocks.some((b) => b.type === "result" && b.undoable));
+  check("…y el undo queda guardado en el mensaje", "message" in t5 && messageUndo(ids.teacher, turn.conversationId, t5.message.id)?.undo.tool === "matricular");
+
+  // Tope de vueltas
+  const loop = scripted([[call("c1", "buscar_curso", { texto: "x" })]]);
+  const t6 = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: turn.conversationId, text: "bucle", ai: { key: "k", model: "m", fetchImpl: loop.fetchImpl } });
+  check("Tope de 6 vueltas: termina y no se queda en bucle", "message" in t6 && loop.calls() <= 7 && t6.message.blocks.length > 0);
+
+  // Error de la API
+  const failing = (async () => new Response("{}", { status: 500 })) as typeof fetch;
+  const t7 = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: turn.conversationId, text: "hola", ai: { key: "k", model: "m", fetchImpl: failing } });
+  check("Fallo de OpenAI: bloque de error reintentable", "message" in t7 && t7.message.blocks.some((b) => b.type === "error" && b.retryable));
+
+  // Texto vacío
+  check("Texto vacío: error", "error" in (await runTurn({ user, scope: ownScope(user), route: "/", conversationId: null, text: "  ", ai: { key: "k", model: "m", fetchImpl: failing } })));
+}
+
 async function main() {
   placeholderChecks();
   await clientChecks();
@@ -307,6 +394,7 @@ async function main() {
     await readToolChecks();
     await conversationChecks();
     await proposalChecks();
+    await agentChecks();
   } finally {
     cleanup();
   }
