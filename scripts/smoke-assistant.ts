@@ -245,12 +245,12 @@ async function proposalChecks() {
 
   // 1 alumno: instantánea con deshacer
   const one = await toolByName("matricular")!.run({ alumno_ids: [ids.s2], curso_id: ids.course }, ctx);
-  check("1 alumno: se matricula al momento", one.forModel.includes("Beto Ruiz") && one.undo?.tool === "matricular" && !("__undo" in (one.undo?.params ?? {})));
+  check("1 alumno: se matricula al momento", one.forModel.startsWith("Matrícula hecha:") && one.forModel.includes("Beto Ruiz") && one.undo?.tool === "matricular" && !("__undo" in (one.undo?.params ?? {})), one.forModel);
   const enrolled = db.select().from(enrollments).where(and(eq(enrollments.courseId, ids.course), eq(enrollments.studentId, ids.s2))).get();
   check("…y la matrícula existe", enrolled?.status === "active");
   const undoTool = toolByName(one.undo!.tool)!;
   const undone = await undoTool.undo!(one.undo!.params, ctx);
-  check("Deshacer la desmatricula", undone.forModel.includes("baja") && db.select().from(enrollments).where(eq(enrollments.id, enrolled!.id)).get()?.status === "dropped");
+  check("Deshacer la desmatricula", undone.forModel.includes("Baja hecha") && db.select().from(enrollments).where(eq(enrollments.id, enrolled!.id)).get()?.status === "dropped");
   check("Deshacer deja auditoría", db.select().from(auditLog).where(and(eq(auditLog.action, "assistant_matricular_undo"), eq(auditLog.entityId, `${ids.course}:${ids.s2}`))).get() !== undefined);
 
   // Alumno de otro maestro: fila bloqueada

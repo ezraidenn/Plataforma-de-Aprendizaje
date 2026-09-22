@@ -104,7 +104,7 @@ export const matricular: AssistantTool = {
       if (row.blocked) return { forModel: `No se pudo matricular: ${row.warning}.` };
       enrollStudents(course.id, [row.id], ctx.user.id);
       audit(ctx.user.id, "assistant_matricular", "enrollment", `${course.id}:${row.id}`, { via: "assistant", conversationId: ctx.conversationId });
-      const text = `${row.cells.nombre} quedó matriculado en ${course.title}.`;
+      const text = `Matrícula hecha: ${row.cells.nombre} en ${course.title}.`;
       return {
         forModel: text,
         blocks: [
@@ -137,7 +137,7 @@ export const matricular: AssistantTool = {
     if (row.blocked) return { forModel: `No se pudo deshacer: ${row.warning}.` };
     unenrollStudent(course.id, row.id, ctx.user.id);
     audit(ctx.user.id, "assistant_matricular_undo", "enrollment", `${course.id}:${row.id}`, { via: "assistant", conversationId: ctx.conversationId });
-    const text = `${row.cells.nombre} quedó dado de baja de ${course.title}.`;
+    const text = `Baja hecha: ${row.cells.nombre} de ${course.title}.`;
     return { forModel: text, blocks: [{ type: "result", text }] };
   },
 };

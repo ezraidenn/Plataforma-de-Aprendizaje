@@ -38,11 +38,11 @@ export function ReviewTable({ block, onChange }: { block: ProposalBlock; onChang
         result = { error: "No se pudo aplicar. Inténtalo de nuevo." };
       }
       if ("error" in result) {
-        toast.error(result.error);
+        toast.error(result.error, { position: "top-center" });
         if (result.error.toLowerCase().includes("caducó")) onChange({ ...block, status: "expired" });
         return;
       }
-      toast.success(result.text);
+      toast.success(result.text, { position: "top-center" });
       onChange({ ...block, rows, status: "applied", resultText: result.text });
       setWide(false);
     });
@@ -187,7 +187,7 @@ export function ReviewTable({ block, onChange }: { block: ProposalBlock; onChang
 
       <Dialog open={wide} onOpenChange={setWide}>
         {/* Esc cierra solo el diálogo: el panel escucha Escape en window y también se cerraría */}
-        <DialogContent className="max-w-[960px] sm:max-w-[960px]" onEscapeKeyDown={(e) => e.stopPropagation()}>
+        <DialogContent className="max-w-[960px] sm:max-w-[960px]" onEscapeKeyDown={(e) => e.stopPropagation()} onOpenAutoFocus={(e) => e.preventDefault()}>
           <DialogHeader>
             <DialogTitle>{block.title}</DialogTitle>
           </DialogHeader>

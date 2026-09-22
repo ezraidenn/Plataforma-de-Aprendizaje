@@ -38,7 +38,7 @@ export function AssistantPanel() {
     <aside
       role="complementary"
       aria-label="Asistente de IA"
-      className="fixed inset-0 z-40 flex flex-col bg-white shadow-[-16px_0_40px_-20px_rgb(15_23_42/0.35)] md:inset-y-0 md:left-auto md:right-0 md:w-[440px] md:border-l md:border-slate-200"
+      className="fixed inset-0 z-40 flex flex-col bg-white shadow-[-16px_0_40px_-20px_rgb(15_23_42/0.35)] md:bottom-0 md:top-14 md:left-auto md:right-0 md:w-[440px] md:border-l md:border-slate-200"
     >
       <header className="flex h-14 shrink-0 items-center gap-2 border-b border-slate-200 px-3">
         <Sparkles className="size-[18px] shrink-0 text-indigo-600" aria-hidden />

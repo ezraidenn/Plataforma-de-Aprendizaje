@@ -109,7 +109,7 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
       }
       if ("error" in result) {
         setState((s) => ({ ...s, busy: false, pendingText: null, draft: text }));
-        toast.error(result.error);
+        toast.error(result.error, { position: "top-center" });
         if (result.noKey) router.push("/admin/settings");
         return;
       }

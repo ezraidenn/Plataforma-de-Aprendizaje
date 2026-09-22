@@ -86,13 +86,13 @@ function ResultCard({ block, message, conversationId }: { block: Extract<Assista
     try {
       const result = await undoAction({ conversationId, messageId: message.id });
       if ("error" in result) {
-        toast.error(result.error);
+        toast.error(result.error, { position: "top-center" });
         return;
       }
-      toast.success(result.text);
+      toast.success(result.text, { position: "top-center" });
       replaceMessage({ ...message, blocks: message.blocks.map((b) => (b.type === "result" ? { ...b, undone: true } : b)) });
     } catch {
-      toast.error("No se pudo deshacer. Inténtalo de nuevo.");
+      toast.error("No se pudo deshacer. Inténtalo de nuevo.", { position: "top-center" });
     } finally {
       setBusy(false);
     }
