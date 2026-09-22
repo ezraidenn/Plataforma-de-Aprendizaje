@@ -22,14 +22,19 @@ export const ADMIN_GUIDE: RoleGuide = {
         },
         {
           title: "Menú de acciones por usuario",
-          text: "El menú ⋯ de cada fila permite: restablecer contraseña (nueva temporal), cambiar rol, activar/desactivar y —en maestros— conceder «Puede editar identidad».",
-          ui: ["Restablecer contraseña", "Cambiar rol", "Desactivar"],
+          text: "El menú ⋯ de cada fila permite: editar datos (nombre y correo con el que inicia sesión), restablecer contraseña (una temporal o la que escribas), cambiar rol, activar/desactivar y —en maestros— conceder «Puede editar identidad».",
+          ui: ["Editar datos", "Restablecer contraseña", "Cambiar rol", "Desactivar"],
         },
         {
           title: "Activar / desactivar",
           text: "Desactivar una cuenta cierra sus sesiones y le impide entrar, sin borrar su historial ni certificados. No puedes desactivar al único administrador ni tu propia cuenta.",
           scene: "admin-usuarios-3",
           ui: ["Activo", "Inactivo"],
+        },
+        {
+          title: "Eliminar definitivamente",
+          text: "Para cuentas creadas por error o de prueba: borra la cuenta con sus inscripciones, progreso, intentos y entregas. Pide dos confirmaciones (ver qué se borra y escribir su correo). No se puede con quien tiene certificados emitidos (son registros históricos: desactívala) ni con dueños de cursos o plantillas (reasígnalos antes).",
+          ui: ["Eliminar definitivamente"],
         },
         {
           title: "Permiso de identidad",

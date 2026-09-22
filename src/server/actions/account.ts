@@ -2,7 +2,12 @@
 
 import { revalidatePath } from "next/cache";
 import { requireUser } from "@/server/auth/guards";
-import { canEditBranding, changeOwnPassword, updateOwnName } from "@/server/services/profile";
+import {
+  canEditBranding,
+  changeOwnPassword,
+  updateOwnEmail,
+  updateOwnName,
+} from "@/server/services/profile";
 import {
   updateBranding,
   type CoverKind,
@@ -24,6 +29,23 @@ export async function updateOwnNameAction(fullName: string): Promise<AccountActi
     return { error: errorMessage(err, "No se pudo actualizar el nombre") };
   }
   // El nombre aparece en el shell (header/menú) de todas las rutas
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+/** Cambia el correo propio (solo maestro/admin); exige la contraseña actual. */
+export async function updateOwnEmailAction(input: {
+  email: string;
+  currentPassword: string;
+}): Promise<AccountActionResult> {
+  const user = await requireUser();
+  if (!input.currentPassword) return { error: "Escribe tu contraseña actual para cambiar el correo" };
+  try {
+    await updateOwnEmail({ user, email: input.email, currentPassword: input.currentPassword });
+  } catch (err) {
+    return { error: errorMessage(err, "No se pudo actualizar el correo") };
+  }
+  // El correo aparece en el menú de la cuenta de todas las rutas
   revalidatePath("/", "layout");
   return { ok: true };
 }

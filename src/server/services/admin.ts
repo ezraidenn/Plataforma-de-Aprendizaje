@@ -2,11 +2,27 @@ import "server-only";
 import { matchesSearch } from "@/server/db/search";
 import fs from "node:fs";
 import path from "node:path";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, ne, sql, type SQL } from "drizzle-orm";
+import type { SQLiteTable } from "drizzle-orm/sqlite-core";
 import { nanoid } from "nanoid";
 import { db } from "@/server/db";
-import { users, courses, enrollments, jobs, files, sessions } from "@/server/db/schema";
+import {
+  users,
+  courses,
+  enrollments,
+  jobs,
+  files,
+  sessions,
+  assignmentSubmissions,
+  auditLog,
+  certificateTemplates,
+  certificates,
+  cohorts,
+  examAttempts,
+  submissionFiles,
+} from "@/server/db/schema";
 import { hashPassword } from "@/server/auth/passwords";
+import { enqueueJob } from "@/server/jobs/queue";
 import { storageRoot } from "./storage";
 import { audit } from "./audit";
 
@@ -79,6 +95,142 @@ export async function adminCreateUser(opts: {
     .run();
   audit(opts.actorId, "create_user", "users", id, { role: opts.role, email });
   return id;
+}
+
+/** Nombre y correo de cualquier cuenta. El correo es el usuario de acceso: debe ser único. */
+export function adminUpdateUser(
+  actorId: string,
+  userId: string,
+  data: { fullName: string; email: string }
+) {
+  const target = db.select().from(users).where(eq(users.id, userId)).get();
+  if (!target) throw new Error("Usuario no encontrado");
+
+  const fullName = data.fullName.trim().replace(/\s+/g, " ");
+  const email = data.email.trim().toLowerCase();
+  const taken = db
+    .select({ id: users.id })
+    .from(users)
+    .where(and(eq(users.email, email), ne(users.id, userId)))
+    .get();
+  if (taken) throw new Error("Ya existe un usuario con ese correo");
+
+  db.update(users).set({ fullName, email, updatedAt: new Date() }).where(eq(users.id, userId)).run();
+  audit(actorId, "update_user", "users", userId, {
+    ...(fullName !== target.fullName && { fullName: { from: target.fullName, to: fullName } }),
+    ...(email !== target.email && { email: { from: target.email, to: email } }),
+  });
+}
+
+function countWhere(table: SQLiteTable, where: SQL): number {
+  return db.select({ n: sql<number>`COUNT(*)` }).from(table).where(where).get()?.n ?? 0;
+}
+
+export type DeleteUserImpact = {
+  /** Motivos por los que no se puede borrar; vacío = se puede */
+  blockers: string[];
+  enrollments: number;
+  attempts: number;
+  submissions: number;
+  cohorts: number;
+};
+
+/** Qué pasaría al eliminar la cuenta (lo muestra la primera confirmación). */
+export function adminDeleteUserImpact(actorId: string, userId: string): DeleteUserImpact {
+  const target = db.select().from(users).where(eq(users.id, userId)).get();
+  if (!target) throw new Error("Usuario no encontrado");
+
+  const blockers: string[] = [];
+  if (actorId === userId) blockers.push("No puedes eliminar tu propia cuenta.");
+  if (target.role === "admin") {
+    const otherAdmins = countWhere(
+      users,
+      and(eq(users.role, "admin"), eq(users.active, true), ne(users.id, userId))!
+    );
+    if (otherAdmins === 0) blockers.push("Es el único administrador activo de la plataforma.");
+  }
+  // Mismo criterio que los cursos: los certificados son registros históricos
+  // (su folio y QR deben seguir verificándose), así que no se borran
+  const certs = countWhere(certificates, eq(certificates.studentId, userId));
+  if (certs > 0) {
+    blockers.push(
+      `Tiene ${certs} certificado(s) emitido(s): son registros históricos y no se borran. Desactiva la cuenta en su lugar.`
+    );
+  }
+  const owned = countWhere(courses, eq(courses.ownerId, userId));
+  if (owned > 0) {
+    blockers.push(`Es dueño de ${owned} curso(s): reasígnalos antes en Administración → Cursos.`);
+  }
+  const templates = countWhere(certificateTemplates, eq(certificateTemplates.ownerId, userId));
+  if (templates > 0) {
+    blockers.push(`Tiene ${templates} plantilla(s) de certificado: transfiérelas antes a otro maestro.`);
+  }
+
+  return {
+    blockers,
+    enrollments: countWhere(enrollments, eq(enrollments.studentId, userId)),
+    attempts: countWhere(examAttempts, eq(examAttempts.studentId, userId)),
+    submissions: countWhere(assignmentSubmissions, eq(assignmentSubmissions.studentId, userId)),
+    cohorts: countWhere(cohorts, eq(cohorts.createdBy, userId)),
+  };
+}
+
+/**
+ * Borrado definitivo. Se van con la cuenta (en cascada) sus inscripciones,
+ * progreso, intentos, entregas, notificaciones y sesiones; los archivos de sus
+ * entregas los retira después el worker. Sus grupos pasan a quien elimina, y
+ * las marcas de «quién lo hizo» (inscribió, calificó, auditoría) quedan vacías.
+ */
+export function adminDeleteUser(actorId: string, userId: string, confirmEmail: string) {
+  const impact = adminDeleteUserImpact(actorId, userId);
+  if (impact.blockers.length > 0) throw new Error(impact.blockers[0]);
+  const target = db.select().from(users).where(eq(users.id, userId)).get()!;
+  // Segunda confirmación: el correo escrito a mano debe ser el de la cuenta
+  if (confirmEmail.trim().toLowerCase() !== target.email) {
+    throw new Error("El correo escrito no coincide con el de la cuenta");
+  }
+
+  // Archivos de sus entregas: se recogen ANTES de que la cascada borre las filas
+  const submissionIds = db
+    .select({ id: assignmentSubmissions.id, fileId: assignmentSubmissions.fileId })
+    .from(assignmentSubmissions)
+    .where(eq(assignmentSubmissions.studentId, userId))
+    .all();
+  const fileIds = new Set(submissionIds.flatMap((s) => (s.fileId ? [s.fileId] : [])));
+  for (const s of submissionIds) {
+    for (const f of db
+      .select({ fileId: submissionFiles.fileId })
+      .from(submissionFiles)
+      .where(eq(submissionFiles.submissionId, s.id))
+      .all()) {
+      fileIds.add(f.fileId);
+    }
+  }
+
+  db.transaction((tx) => {
+    // Lo que subió y sigue en uso (imágenes, adjuntos) no se pierde: queda a nombre de quien elimina
+    tx.update(files).set({ uploadedBy: actorId }).where(eq(files.uploadedBy, userId)).run();
+    tx.update(cohorts).set({ createdBy: actorId }).where(eq(cohorts.createdBy, userId)).run();
+    tx.update(enrollments).set({ enrolledBy: actorId }).where(eq(enrollments.enrolledBy, userId)).run();
+    tx.update(enrollments).set({ droppedBy: null }).where(eq(enrollments.droppedBy, userId)).run();
+    tx.update(examAttempts).set({ gradedBy: null }).where(eq(examAttempts.gradedBy, userId)).run();
+    tx.update(assignmentSubmissions)
+      .set({ gradedBy: null })
+      .where(eq(assignmentSubmissions.gradedBy, userId))
+      .run();
+    tx.update(auditLog).set({ userId: null }).where(eq(auditLog.userId, userId)).run();
+    tx.update(users).set({ createdBy: null }).where(eq(users.createdBy, userId)).run();
+    tx.delete(users).where(eq(users.id, userId)).run();
+  });
+
+  if (fileIds.size > 0) enqueueJob("cleanup_files", { fileIds: [...fileIds] });
+  audit(actorId, "delete_user", "users", userId, {
+    email: target.email,
+    fullName: target.fullName,
+    role: target.role,
+    enrollments: impact.enrollments,
+    submissions: impact.submissions,
+  });
 }
 
 export async function adminResetPassword(actorId: string, userId: string, newPassword: string) {

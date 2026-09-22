@@ -9,12 +9,15 @@ import {
   KeyRound,
   Palette,
   Loader2,
+  Trash2,
   TriangleAlert,
   UserCog,
+  UserPen,
   UserRoundCheck,
   UserRoundX,
 } from "lucide-react";
 import { toast } from "sonner";
+import { copyToClipboard } from "@/lib/clipboard";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -41,6 +44,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -54,9 +58,13 @@ import { ROLE_LABEL } from "@/components/admin/format";
 import {
   adminChangeRoleAction,
   adminSetCanEditBrandingAction,
+  adminDeleteUserAction,
+  adminDeleteUserPreviewAction,
   adminResetPasswordAction,
   adminSetActiveAction,
+  adminUpdateUserAction,
 } from "@/server/actions/admin-users";
+import type { DeleteUserImpact } from "@/server/services/admin";
 
 type Role = "admin" | "teacher" | "student";
 
@@ -81,17 +89,47 @@ export function UserActions({
   isSelf: boolean;
 }) {
   const router = useRouter();
+  const [editOpen, setEditOpen] = useState(false);
+  const [editName, setEditName] = useState(user.fullName);
+  const [editEmail, setEditEmail] = useState(user.email);
   const [resetOpen, setResetOpen] = useState(false);
+  // Vacía = se genera una temporal
+  const [chosenPassword, setChosenPassword] = useState("");
   const [newPassword, setNewPassword] = useState<string | null>(null);
   const [roleOpen, setRoleOpen] = useState(false);
   const [nextRole, setNextRole] = useState<Role>(user.role);
   const [toggleOpen, setToggleOpen] = useState(false);
+  // Borrado definitivo: 1 = qué se pierde, 2 = escribir el correo
+  const [deleteStep, setDeleteStep] = useState<0 | 1 | 2>(0);
+  const [deleteImpact, setDeleteImpact] = useState<DeleteUserImpact | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState("");
   const [copied, setCopied] = useState(false);
   const [pending, startTransition] = useTransition();
 
+  const editDirty =
+    editName.trim().replace(/\s+/g, " ") !== user.fullName ||
+    editEmail.trim().toLowerCase() !== user.email;
+
+  function saveEdit(e: React.FormEvent) {
+    e.preventDefault();
+    startTransition(async () => {
+      const result = await adminUpdateUserAction(user.id, {
+        fullName: editName,
+        email: editEmail,
+      });
+      if ("error" in result) {
+        toast.error(result.error);
+      } else {
+        toast.success("Datos actualizados");
+        setEditOpen(false);
+        router.refresh();
+      }
+    });
+  }
+
   function resetPassword() {
     startTransition(async () => {
-      const result = await adminResetPasswordAction(user.id);
+      const result = await adminResetPasswordAction(user.id, chosenPassword || undefined);
       if ("error" in result) {
         toast.error(result.error);
         setResetOpen(false);
@@ -131,6 +169,34 @@ export function UserActions({
     });
   }
 
+  function openDelete() {
+    setDeleteImpact(null);
+    setDeleteConfirm("");
+    setDeleteStep(1);
+    startTransition(async () => {
+      const result = await adminDeleteUserPreviewAction(user.id);
+      if ("error" in result) {
+        toast.error(result.error);
+        setDeleteStep(0);
+      } else {
+        setDeleteImpact(result.impact);
+      }
+    });
+  }
+
+  function deleteUser() {
+    startTransition(async () => {
+      const result = await adminDeleteUserAction(user.id, deleteConfirm);
+      if ("error" in result) {
+        toast.error(result.error);
+      } else {
+        toast.success(`Se eliminó la cuenta de ${user.fullName}`);
+        setDeleteStep(0);
+        router.refresh();
+      }
+    });
+  }
+
   function toggleBranding() {
     const next = !user.canEditBranding;
     startTransition(async () => {
@@ -150,11 +216,10 @@ export function UserActions({
 
   async function copyPassword() {
     if (!newPassword) return;
-    try {
-      await navigator.clipboard.writeText(newPassword);
+    if (await copyToClipboard(newPassword)) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch {
+    } else {
       toast.error("No se pudo copiar. Copia el texto manualmente.");
     }
   }
@@ -170,7 +235,18 @@ export function UserActions({
         <DropdownMenuContent align="end">
           <DropdownMenuItem
             onSelect={() => {
+              setEditName(user.fullName);
+              setEditEmail(user.email);
+              setEditOpen(true);
+            }}
+          >
+            <UserPen aria-hidden />
+            Editar datos
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onSelect={() => {
               setNewPassword(null);
+              setChosenPassword("");
               setCopied(false);
               setResetOpen(true);
             }}
@@ -205,8 +281,68 @@ export function UserActions({
               Activar cuenta
             </DropdownMenuItem>
           )}
+          {!isSelf && (
+            <DropdownMenuItem variant="destructive" onSelect={openDelete}>
+              <Trash2 aria-hidden />
+              Eliminar definitivamente
+            </DropdownMenuItem>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
+
+      {/* Editar nombre y correo */}
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent>
+          <form onSubmit={saveEdit} className="grid gap-4">
+            <DialogHeader>
+              <DialogTitle>Editar datos de {user.fullName}</DialogTitle>
+              <DialogDescription>
+                El correo es con el que inicia sesión: si lo cambias, avísale.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-2">
+              <Label htmlFor={`edit-name-${user.id}`}>Nombre completo</Label>
+              <Input
+                id={`edit-name-${user.id}`}
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                maxLength={80}
+                required
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor={`edit-email-${user.id}`}>Correo electrónico</Label>
+              <Input
+                id={`edit-email-${user.id}`}
+                type="email"
+                value={editEmail}
+                onChange={(e) => setEditEmail(e.target.value)}
+                autoComplete="off"
+                required
+              />
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11"
+                onClick={() => setEditOpen(false)}
+                disabled={pending}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="submit"
+                className="h-11 bg-cta text-cta-foreground hover:bg-cta/90"
+                disabled={pending || !editDirty || !editName.trim() || !editEmail.trim()}
+              >
+                {pending && <Loader2 className="animate-spin" aria-hidden />}
+                {pending ? "Guardando…" : "Guardar"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {/* Restablecer contraseña: confirmación → nueva contraseña UNA sola vez */}
       <Dialog
@@ -248,10 +384,27 @@ export function UserActions({
               <DialogHeader>
                 <DialogTitle>¿Restablecer la contraseña de {user.fullName}?</DialogTitle>
                 <DialogDescription>
-                  Se generará una contraseña temporal nueva, la actual dejará de funcionar y sus
-                  sesiones abiertas se cerrarán.
+                  La contraseña actual dejará de funcionar y sus sesiones abiertas se cerrarán.
                 </DialogDescription>
               </DialogHeader>
+              <div className="grid gap-2">
+                <Label htmlFor={`reset-password-${user.id}`}>Contraseña nueva (opcional)</Label>
+                <Input
+                  id={`reset-password-${user.id}`}
+                  value={chosenPassword}
+                  onChange={(e) => setChosenPassword(e.target.value)}
+                  placeholder="Déjala vacía para generar una temporal"
+                  autoComplete="new-password"
+                  className="font-semibold tracking-wide"
+                />
+                {chosenPassword && chosenPassword.length < 8 ? (
+                  <p className="text-xs text-destructive">Debe tener al menos 8 caracteres.</p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    Escribe una si ya la acordaste con la persona.
+                  </p>
+                )}
+              </div>
               {isSelf && (
                 <p className="flex items-start gap-1.5 text-xs text-warning">
                   <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
@@ -266,7 +419,7 @@ export function UserActions({
                 <Button
                   className="h-11 bg-cta text-cta-foreground hover:bg-cta/90"
                   onClick={resetPassword}
-                  disabled={pending}
+                  disabled={pending || (chosenPassword.length > 0 && chosenPassword.length < 8)}
                 >
                   {pending && <Loader2 className="animate-spin" aria-hidden />}
                   {pending ? "Restableciendo…" : "Restablecer"}
@@ -358,6 +511,113 @@ export function UserActions({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Eliminar definitivamente: 1) qué se pierde → 2) escribir el correo */}
+      <Dialog
+        open={deleteStep > 0}
+        onOpenChange={(o) => {
+          if (!o && !pending) setDeleteStep(0);
+        }}
+      >
+        <DialogContent>
+          {deleteStep === 1 ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>¿Eliminar definitivamente a {user.fullName}?</DialogTitle>
+                <DialogDescription>
+                  No se puede deshacer. Si solo quieres impedir que entre, desactiva la cuenta.
+                </DialogDescription>
+              </DialogHeader>
+              {!deleteImpact ? (
+                <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="size-4 animate-spin" aria-hidden />
+                  Revisando la cuenta…
+                </p>
+              ) : deleteImpact.blockers.length > 0 ? (
+                <div className="space-y-2 rounded-xl border border-destructive/30 bg-destructive/5 p-4">
+                  <p className="text-sm font-semibold">Esta cuenta no se puede eliminar:</p>
+                  <ul className="list-disc space-y-1 pl-5 text-sm">
+                    {deleteImpact.blockers.map((b) => (
+                      <li key={b}>{b}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : (
+                <div className="space-y-2 rounded-xl border bg-muted/40 p-4 text-sm">
+                  <p className="font-semibold">Se borrará para siempre:</p>
+                  <ul className="list-disc space-y-1 pl-5">
+                    <li>La cuenta ({user.email}) y sus sesiones</li>
+                    <li>{deleteImpact.enrollments} inscripción(es) a cursos, con su progreso</li>
+                    <li>{deleteImpact.attempts} intento(s) de examen</li>
+                    <li>{deleteImpact.submissions} entrega(s) de tareas y sus archivos</li>
+                  </ul>
+                  {deleteImpact.cohorts > 0 && (
+                    <p className="text-muted-foreground">
+                      Sus {deleteImpact.cohorts} grupo(s) no se borran: pasan a tu nombre.
+                    </p>
+                  )}
+                  <p className="text-muted-foreground">
+                    Lo que registró en la auditoría se conserva, sin su nombre.
+                  </p>
+                </div>
+              )}
+              <DialogFooter>
+                <Button variant="outline" className="h-11" onClick={() => setDeleteStep(0)}>
+                  {deleteImpact && deleteImpact.blockers.length > 0 ? "Cerrar" : "Cancelar"}
+                </Button>
+                {deleteImpact && deleteImpact.blockers.length === 0 && (
+                  <Button
+                    variant="outline"
+                    className="h-11 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    onClick={() => setDeleteStep(2)}
+                  >
+                    Continuar
+                  </Button>
+                )}
+              </DialogFooter>
+            </>
+          ) : (
+            <>
+              <DialogHeader>
+                <DialogTitle>Confirma la eliminación</DialogTitle>
+                <DialogDescription>
+                  Escribe el correo de la cuenta para eliminarla definitivamente.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="grid gap-2">
+                <Label htmlFor={`delete-confirm-${user.id}`}>
+                  Escribe <span className="font-semibold">{user.email}</span>
+                </Label>
+                <Input
+                  id={`delete-confirm-${user.id}`}
+                  value={deleteConfirm}
+                  onChange={(e) => setDeleteConfirm(e.target.value)}
+                  autoComplete="off"
+                  autoFocus
+                />
+              </div>
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  className="h-11"
+                  onClick={() => setDeleteStep(1)}
+                  disabled={pending}
+                >
+                  Atrás
+                </Button>
+                <Button
+                  className="h-11 bg-destructive text-white hover:bg-destructive/90"
+                  onClick={deleteUser}
+                  disabled={pending || deleteConfirm.trim().toLowerCase() !== user.email}
+                >
+                  {pending ? <Loader2 className="animate-spin" aria-hidden /> : <Trash2 aria-hidden />}
+                  {pending ? "Eliminando…" : "Eliminar definitivamente"}
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

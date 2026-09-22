@@ -31,6 +31,9 @@ export const JOB_STATUS_LABEL: Record<string, string> = {
 
 const AUDIT_ACTION_LABEL: Record<string, string> = {
   create_user: "Creó un usuario",
+  update_user: "Editó los datos de un usuario",
+  delete_user: "Eliminó un usuario",
+  update_own_email: "Cambió su correo",
   reset_password: "Restableció una contraseña",
   activate_user: "Activó una cuenta",
   deactivate_user: "Desactivó una cuenta",

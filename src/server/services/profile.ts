@@ -72,3 +72,34 @@ export function updateOwnName(user: { id: string; role: string }, fullName: stri
   db.update(users).set({ fullName: name, updatedAt: new Date() }).where(eq(users.id, user.id)).run();
   audit(user.id, "update_own_name", "user", user.id, { fullName: name });
 }
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * Cambio de correo propio (solo maestro/admin, como el nombre). El correo es
+ * el usuario de acceso, así que exige la contraseña actual.
+ */
+export async function updateOwnEmail(opts: {
+  user: { id: string; role: string };
+  email: string;
+  currentPassword: string;
+}) {
+  if (opts.user.role === "student") throw new Error("Los estudiantes no pueden cambiar su correo");
+  const email = opts.email.trim().toLowerCase();
+  if (!EMAIL_RE.test(email)) throw new Error("El correo no es válido");
+
+  const row = db.select().from(users).where(eq(users.id, opts.user.id)).get();
+  if (!row) throw new Error("Usuario no encontrado");
+  if (row.email === email) return;
+  const ok = await verifyPassword(row.passwordHash, opts.currentPassword);
+  if (!ok) throw new Error("La contraseña actual no es correcta");
+  const taken = db
+    .select({ id: users.id })
+    .from(users)
+    .where(and(eq(users.email, email), ne(users.id, row.id)))
+    .get();
+  if (taken) throw new Error("Ya existe un usuario con ese correo");
+
+  db.update(users).set({ email, updatedAt: new Date() }).where(eq(users.id, row.id)).run();
+  audit(row.id, "update_own_email", "user", row.id, { from: row.email, to: email });
+}

@@ -346,7 +346,7 @@ export const TEACHER_GUIDE: RoleGuide = {
       steps: [
         {
           title: "Nombre y contraseña",
-          text: "En «Ajustes» cambia tu nombre y tu contraseña (pide la actual; por seguridad se cierran tus otras sesiones).",
+          text: "En «Ajustes» cambia tu nombre, tu correo de acceso y tu contraseña (el correo y la contraseña piden la actual; al cambiar la contraseña se cierran tus otras sesiones).",
           href: "/ajustes",
           hrefLabel: "Ajustes",
         },
