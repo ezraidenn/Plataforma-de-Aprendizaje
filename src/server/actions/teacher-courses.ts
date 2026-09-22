@@ -7,12 +7,16 @@ import { getViewScope } from "@/server/auth/view-scope-cookie";
 import { actingOwnerId } from "@/server/auth/view-scope";
 import { audit } from "@/server/services/audit";
 import {
+  courseDeleteImpact,
   createCourse,
+  deleteCourse,
   getOwnedCourse,
   updateCourse,
   publishCourse,
   setCourseStatus,
+  type CourseDeleteImpact,
 } from "@/server/services/courses";
+import { isDeleteConfirmed } from "@/lib/delete-confirm";
 
 export type CreateCourseResult = { ok: true; courseId: string } | { error: string };
 
@@ -148,6 +152,51 @@ export async function publishCourseAction(courseId: string): Promise<PublishCour
 export type SetCourseStatusResult = { ok: true } | { error: string };
 
 /** Cambios de estado que no requieren validación: volver a borrador o archivar. */
+/** Primera confirmación del borrado: qué se perdería y qué lo impide. */
+export async function deleteCoursePreviewAction(
+  courseId: string
+): Promise<{ ok: true; impact: CourseDeleteImpact } | { error: string }> {
+  const user = await requireTeacher();
+  if (!getOwnedCourse(courseId, user)) return { error: "No encontramos este curso o no te pertenece" };
+  try {
+    return { ok: true, impact: courseDeleteImpact(courseId) };
+  } catch {
+    return { error: "No se pudo revisar el curso. Intenta de nuevo." };
+  }
+}
+
+/** Borra el curso para siempre (segunda confirmación: escribir ELIMINAR). Dueño o admin. */
+export async function deleteCourseAction(
+  courseId: string,
+  confirmWord: string
+): Promise<{ ok: true } | { error: string }> {
+  const user = await requireTeacher();
+  const course = getOwnedCourse(courseId, user);
+  if (!course) return { error: "No encontramos este curso o no te pertenece" };
+  if (!isDeleteConfirmed(confirmWord)) return { error: "Escribe ELIMINAR para confirmar" };
+  try {
+    // Publicado o con certificados: no (la pantalla ya lo explica, aquí se hace valer)
+    const impact = courseDeleteImpact(courseId);
+    if (impact.blockers.length > 0) return { error: impact.blockers[0] };
+    deleteCourse(courseId);
+    audit(user.id, "delete_course", "courses", courseId, {
+      title: course.title,
+      enrollments: impact.enrollments,
+      items: impact.items,
+    });
+    revalidatePath("/teach/courses");
+    revalidatePath("/teach/dashboard");
+    revalidatePath("/teach/students");
+    revalidatePath("/teach/groups");
+    revalidatePath("/admin/courses");
+    return { ok: true };
+  } catch (err) {
+    return {
+      error: err instanceof Error && err.message ? err.message : "No se pudo eliminar el curso",
+    };
+  }
+}
+
 export async function setCourseStatusAction(
   courseId: string,
   status: "draft" | "archived"

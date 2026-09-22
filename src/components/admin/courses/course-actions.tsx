@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Archive, EllipsisVertical, ExternalLink, Loader2, UserCog } from "lucide-react";
+import { Archive, EllipsisVertical, ExternalLink, Loader2, Trash2, UserCog } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -45,6 +45,9 @@ import {
   adminArchiveCourseAction,
   adminReassignCourseAction,
 } from "@/server/actions/admin-courses";
+import { deleteCourseAction, deleteCoursePreviewAction } from "@/server/actions/teacher-courses";
+import type { CourseDeleteImpact } from "@/server/services/courses";
+import { DeleteForeverDialog } from "@/components/delete-forever-dialog";
 
 export type OwnerOption = {
   id: string;
@@ -69,6 +72,8 @@ export function CourseActions({
   const [reassignOpen, setReassignOpen] = useState(false);
   const [newOwnerId, setNewOwnerId] = useState("");
   const [archiveOpen, setArchiveOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteImpact, setDeleteImpact] = useState<CourseDeleteImpact | null>(null);
   const [pending, startTransition] = useTransition();
 
   const candidates = owners.filter((o) => o.id !== course.ownerId);
@@ -101,6 +106,33 @@ export function CourseActions({
         router.refresh();
       }
       setArchiveOpen(false);
+    });
+  }
+
+  function openDelete() {
+    setDeleteImpact(null);
+    setDeleteOpen(true);
+    startTransition(async () => {
+      const result = await deleteCoursePreviewAction(course.id);
+      if ("error" in result) {
+        toast.error(result.error);
+        setDeleteOpen(false);
+      } else {
+        setDeleteImpact(result.impact);
+      }
+    });
+  }
+
+  function deleteForever(confirmWord: string) {
+    startTransition(async () => {
+      const result = await deleteCourseAction(course.id, confirmWord);
+      if ("error" in result) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success(`Se eliminó «${course.title}»`);
+      setDeleteOpen(false);
+      router.refresh();
     });
   }
 
@@ -137,8 +169,44 @@ export function CourseActions({
               </DropdownMenuItem>
             </>
           )}
+          {course.status !== "published" && (
+            <>
+              {course.status === "archived" && <DropdownMenuSeparator />}
+              <DropdownMenuItem variant="destructive" onSelect={openDelete}>
+                <Trash2 aria-hidden />
+                Eliminar definitivamente
+              </DropdownMenuItem>
+            </>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
+
+      <DeleteForeverDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title={`¿Eliminar definitivamente «${course.title}»?`}
+        description={`Curso de ${course.ownerName}. No se puede deshacer.`}
+        loading={!deleteImpact}
+        blockers={deleteImpact?.blockers}
+        pending={pending && !!deleteImpact}
+        onConfirm={deleteForever}
+        summary={
+          deleteImpact && (
+            <>
+              <p className="font-semibold">Se borrará para siempre:</p>
+              <ul className="list-disc space-y-1 pl-5">
+                <li>{deleteImpact.items} lección(es) con sus documentos, exámenes y tareas</li>
+                <li>
+                  {deleteImpact.enrollments} matrícula(s) con su avance, intentos y entregas (las
+                  cuentas de los alumnos no se borran)
+                </li>
+                {deleteImpact.cohorts > 0 && <li>{deleteImpact.cohorts} grupo(s) del curso</li>}
+                <li>Sus archivos en el almacenamiento</li>
+              </ul>
+            </>
+          )
+        }
+      />
 
       {/* Reasignar dueño */}
       <Dialog open={reassignOpen} onOpenChange={setReassignOpen}>

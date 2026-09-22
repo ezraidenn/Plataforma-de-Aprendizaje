@@ -47,7 +47,7 @@ export const COURSE_TOPICS: TopicsOf<CourseValues> = {
         ? "**Borrador**: solo tú lo ves. Al **publicarlo**, aparece en el panel de los alumnos matriculados."
         : status === "published"
           ? "**Publicado**: está en el panel de los alumnos matriculados. Si lo **archivas**, sale del panel sin borrar nada."
-          : "**Archivado**: ya no aparece en el panel, pero **el avance y los certificados se conservan**.",
+          : "**Archivado**: ya no aparece en el panel, pero **el avance y los certificados se conservan**. Sin certificados, en Ajustes puedes eliminarlo para siempre.",
     example: { status: "published" },
   },
   "course.cover": {

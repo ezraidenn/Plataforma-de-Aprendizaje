@@ -72,6 +72,11 @@ export const ADMIN_GUIDE: RoleGuide = {
           hrefLabel: "Certificados",
           ui: ["Plantillas generales"],
         },
+        {
+          title: "Eliminar un curso",
+          text: "Archivar oculta un curso sin borrar nada. Para borrarlo para siempre (con su contenido, matrículas y archivos), el menú ⋯ ofrece «Eliminar definitivamente» cuando no está publicado: primero muestra qué se borra y luego pide escribir ELIMINAR. Un curso con certificados emitidos no se puede eliminar: se queda archivado.",
+          ui: ["Archivar", "Eliminar definitivamente"],
+        },
       ],
     },
     {

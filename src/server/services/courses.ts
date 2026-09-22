@@ -1,6 +1,7 @@
 import "server-only";
 import { matchesSearch } from "@/server/db/search";
 import { and, eq, inArray, sql, desc, type SQL } from "drizzle-orm";
+import type { SQLiteTable } from "drizzle-orm/sqlite-core";
 import { nanoid } from "nanoid";
 import { db } from "@/server/db";
 import {
@@ -12,6 +13,9 @@ import {
   users,
   certificates,
   sessions,
+  questions,
+  assignmentSubmissions,
+  submissionFiles,
 } from "@/server/db/schema";
 import { hashPassword } from "@/server/auth/passwords";
 import { ownerCondition, scopeOwnerId, type ViewScope } from "@/server/auth/view-scope";
@@ -136,25 +140,87 @@ export function listTeacherCourses(scope: ViewScope, search?: string) {
     .all();
 }
 
+export type CourseDeleteImpact = {
+  /** Motivos por los que no se puede borrar; vacío = se puede */
+  blockers: string[];
+  enrollments: number;
+  items: number;
+  cohorts: number;
+};
+
+function countOf(table: SQLiteTable, where: SQL): number {
+  return db.select({ n: sql<number>`COUNT(*)` }).from(table).where(where).get()?.n ?? 0;
+}
+
+/** Qué se perdería al borrar el curso (primera confirmación). */
+export function courseDeleteImpact(courseId: string): CourseDeleteImpact {
+  const course = getCourse(courseId);
+  if (!course) throw new Error("El curso no existe");
+  const blockers: string[] = [];
+  // Publicado = los estudiantes lo están viendo: primero se archiva (la «papelera»)
+  if (course.status === "published") {
+    blockers.push("Está publicado: archívalo primero para que los estudiantes dejen de verlo.");
+  }
+  // Los certificados son registros históricos (su folio y QR deben seguir
+  // verificándose): un curso con certificados emitidos no se elimina, se archiva.
+  const certs = countOf(certificates, eq(certificates.courseId, courseId));
+  if (certs > 0) {
+    blockers.push(
+      `Tiene ${certs} certificado(s) emitido(s): son registros históricos y no se borran. Déjalo archivado.`
+    );
+  }
+  return {
+    blockers,
+    enrollments: countOf(enrollments, eq(enrollments.courseId, courseId)),
+    items: countOf(courseItems, and(eq(courseItems.courseId, courseId), sql`${courseItems.kind} != 'folder'`)!),
+    cohorts: countOf(cohorts, eq(cohorts.courseId, courseId)),
+  };
+}
+
+/**
+ * Borrado definitivo: contenido, matrículas con su avance, entregas y grupos
+ * se van en cascada; los archivos los retira después el worker. Solo lo
+ * impiden los certificados (las pruebas y el seed lo usan para limpiar cursos
+ * publicados); la regla «archívalo primero» la aplica la acción de la pantalla
+ * con courseDeleteImpact.
+ */
 export function deleteCourse(courseId: string) {
   // Los certificados son registros históricos: un curso con certificados
   // emitidos no se elimina, se archiva.
-  const certCount =
-    db
-      .select({ n: sql<number>`COUNT(*)` })
-      .from(certificates)
-      .where(eq(certificates.courseId, courseId))
-      .get()?.n ?? 0;
+  const certCount = countOf(certificates, eq(certificates.courseId, courseId));
   if (certCount > 0) {
     throw new Error(
       "Este curso tiene certificados emitidos y no puede eliminarse. Archívalo en su lugar."
     );
   }
   // Los archivos se recogen ANTES de borrar el curso; luego el worker retira
-  // del disco los que queden sin dueño.
-  const fileIds = fileIdsForCourse(courseId);
+  // del disco los que queden sin dueño. fileIdsForCourse no incluye las
+  // imágenes de preguntas ni las miniaturas: se suman aquí.
+  const fileIds = new Set(fileIdsForCourse(courseId));
+  const itemIds = db
+    .select({ id: courseItems.id })
+    .from(courseItems)
+    .where(eq(courseItems.courseId, courseId))
+    .all()
+    .map((i) => i.id);
+  if (itemIds.length > 0) {
+    for (const q of db
+      .select({ fileId: questions.imageFileId })
+      .from(questions)
+      .where(inArray(questions.examItemId, itemIds))
+      .all()) {
+      if (q.fileId) fileIds.add(q.fileId);
+    }
+    for (const d of db
+      .select({ fileId: itemDocuments.thumbnailFileId })
+      .from(itemDocuments)
+      .where(inArray(itemDocuments.itemId, itemIds))
+      .all()) {
+      if (d.fileId) fileIds.add(d.fileId);
+    }
+  }
   db.delete(courses).where(eq(courses.id, courseId)).run();
-  if (fileIds.length > 0) enqueueJob("cleanup_files", { fileIds });
+  if (fileIds.size > 0) enqueueJob("cleanup_files", { fileIds: [...fileIds] });
 }
 
 // ─── Estudiantes ─────────────────────────────────────────────────────────────
@@ -427,6 +493,55 @@ export function restoreEnrollments(enrollmentIds: string[]): number {
     for (const id of enrollmentIds) if (restoreEnrollmentRow(id)) n++;
   });
   return n;
+}
+
+/**
+ * Vacía la papelera: borra para siempre esas matrículas dadas de baja con su
+ * avance, intentos y entregas (la cuenta del alumno no se toca). Si el alumno
+ * tenía ciclos anteriores, esos se conservan. Las que tienen certificado
+ * (aunque esté revocado) se quedan: es un registro histórico.
+ */
+export function purgeDroppedEnrollments(
+  courseId: string,
+  enrollmentIds: string[]
+): { deleted: number; keptWithCertificate: number } {
+  let deleted = 0;
+  let keptWithCertificate = 0;
+  const fileIds = new Set<string>();
+  db.transaction((tx) => {
+    for (const id of enrollmentIds) {
+      const row = tx.select().from(enrollments).where(eq(enrollments.id, id)).get();
+      if (!row || row.courseId !== courseId || row.status !== "dropped") continue;
+      const hasCert = tx
+        .select({ id: certificates.id })
+        .from(certificates)
+        .where(eq(certificates.enrollmentId, id))
+        .get();
+      if (hasCert) {
+        keptWithCertificate++;
+        continue;
+      }
+      // Archivos de sus entregas: se recogen antes de que la cascada borre las filas
+      for (const s of tx
+        .select({ id: assignmentSubmissions.id, fileId: assignmentSubmissions.fileId })
+        .from(assignmentSubmissions)
+        .where(eq(assignmentSubmissions.enrollmentId, id))
+        .all()) {
+        if (s.fileId) fileIds.add(s.fileId);
+        for (const f of tx
+          .select({ fileId: submissionFiles.fileId })
+          .from(submissionFiles)
+          .where(eq(submissionFiles.submissionId, s.id))
+          .all()) {
+          fileIds.add(f.fileId);
+        }
+      }
+      tx.delete(enrollments).where(eq(enrollments.id, id)).run();
+      deleted++;
+    }
+  });
+  if (fileIds.size > 0) enqueueJob("cleanup_files", { fileIds: [...fileIds] });
+  return { deleted, keptWithCertificate };
 }
 
 /**

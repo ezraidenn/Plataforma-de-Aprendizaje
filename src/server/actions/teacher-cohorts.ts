@@ -10,12 +10,14 @@ import {
   canManageCohort,
   cohortOptions,
   createCohort,
+  deleteCohort,
   findOrCreateCohort,
   renameCohort,
   setCohortStatus,
   type CohortOption,
 } from "@/server/services/cohorts";
 import { getOwnedCourse, importCohortIntoCourse } from "@/server/services/courses";
+import { isDeleteConfirmed } from "@/lib/delete-confirm";
 
 type Result<T = object> = ({ ok: true } & T) | { error: string };
 
@@ -71,6 +73,21 @@ export async function setCohortStatusAction(id: string, status: "open" | "closed
     return { ok: true };
   } catch (err) {
     return { error: errorMessage(err, "No se pudo cambiar el estado del grupo") };
+  }
+}
+
+/** Borra el grupo (segunda confirmación: escribir ELIMINAR); sus alumnos siguen en el curso. */
+export async function deleteCohortAction(id: string, confirmWord: string): Promise<Result> {
+  const user = await requireTeacher();
+  const cohort = canManageCohort(user, id);
+  if (!cohort) return { error: "No encontramos este grupo o no es de tus cursos" };
+  if (!isDeleteConfirmed(confirmWord)) return { error: "Escribe ELIMINAR para confirmar" };
+  try {
+    deleteCohort(id, user.id);
+    revalidateCohortViews(cohort.courseId);
+    return { ok: true };
+  } catch (err) {
+    return { error: errorMessage(err, "No se pudo eliminar el grupo") };
   }
 }
 

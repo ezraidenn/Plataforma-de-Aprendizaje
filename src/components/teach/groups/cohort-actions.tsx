@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Lock, LockOpen, Pencil } from "lucide-react";
+import { Loader2, Lock, LockOpen, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,10 +25,18 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { renameCohortAction, setCohortStatusAction } from "@/server/actions/teacher-cohorts";
+import {
+  deleteCohortAction,
+  renameCohortAction,
+  setCohortStatusAction,
+} from "@/server/actions/teacher-cohorts";
 import { HelpTip } from "@/components/help/help-tip";
+import { DeleteForeverDialog } from "@/components/delete-forever-dialog";
 
-/** Renombrar y cerrar/reabrir un grupo (pie de la tarjeta). Nada se borra. */
+/**
+ * Renombrar, cerrar/reabrir (no borra nada) y eliminar un grupo (pie de la
+ * tarjeta). Eliminar borra solo el grupo: sus alumnos siguen en el curso.
+ */
 export function CohortActions({
   cohort,
 }: {
@@ -40,6 +48,8 @@ export function CohortActions({
   const [statusOpen, setStatusOpen] = useState(false);
   const [renaming, startRename] = useTransition();
   const [toggling, startToggle] = useTransition();
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, startDelete] = useTransition();
 
   const isOpen = cohort.status === "open";
   const clean = name.trim();
@@ -79,6 +89,19 @@ export function CohortActions({
     });
   }
 
+  function deleteForever(confirmWord: string) {
+    startDelete(async () => {
+      const result = await deleteCohortAction(cohort.id, confirmWord);
+      if ("error" in result) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success(`Se eliminó el grupo «${cohort.name}»`);
+      setDeleteOpen(false);
+      router.refresh();
+    });
+  }
+
   return (
     <>
       <Button
@@ -112,6 +135,36 @@ export function CohortActions({
         {isOpen ? "Cerrar grupo" : "Reabrir"}
       </Button>
       <HelpTip topic="groups.close" value={{ status: cohort.status }} />
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-9 px-3 text-destructive hover:bg-destructive/10 hover:text-destructive"
+        onClick={() => setDeleteOpen(true)}
+        disabled={deleting}
+        aria-label={`Eliminar el grupo ${cohort.name}`}
+      >
+        <Trash2 aria-hidden />
+        Eliminar
+      </Button>
+
+      <DeleteForeverDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title={`¿Eliminar el grupo «${cohort.name}»?`}
+        description="Se borra el grupo, no sus alumnos. Si solo quieres ocultarlo, ciérralo."
+        pending={deleting}
+        onConfirm={deleteForever}
+        summary={
+          <>
+            <p className="font-semibold">Se borrará para siempre el grupo «{cohort.name}».</p>
+            <p>
+              {count === 0
+                ? "No tiene matrículas."
+                : `Sus ${countLabel} no se borran: siguen en el curso con su avance, calificaciones y certificados, sin grupo.`}
+            </p>
+          </>
+        }
+      />
 
       {/* Renombrar */}
       <Dialog

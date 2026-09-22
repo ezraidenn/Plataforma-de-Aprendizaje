@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Archive, ArchiveRestore, Loader2 } from "lucide-react";
+import { Archive, ArchiveRestore, Loader2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,9 +36,13 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import {
+  deleteCourseAction,
+  deleteCoursePreviewAction,
   setCourseStatusAction,
   updateCourseAction,
 } from "@/server/actions/teacher-courses";
+import type { CourseDeleteImpact } from "@/server/services/courses";
+import { DeleteForeverDialog } from "@/components/delete-forever-dialog";
 import { setCourseCertificateTemplateAction } from "@/server/actions/teacher-templates";
 import type { ValidityMode } from "@/lib/validity";
 import { CourseValidityCard } from "@/components/teach/course-validity-card";
@@ -71,6 +75,9 @@ export function CourseSettingsForm({
   const [saving, startSaving] = useTransition();
   const [savingTemplate, startSavingTemplate] = useTransition();
   const [archiving, startArchiving] = useTransition();
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteImpact, setDeleteImpact] = useState<CourseDeleteImpact | null>(null);
+  const [deleting, startDeleting] = useTransition();
   const diplomaRef = useRef<HTMLDivElement>(null);
 
   // Llegada desde la guía de primeros pasos: el bloque del diploma se trae a la
@@ -129,6 +136,33 @@ export function CourseSettingsForm({
       }
       toast.success(archived ? "Curso archivado" : "El curso volvió a borrador");
       router.refresh();
+    });
+  }
+
+  function openDelete() {
+    setDeleteImpact(null);
+    setDeleteOpen(true);
+    startDeleting(async () => {
+      const result = await deleteCoursePreviewAction(course.id);
+      if ("error" in result) {
+        toast.error(result.error);
+        setDeleteOpen(false);
+      } else {
+        setDeleteImpact(result.impact);
+      }
+    });
+  }
+
+  function deleteForever(confirmWord: string) {
+    startDeleting(async () => {
+      const result = await deleteCourseAction(course.id, confirmWord);
+      if ("error" in result) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success(`Se eliminó «${course.title}»`);
+      setDeleteOpen(false);
+      router.push("/teach/courses");
     });
   }
 
@@ -256,10 +290,13 @@ export function CourseSettingsForm({
           <CardDescription>
             {course.status === "archived"
               ? "Este curso está archivado: los estudiantes no lo ven."
-              : "Archivar oculta el curso a los estudiantes sin borrar su progreso."}
+              : "Archivar oculta el curso a los estudiantes sin borrar su progreso."}{" "}
+            {course.status === "published"
+              ? "Para eliminarlo para siempre, archívalo primero."
+              : "Eliminar lo borra para siempre, con su contenido y matrículas."}
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="flex flex-wrap gap-3">
           {course.status === "archived" ? (
             <Button
               variant="outline"
@@ -306,8 +343,46 @@ export function CourseSettingsForm({
               </AlertDialogContent>
             </AlertDialog>
           )}
+          {course.status !== "published" && (
+            <Button
+              variant="outline"
+              className="h-11 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+              disabled={deleting || archiving}
+              onClick={openDelete}
+            >
+              <Trash2 aria-hidden />
+              Eliminar definitivamente
+            </Button>
+          )}
         </CardContent>
       </Card>
+
+      <DeleteForeverDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title={`¿Eliminar definitivamente «${course.title}»?`}
+        description="No se puede deshacer. Si solo quieres ocultarlo, déjalo archivado."
+        loading={!deleteImpact}
+        blockers={deleteImpact?.blockers}
+        pending={deleting && !!deleteImpact}
+        onConfirm={deleteForever}
+        summary={
+          deleteImpact && (
+            <>
+              <p className="font-semibold">Se borrará para siempre:</p>
+              <ul className="list-disc space-y-1 pl-5">
+                <li>{deleteImpact.items} lección(es) con sus documentos, exámenes y tareas</li>
+                <li>
+                  {deleteImpact.enrollments} matrícula(s) con su avance, intentos y entregas (las
+                  cuentas de los alumnos no se borran)
+                </li>
+                {deleteImpact.cohorts > 0 && <li>{deleteImpact.cohorts} grupo(s) del curso</li>}
+                <li>Sus archivos en el almacenamiento</li>
+              </ul>
+            </>
+          )
+        }
+      />
     </div>
   );
 }

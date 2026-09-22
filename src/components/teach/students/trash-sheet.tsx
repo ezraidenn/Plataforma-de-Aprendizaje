@@ -17,8 +17,9 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { formatRelative } from "@/components/teach/format";
-import { restoreEnrollmentsAction } from "@/server/actions/teacher-students";
+import { purgeEnrollmentsAction, restoreEnrollmentsAction } from "@/server/actions/teacher-students";
 import { HelpTip } from "@/components/help/help-tip";
+import { DeleteForeverDialog } from "@/components/delete-forever-dialog";
 
 export type TrashRow = {
   enrollmentId: string;
@@ -45,11 +46,40 @@ export function TrashSheet({ courseId, rows }: { courseId: string; rows: TrashRo
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
   const [pending, startTransition] = useTransition();
+  const [purgeOpen, setPurgeOpen] = useState(false);
+  const [purging, startPurge] = useTransition();
 
   const ids = useMemo(() => new Set(rows.map((r) => r.enrollmentId)), [rows]);
   const selectedIds = useMemo(() => [...selected].filter((id) => ids.has(id)), [selected, ids]);
   const allSelected = rows.length > 0 && selectedIds.length === rows.length;
   const n = rows.length;
+  // Para el resumen del borrado: los que tienen certificado se quedan
+  const selectedRows = rows.filter((r) => selected.has(r.enrollmentId));
+  const withCert = selectedRows.filter((r) => r.certificateFolio).length;
+  const withPriorCycle = selectedRows.filter((r) => r.cycle > 1 && !r.certificateFolio).length;
+  const toPurge = selectedRows.length - withCert;
+
+  function purge(confirmWord: string) {
+    startPurge(async () => {
+      const result = await purgeEnrollmentsAction(courseId, selectedIds, confirmWord);
+      if ("error" in result) {
+        toast.error(result.error);
+        return;
+      }
+      const kept =
+        result.keptWithCertificate > 0
+          ? ` (${result.keptWithCertificate} con certificado siguen en la papelera)`
+          : "";
+      toast.success(
+        result.deleted === 1
+          ? `1 baja eliminada definitivamente${kept}`
+          : `${result.deleted} bajas eliminadas definitivamente${kept}`
+      );
+      setPurgeOpen(false);
+      setSelected(new Set());
+      router.refresh();
+    });
+  }
 
   function toggle(id: string, on: boolean) {
     setSelected((prev) => {
@@ -122,7 +152,8 @@ export function TrashSheet({ courseId, rows }: { courseId: string; rows: TrashRo
             <HelpTip topic="students.trash" />
           </SheetTitle>
           <SheetDescription>
-            Estudiantes dados de baja. Nada se borró: puedes devolverlos cuando quieras.
+            Estudiantes dados de baja. Nada se borró: puedes devolverlos cuando quieras, o
+            eliminarlos definitivamente.
           </SheetDescription>
           <p className="mt-2 flex items-start gap-2 rounded-lg bg-section-soft/60 p-3 text-sm text-foreground">
             <Info className="mt-0.5 size-4 shrink-0 text-section-strong" aria-hidden />
@@ -168,7 +199,58 @@ export function TrashSheet({ courseId, rows }: { courseId: string; rows: TrashRo
                 Restaurar seleccionados
                 {selectedIds.length > 0 ? ` (${selectedIds.length})` : ""}
               </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-9 border-destructive/40 px-3 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                disabled={selectedIds.length === 0 || pending || purging}
+                onClick={() => setPurgeOpen(true)}
+              >
+                <Trash2 aria-hidden />
+                Eliminar definitivamente
+              </Button>
             </div>
+
+            <DeleteForeverDialog
+              open={purgeOpen}
+              onOpenChange={setPurgeOpen}
+              title={
+                selectedIds.length === 1
+                  ? `¿Eliminar definitivamente la baja de ${selectedRows[0]?.fullName ?? "este estudiante"}?`
+                  : `¿Eliminar definitivamente ${selectedIds.length} bajas?`
+              }
+              description="Ya no se podrán restaurar. Sus cuentas no se borran."
+              blockers={
+                toPurge === 0
+                  ? ["Todos los seleccionados tienen certificado: son registros históricos y se quedan en la papelera."]
+                  : []
+              }
+              pending={purging}
+              onConfirm={purge}
+              summary={
+                <>
+                  <p className="font-semibold">
+                    Se borrará para siempre, de {toPurge === 1 ? "1 estudiante" : `${toPurge} estudiantes`}:
+                  </p>
+                  <ul className="list-disc space-y-1 pl-5">
+                    <li>Su matrícula en este curso con su avance</li>
+                    <li>Sus intentos de examen y entregas de tareas (con sus archivos)</li>
+                  </ul>
+                  {withCert > 0 && (
+                    <p className="text-muted-foreground">
+                      {withCert === 1 ? "1 tiene" : `${withCert} tienen`} certificado: son registros
+                      históricos y se quedan en la papelera.
+                    </p>
+                  )}
+                  {withPriorCycle > 0 && (
+                    <p className="text-muted-foreground">
+                      {withPriorCycle === 1 ? "1 estudiante tenía" : `${withPriorCycle} estudiantes tenían`}{" "}
+                      un ciclo anterior en este curso: ese ciclo se conserva y vuelve a mostrarse.
+                    </p>
+                  )}
+                </>
+              }
+            />
 
             <ul className="min-h-0 flex-1 divide-y overflow-y-auto" aria-label="Estudiantes dados de baja">
               {rows.map((row) => {

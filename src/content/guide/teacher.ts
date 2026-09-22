@@ -47,7 +47,7 @@ export const TEACHER_GUIDE: RoleGuide = {
         },
         {
           title: "Imagen y ajustes del curso",
-          text: "En la pestaña «Ajustes» puedes subir una imagen del curso (con encuadre: arrastra, acerca, centra), definir si es secuencial (cada lección se desbloquea al terminar la anterior), asignar la plantilla de certificado y archivar el curso.",
+          text: "En la pestaña «Ajustes» puedes subir una imagen del curso (con encuadre: arrastra, acerca, centra), definir si es secuencial (cada lección se desbloquea al terminar la anterior), asignar la plantilla de certificado y archivar el curso. Un curso sin publicar y sin certificados emitidos también se puede «Eliminar definitivamente» (pide dos confirmaciones).",
         },
         {
           title: "Publicar",
@@ -180,7 +180,7 @@ export const TEACHER_GUIDE: RoleGuide = {
       title: "Grupos y papelera",
       section: "students",
       intro:
-        "Cada curso tiene sus propios grupos: separan las oleadas de alumnos (por ejemplo, «Generación Septiembre 2026») para que cada vista muestre solo a la gente con la que trabajas ahora. Nada se borra: cerrar un grupo solo lo guarda.",
+        "Cada curso tiene sus propios grupos: separan las oleadas de alumnos (por ejemplo, «Generación Septiembre 2026») para que cada vista muestre solo a la gente con la que trabajas ahora. Cerrar un grupo solo lo guarda; «Eliminar» borra el grupo, no a sus alumnos, que siguen en el curso sin grupo.",
       steps: [
         {
           title: "Crear y cerrar grupos",
@@ -202,9 +202,9 @@ export const TEACHER_GUIDE: RoleGuide = {
         },
         {
           title: "Papelera: bajas reversibles",
-          text: "«Quitar del curso» no borra nada: el alumno pasa a la Papelera del curso con su avance, calificaciones y certificado intactos. Desde ahí lo restauras (uno o varios) y vuelve exactamente con el estatus que tenía. Volver a inscribirlo hace lo mismo.",
+          text: "«Quitar del curso» no borra nada: el alumno pasa a la Papelera del curso con su avance, calificaciones y certificado intactos. Desde ahí lo restauras (uno o varios) y vuelve exactamente con el estatus que tenía. Volver a inscribirlo hace lo mismo. «Eliminar definitivamente» borra esas bajas para siempre con su avance (no sus cuentas); las que tienen certificado se quedan.",
           scene: "teacher-grupos-4",
-          ui: ["Papelera", "Restaurar"],
+          ui: ["Papelera", "Restaurar", "Eliminar definitivamente"],
         },
       ],
     },
