@@ -175,6 +175,8 @@ function cleanup() {
       ? db.select({ id: aiProposals.id }).from(aiProposals).where(inArray(aiProposals.conversationId, convIds)).all().map((p) => p.id)
       : [];
     if (proposalIds.length) db.delete(auditLog).where(and(eq(auditLog.entity, "ai_proposal"), inArray(auditLog.entityId, proposalIds))).run();
+    // Todo lo que registraron las cuentas zasst (altas en lote, propuestas, matrículas…)
+    db.delete(auditLog).where(inArray(auditLog.userId, userIds)).run();
     db.delete(aiConversations).where(like(aiConversations.title, `${P}%`)).run();
     const courseIds = db.select({ id: coursesTable.id }).from(coursesTable).where(like(coursesTable.title, `${P}%`)).all().map((c) => c.id);
     for (const id of courseIds) {
@@ -370,6 +372,80 @@ async function confirmWordChecks() {
     payload: { courseId: ids.course, courseTitle: `${P} Extintores` },
   });
   check("Sin palabra configurada: se aplica sin confirmar", "text" in (await applyProposal(normal, getProposal(normal)!.rows, ctx, "")));
+}
+
+async function altaAlumnosChecks() {
+  console.log("\n— Alta de alumnos en lote");
+  const user = { ...teacherUser, id: ids.teacher };
+  const conv = createConversation(ids.teacher, `${P} altas`);
+  const anchor = appendMessage(conv.id, "assistant", [], "");
+  const ctx = { ...ctxFor(user, ownScope(user)), conversationId: conv.id, messageId: anchor.id };
+
+  const texto = [
+    "Nombre,Correo,Grupo",
+    `${P} Nueva Uno,${P}-nueva1@test.local,Matutino`,
+    `${P} Nueva Dos,${P}-nueva2@test.local,Matutino`,
+    `${P} Repetida,${P}-nueva1@test.local,Matutino`,
+    "Sin Correo,,",
+    `${P} Maestro,${P}-maestro@test.local,`,
+  ].join("\n");
+
+  const result = await toolByName("alta_alumnos")!.run(
+    { origen: "texto", texto, hoja: "", filtro_color: "", curso_id: "", grupo: "" },
+    ctx
+  );
+  check("Crea la propuesta", typeof result.proposalId === "string", result.forModel);
+  const proposal = getProposal(result.proposalId!)!;
+  check("Cinco filas", proposal.rows.length === 5, proposal.rows.length);
+  check("Columnas editables (nombre, correo y grupo)", proposal.draft.columns.length === 3 && proposal.draft.columns.every((c) => c.editable !== false));
+  check("Repetida en el archivo: bloqueada", proposal.rows[2].blocked === true && (proposal.rows[2].warning ?? "").toLowerCase().includes("repetid"), proposal.rows[2]);
+  check("Sin correo: bloqueada", proposal.rows[3].blocked === true && (proposal.rows[3].warning ?? "").toLowerCase().includes("correo"), proposal.rows[3]);
+  check("Correo que ya tiene cuenta: bloqueada", proposal.rows[4].blocked === true, proposal.rows[4]);
+  check("Las buenas no llevan aviso", !proposal.rows[0].blocked && !proposal.rows[1].blocked);
+  check("La IA solo recibe el conteo, no los correos", result.forModel.includes("2") && !result.forModel.includes("@test.local"), result.forModel);
+
+  const applied = await applyProposal(result.proposalId!, proposal.rows, ctx, "");
+  check("Crea las dos cuentas", "text" in applied && applied.text.includes("2"), applied);
+  const creados = db.select({ id: users.id, createdBy: users.createdBy }).from(users).where(like(users.email, `${P}-nueva%`)).all();
+  check("Quedan a nombre del maestro", creados.length === 2 && creados.every((u) => u.createdBy === ids.teacher), creados);
+  check("Auditoría del alta", db.select().from(auditLog).where(eq(auditLog.action, "assistant_alta_alumnos")).get() !== undefined);
+  check("Dice dónde ver las contraseñas", "text" in applied && applied.text.toLowerCase().includes("contraseñ"), applied);
+
+  // Con curso: alta + matrícula en el mismo paso
+  const conv2 = createConversation(ids.teacher, `${P} altas2`);
+  const anchor2 = appendMessage(conv2.id, "assistant", [], "");
+  const ctx2 = { ...ctxFor(user, ownScope(user)), conversationId: conv2.id, messageId: anchor2.id };
+  const conCurso = await toolByName("alta_alumnos")!.run(
+    { origen: "texto", texto: `Nombre,Correo\n${P} Nueva Tres,${P}-nueva3@test.local`, hoja: "", filtro_color: "", curso_id: ids.course, grupo: "" },
+    ctx2
+  );
+  const p2 = getProposal(conCurso.proposalId!)!;
+  check("Dice en qué curso quedarán", p2.draft.title.includes("Extintores"), p2.draft.title);
+  await applyProposal(conCurso.proposalId!, p2.rows, ctx2, "");
+  const nueva3 = db.select({ id: users.id }).from(users).where(eq(users.email, `${P}-nueva3@test.local`)).get();
+  check("Se matricula al crearla", !!nueva3 && db.select().from(enrollments).where(and(eq(enrollments.courseId, ids.course), eq(enrollments.studentId, nueva3!.id))).get() !== undefined);
+
+  // Curso ajeno
+  const ajeno = await toolByName("alta_alumnos")!.run(
+    { origen: "texto", texto: `Nombre,Correo\nX,x@test.local`, hoja: "", filtro_color: "", curso_id: "no-existe", grupo: "" },
+    ctx
+  );
+  check("Curso que no es tuyo: no crea propuesta", !ajeno.proposalId && ajeno.forModel.toLowerCase().includes("curso"), ajeno.forModel);
+
+  // Sin adjunto
+  const sinAdjunto = await toolByName("alta_alumnos")!.run({ origen: "adjunto", texto: "", hoja: "", filtro_color: "", curso_id: "", grupo: "" }, ctx);
+  check("Origen adjunto sin archivo: lo dice", !sinAdjunto.proposalId && sinAdjunto.forModel.toLowerCase().includes("adjunto"));
+
+  // Desde una hoja de cálculo real, con color
+  const bytes = await makeColoredXlsx();
+  if (bytes) {
+    const conv3 = createConversation(ids.teacher, `${P} altas3`);
+    const anchor3 = appendMessage(conv3.id, "assistant", [], "");
+    const attachment = { id: "adj-test", fileId: null, summary: { fileName: "prueba.xlsx", kind: "sheet" as const, sheets: [], chars: 0 } };
+    const ctx3 = { ...ctxFor(user, ownScope(user)), conversationId: conv3.id, messageId: anchor3.id, attachments: [attachment] };
+    const fallo = await toolByName("alta_alumnos")!.run({ origen: "adjunto", texto: "", hoja: "", filtro_color: "", curso_id: "", grupo: "" }, ctx3);
+    check("Adjunto sin archivo guardado: error claro, sin reventar", !fallo.proposalId && fallo.forModel.length > 0, fallo.forModel);
+  }
 }
 
 /** IA de guion: cada llamada devuelve el siguiente `output`. */
@@ -723,6 +799,11 @@ async function rowsFromAttachmentChecks() {
   const deCsv = await peopleRows({ bytes: csv, fileName: "lista.csv" }, {});
   check("CSV: dos personas con su grupo", deCsv.rows.length === 2 && deCsv.rows[0].group === "Matutino", deCsv.rows);
   check("CSV: correo en minúsculas", deCsv.rows[1].email === "fabian@x.com");
+
+  // Título arriba: el encabezado no es la primera fila y aun así se lee sin IA (si la usara, lanzaría)
+  const conTitulo = Buffer.from("LISTA DE ASISTENCIA\nSeptiembre 2026\nNombre,Correo\nGina Paz,gina@x.com\n", "utf8");
+  const deTitulo = await peopleRows({ bytes: conTitulo, fileName: "titulo.csv" }, { ai: undefined });
+  check("Encabezado bajo un título: una persona y sin IA", deTitulo.rows.length === 1 && deTitulo.rows[0].email === "gina@x.com", deTitulo.rows);
 }
 
 async function main() {
@@ -739,6 +820,7 @@ async function main() {
     await conversationChecks();
     await proposalChecks();
     await confirmWordChecks();
+    await altaAlumnosChecks();
     await agentChecks();
   } finally {
     cleanup();
