@@ -77,6 +77,25 @@ export function summaryForModel(summary: AttachmentSummary): string {
   return text.length <= MAX_SUMMARY_CHARS ? text : `${text.slice(0, MAX_SUMMARY_CHARS - 1)}…`;
 }
 
+/** 12000 → «12 000»: se lee mejor en la tarjeta del adjunto. */
+const grouped = (n: number) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+
+/**
+ * Una línea para la interfaz: «2 hojas · 94 filas», «84 filas»,
+ * «PDF · 12 000 caracteres» o «Imagen».
+ */
+export function attachmentDetail(summary: AttachmentSummary): string {
+  if (summary.kind === "image") return "Imagen";
+  if (summary.sheets.length > 0) {
+    const rows = summary.sheets.reduce((n, s) => n + s.rowCount, 0);
+    const filas = `${grouped(rows)} ${rows === 1 ? "fila" : "filas"}`;
+    return summary.sheets.length === 1 ? filas : `${summary.sheets.length} hojas · ${filas}`;
+  }
+  const ext = /\.([a-z0-9]{1,8})$/i.exec(summary.fileName)?.[1].toUpperCase();
+  const chars = `${grouped(summary.chars)} caracteres`;
+  return ext ? `${ext} · ${chars}` : chars;
+}
+
 const has = (headers: string[], words: string[]) =>
   headers.some((h) => {
     const clean = h.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");

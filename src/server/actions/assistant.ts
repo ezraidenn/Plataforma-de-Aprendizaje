@@ -10,12 +10,16 @@ import { applyProposal, cancelProposal } from "@/server/assistant/proposals";
 import { toolByName } from "@/server/assistant/registry";
 import type { ToolCtx } from "@/server/assistant/tool-types";
 import {
+  ATTACHMENT_TITLE,
+  createConversation,
   deleteConversation,
   getConversation,
   listConversations,
   markUndone,
   messageUndo,
 } from "@/server/services/ai-conversations";
+import { attachToConversation } from "@/server/services/attachment-intake";
+import { attachmentDetail, suggestionsFor } from "@/lib/attachment-summary";
 import type { AssistantMessage, ConversationSummary, ProposalRow } from "@/lib/assistant-blocks";
 
 /**
@@ -31,7 +35,12 @@ export type SendTurnResult =
   | { ok: true; conversationId: string; userMessage: AssistantMessage; message: AssistantMessage }
   | { error: string; noKey?: boolean };
 
-export async function sendTurnAction(input: { conversationId: string | null; text: string; route: string }): Promise<SendTurnResult> {
+export async function sendTurnAction(input: {
+  conversationId: string | null;
+  text: string;
+  route: string;
+  attachmentIds?: string[];
+}): Promise<SendTurnResult> {
   const user = await requireTeacher();
   const key = getAiKey();
   // Solo el admin puede configurar la clave: solo a él se le manda a Configuración
@@ -43,11 +52,47 @@ export async function sendTurnAction(input: { conversationId: string | null; tex
     route: typeof input.route === "string" ? input.route.slice(0, 200) : "/",
     conversationId: typeof input.conversationId === "string" ? input.conversationId : null,
     text: String(input.text ?? "").slice(0, 4000),
+    attachmentIds: validAttachmentIds(input.attachmentIds),
     ai: { key, model: getAiSettings().model },
   });
   if ("error" in result) return result;
   refreshAfterChange();
   return { ok: true, ...result };
+}
+
+export type AttachResult =
+  | { ok: true; conversationId: string; attachmentId: string; name: string; detail: string; suggestions: string[] }
+  | { error: string };
+
+/**
+ * Adjunta un archivo ya subido a la conversación: lo lee, lo resume y devuelve
+ * lo que se pinta en el chat. Sin conversación (o si no es suya), abre una.
+ */
+export async function attachAction(input: { conversationId: string | null; fileId: string }): Promise<AttachResult> {
+  const user = await requireTeacher();
+  const fileId = String(input.fileId ?? "");
+  if (!fileId) return { error: "No recibimos el archivo." };
+
+  let conversationId = typeof input.conversationId === "string" ? input.conversationId : null;
+  if (conversationId && !getConversation(user.id, conversationId)) conversationId = null;
+  const isNew = !conversationId;
+  if (!conversationId) conversationId = createConversation(user.id, ATTACHMENT_TITLE).id;
+
+  try {
+    const { id, summary } = await attachToConversation({ conversationId, fileId, userId: user.id });
+    return {
+      ok: true,
+      conversationId,
+      attachmentId: id,
+      name: summary.fileName,
+      detail: attachmentDetail(summary),
+      suggestions: suggestionsFor(summary),
+    };
+  } catch (err) {
+    // Un archivo ilegible no deja una conversación vacía en la lista
+    if (isNew) deleteConversation(user.id, conversationId);
+    return { error: err instanceof Error ? err.message : "No pudimos leer ese archivo." };
+  }
 }
 
 /** Contexto de herramienta para acciones fuera del bucle (aplicar, deshacer). */
@@ -107,6 +152,13 @@ export async function deleteConversationAction(input: { id: string }): Promise<{
 }
 
 const MAX_ROWS = 5000;
+const MAX_ATTACHMENTS = 5;
+
+/** Ids de adjuntos que manda el cliente: cadenas no vacías, hasta 5. */
+function validAttachmentIds(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  return input.filter((x): x is string => typeof x === "string" && x.trim() !== "").slice(0, MAX_ATTACHMENTS);
+}
 
 /** Filas del cliente con forma de fila: `id` texto y `cells` objeto; tope de 5000. */
 function validRows(input: unknown): ProposalRow[] {

@@ -37,6 +37,8 @@ export type AssistantBlock =
       /** Para lo irreversible: hay que escribir esta palabra para poder aplicar */
       confirmWord?: string;
     }
+  /** Archivo que el usuario adjuntó al mensaje (`detail`: «2 hojas · 94 filas») */
+  | { type: "attachment"; name: string; detail: string }
   | { type: "navigate"; href: string }
   | { type: "error"; text: string; retryable?: boolean };
 

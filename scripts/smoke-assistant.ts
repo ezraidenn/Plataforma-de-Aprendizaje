@@ -11,7 +11,7 @@ import { requestWithTools, type ChatItem, type ToolDef } from "../src/server/ser
 import { and, eq, inArray, like } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { db } from "../src/server/db";
-import { aiConversations, aiProposals, auditLog, courses as coursesTable, enrollments, users } from "../src/server/db/schema";
+import { aiConversations, aiProposals, auditLog, courses as coursesTable, enrollments, files, users } from "../src/server/db/schema";
 import { createCourse, enrollStudents, setStudentActive, unenrollStudent } from "../src/server/services/courses";
 import { ownScope, type ViewScope } from "../src/server/auth/view-scope";
 import type { SessionUser } from "../src/server/auth/sessions";
@@ -20,6 +20,7 @@ import { runTurn } from "../src/server/assistant/agent";
 import { systemPrompt } from "../src/server/assistant/prompt";
 import type { ToolCtx } from "../src/server/assistant/tool-types";
 import {
+  ATTACHMENT_TITLE,
   appendMessage,
   createConversation,
   deleteConversation,
@@ -32,13 +33,15 @@ import {
 import { applyProposal, cancelProposal, createProposal, expireProposals, getProposal } from "../src/server/assistant/proposals";
 import {
   MAX_SUMMARY_CHARS,
+  attachmentDetail,
   colorFamily,
   suggestionsFor,
   summaryForModel,
   type AttachmentSummary,
 } from "../src/lib/attachment-summary";
 import { readSheetRows } from "../src/server/services/sheet-colors";
-import { summarizeAttachment } from "../src/server/services/attachment-intake";
+import { attachToConversation, summarizeAttachment } from "../src/server/services/attachment-intake";
+import { deleteFile, saveStream } from "../src/server/services/storage";
 import { peopleRows, headerIndex } from "../src/server/assistant/rows-from-attachment";
 import { toCourseDrafts } from "../src/server/services/ai-course-import";
 import { resolveUploadMime } from "../src/lib/upload-types";
@@ -46,6 +49,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync } from "node:fs";
 import fsp from "node:fs/promises";
+import { Readable } from "node:stream";
 import os from "node:os";
 import path from "node:path";
 
@@ -77,6 +81,16 @@ function check(name: string, cond: boolean, detail?: unknown) {
   else {
     failures++;
     console.error(`  ✗ ${name}${detail !== undefined ? ` — ${JSON.stringify(detail)}` : ""}`);
+  }
+}
+
+/** Mensaje del error que lanza `fn`, o «» si no lanzó. */
+async function errorOf(fn: () => Promise<unknown>): Promise<string> {
+  try {
+    await fn();
+    return "";
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e);
   }
 }
 
@@ -167,8 +181,25 @@ function makeUser(id: string, key: string, name: string, role: "teacher" | "admi
   db.insert(users).values({ id, email: `${P}-${key}@test.local`, passwordHash: "x", fullName: `${P} ${name}`, role, createdBy }).run();
 }
 
-function setup() {
-  cleanup();
+const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+/** Archivos que guardaron las pruebas: `cleanup()` los borra (disco y fila). */
+const testFileIds: string[] = [];
+
+/** Guarda una hoja de prueba en el almacenamiento real y devuelve su id. */
+async function saveTestFile(bytes: Buffer, name: string, userId: string): Promise<string> {
+  const { id } = await saveStream({
+    stream: Readable.from(bytes),
+    originalName: name,
+    mimeType: XLSX_MIME,
+    kind: "assistant_attachment",
+    uploadedBy: userId,
+  });
+  testFileIds.push(id);
+  return id;
+}
+
+async function setup() {
+  await cleanup();
   makeUser(ids.teacher, "maestro", "Maestro", "teacher", null);
   makeUser(ids.admin, "admin", "Admin", "admin", null);
   makeUser(ids.s1, "ana", "Ana López", "student", ids.teacher);
@@ -181,7 +212,13 @@ function setup() {
   enrollStudents(ids.course, [ids.s1], ids.teacher);
 }
 
-function cleanup() {
+async function cleanup() {
+  // Archivos de prueba: los de esta corrida y los que dejara una que se cortó.
+  // Van antes que los usuarios: la fila de `files` apunta a quien la subió.
+  const leftovers = db.select({ id: files.id }).from(files).where(like(files.originalName, `${P}%`)).all().map((f) => f.id);
+  for (const id of new Set([...testFileIds, ...leftovers])) await deleteFile(id);
+  testFileIds.length = 0;
+
   const userIds = db.select({ id: users.id }).from(users).where(like(users.email, `${P}-%`)).all().map((u) => u.id);
   if (userIds.length === 0) return;
   db.transaction(() => {
@@ -759,6 +796,69 @@ async function agentChecks() {
   check("Texto vacío: error", "error" in (await runTurn({ user, scope: ownScope(user), route: "/", conversationId: null, text: "  ", ai: { key: "k", model: "m", fetchImpl: failing } })));
 }
 
+async function turnoConAdjuntoChecks() {
+  console.log("\n— Turno con adjunto");
+  const bytes = await makeColoredXlsx();
+  if (!bytes) {
+    console.log("  (sin LibreOffice: se omite)");
+    return;
+  }
+  const user = { ...teacherUser, id: ids.teacher };
+  const conv = createConversation(ids.teacher, `${P} con adjunto`);
+  const fileId = await saveTestFile(bytes, `${P}-prueba.xlsx`, ids.teacher);
+  const { id: attachmentId, summary } = await attachToConversation({ conversationId: conv.id, fileId, userId: ids.teacher });
+  check("El adjunto se guarda con su resumen", summary.sheets.length === 2 && summary.fileName.endsWith(".xlsx"), summary.fileName);
+  check("Adjunto de otra persona: se rechaza", (await errorOf(() => attachToConversation({ conversationId: conv.id, fileId, userId: ids.admin }))) !== "");
+
+  const ai = scripted([
+    [call("c1", "alta_alumnos", { origen: "adjunto", texto: "", hoja: "", filtro_color: "rojo", curso_id: "", grupo: "" })],
+    [say("Revisa la tabla.")],
+  ]);
+  const turn = await runTurn({
+    user,
+    scope: ownScope(user),
+    route: "/teach/students",
+    conversationId: conv.id,
+    text: "da de alta a los que están en rojo",
+    attachmentIds: [attachmentId],
+    ai: { key: "k", model: "m", fetchImpl: ai.fetchImpl },
+  });
+  check("El turno sale bien", "message" in turn, turn);
+  if (!("message" in turn)) return;
+  const body = ai.bodies[0] as { input: { role?: string; content?: string }[] };
+  const system = body.input.find((i) => i.role === "system")?.content ?? "";
+  check("El resumen del archivo va en la instrucción", system.includes("prueba.xlsx") && system.includes("Turno A"), system.slice(-400));
+  // El resumen lleva dos filas de ejemplo; de ahí en adelante nada del archivo viaja
+  check("La IA NO recibe las filas del archivo", !system.includes("carla@x.com"));
+  check("Propuesta con solo la fila roja", turn.message.blocks.some((b) => b.type === "proposal" && b.rows.length === 1), turn.message.blocks.map((b) => b.type));
+  const saved = getConversation(ids.teacher, conv.id)!;
+  check("El mensaje del usuario muestra el archivo", saved.messages[0].blocks.some((b) => b.type === "attachment"), saved.messages[0].blocks);
+
+  // Sin adjuntos, el prompt no habla de archivos
+  const ai2 = scripted([[say("Hola.")]]);
+  await runTurn({ user, scope: ownScope(user), route: "/", conversationId: conv.id, text: "hola", ai: { key: "k", model: "m", fetchImpl: ai2.fetchImpl } });
+  const system2 = (ai2.bodies[0] as { input: { role?: string; content?: string }[] }).input.find((i) => i.role === "system")?.content ?? "";
+  check("Sin adjunto no se menciona ningún archivo", !system2.includes("Archivo adjunto"));
+
+  // Adjunto de otra conversación: no se usa
+  const otra = createConversation(ids.teacher, `${P} otra`);
+  const ai3 = scripted([[say("Hola.")]]);
+  const turn3 = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: otra.id, text: "hola", attachmentIds: [attachmentId], ai: { key: "k", model: "m", fetchImpl: ai3.fetchImpl } });
+  const system3 = (ai3.bodies[0] as { input: { role?: string; content?: string }[] }).input.find((i) => i.role === "system")?.content ?? "";
+  check("Un adjunto de otra conversación no se cuela", !system3.includes("prueba.xlsx") && "message" in turn3);
+
+  // Conversación nacida de un archivo: el primer texto le pone título
+  const desdeArchivo = createConversation(ids.teacher, ATTACHMENT_TITLE);
+  const ai4 = scripted([[say("Hola.")]]);
+  await runTurn({ user, scope: ownScope(user), route: "/", conversationId: desdeArchivo.id, text: `${P} da de alta a los de la lista`, ai: { key: "k", model: "m", fetchImpl: ai4.fetchImpl } });
+  check("«Archivo adjunto» toma el título del primer mensaje", getConversation(ids.teacher, desdeArchivo.id)?.title === `${P} da de alta a los de la lista`, getConversation(ids.teacher, desdeArchivo.id)?.title);
+  // Si el título no cambió, no lo alcanza la limpieza por prefijo: se borra aquí
+  deleteConversation(ids.teacher, desdeArchivo.id);
+  const ai5 = scripted([[say("Hola.")]]);
+  await runTurn({ user, scope: ownScope(user), route: "/", conversationId: conv.id, text: "otro mensaje", ai: { key: "k", model: "m", fetchImpl: ai5.fetchImpl } });
+  check("Un título normal no se toca", getConversation(ids.teacher, conv.id)?.title === `${P} con adjunto`);
+}
+
 function attachmentSummaryChecks() {
   console.log("\n— Resumen de adjunto");
   check("Color: rojo", colorFamily("#FF0000") === "rojo" && colorFamily("#C00000") === "rojo");
@@ -803,6 +903,11 @@ function attachmentSummaryChecks() {
   };
   check("Sugerencia de crear cursos", suggestionsFor(cursos).some((c) => c.includes("Crea estos cursos")));
   check("Sin encabezados conocidos: solo revisar", suggestionsFor({ fileName: "x.pdf", kind: "doc", sheets: [], chars: 100 }).length === 1);
+
+  check("Detalle: varias hojas y el total de filas", attachmentDetail(summary) === "2 hojas · 94 filas", attachmentDetail(summary));
+  check("Detalle: una sola hoja", attachmentDetail(cursos) === "4 filas", attachmentDetail(cursos));
+  check("Detalle: documento con sus caracteres", attachmentDetail({ fileName: "manual.pdf", kind: "doc", sheets: [], chars: 12_000 }) === "PDF · 12 000 caracteres", attachmentDetail({ fileName: "manual.pdf", kind: "doc", sheets: [], chars: 12_000 }));
+  check("Detalle: imagen", attachmentDetail({ fileName: "foto.jpg", kind: "image", sheets: [], chars: 0 }) === "Imagen");
 
   const largo: AttachmentSummary = {
     fileName: "grande.xlsx",
@@ -970,7 +1075,7 @@ async function main() {
   await sheetColorChecks();
   await intakeChecks();
   await rowsFromAttachmentChecks();
-  setup();
+  await setup();
   try {
     await catalogChecks();
     await readToolChecks();
@@ -979,11 +1084,12 @@ async function main() {
     await confirmWordChecks();
     await altaAlumnosChecks();
     await agentChecks();
+    await turnoConAdjuntoChecks();
     await crearCursosChecks();
     // Al final: borrar a Dora dejaría sin alumno a las demás secciones
     await bajaAlumnosChecks();
   } finally {
-    cleanup();
+    await cleanup();
   }
   check("Ninguna prueba usó la API real", openaiCalls === 0, openaiCalls);
   console.log(failures === 0 ? "\nTodo bien" : `\n${failures} fallo(s)`);

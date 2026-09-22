@@ -9,11 +9,24 @@ import type { UndoSpec } from "@/server/assistant/tool-types";
 
 /** Conversaciones del asistente: privadas por usuario. */
 
+/**
+ * Título de la conversación que nace al soltar un archivo (todavía no hay
+ * texto del que sacarlo). El primer mensaje del usuario lo reemplaza.
+ */
+export const ATTACHMENT_TITLE = "Archivo adjunto";
+
 export function createConversation(userId: string, firstText: string): { id: string; title: string } {
   const id = nanoid();
   const title = conversationTitle(firstText) || "Nueva conversación";
   db.insert(aiConversations).values({ id, userId, title }).run();
   return { id, title };
+}
+
+/** Le pone otro título (lo usa el turno cuando la conversación nació de un archivo). */
+export function renameConversation(id: string, title: string): void {
+  const clean = conversationTitle(title);
+  if (!clean) return;
+  db.update(aiConversations).set({ title: clean }).where(eq(aiConversations.id, id)).run();
 }
 
 export function listConversations(userId: string, q?: string): ConversationSummary[] {

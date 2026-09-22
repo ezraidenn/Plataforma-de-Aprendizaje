@@ -2,8 +2,18 @@ import "server-only";
 import type { SessionUser } from "@/server/auth/sessions";
 import { actingOwnerId, type ViewScope } from "@/server/auth/view-scope";
 import { requestWithTools, MalformedAiResponse, type AiOpts, type ChatItem, type ToolDef } from "@/server/services/ai-client";
-import { appendMessage, createConversation, getConversation, recentModelText, updateMessage } from "@/server/services/ai-conversations";
-import type { AssistantBlock, AssistantMessage } from "@/lib/assistant-blocks";
+import {
+  ATTACHMENT_TITLE,
+  appendMessage,
+  createConversation,
+  getConversation,
+  recentModelText,
+  renameConversation,
+  updateMessage,
+} from "@/server/services/ai-conversations";
+import { attachmentsOf } from "@/server/services/attachment-intake";
+import { attachmentDetail } from "@/lib/attachment-summary";
+import { conversationTitle, type AssistantBlock, type AssistantMessage } from "@/lib/assistant-blocks";
 import { getProposal } from "./proposal-store";
 import { toolByName, toolDefsForRole } from "./registry";
 import { systemPrompt } from "./prompt";
@@ -25,6 +35,8 @@ export type TurnInput = {
   route: string;
   conversationId: string | null;
   text: string;
+  /** Adjuntos de este mensaje (ids de `ai_attachments` de esta conversación) */
+  attachmentIds?: string[];
   ai: AiOpts;
 };
 
@@ -45,12 +57,24 @@ export async function runTurn(input: TurnInput): Promise<TurnOutput> {
   if (role !== "admin" && role !== "teacher") return { error: "El asistente es solo para maestros y administradores." };
 
   let conversationId = input.conversationId;
-  if (conversationId && !getConversation(input.user.id, conversationId)) conversationId = null;
+  const existing = conversationId ? getConversation(input.user.id, conversationId) : null;
+  if (conversationId && !existing) conversationId = null;
   if (!conversationId) conversationId = createConversation(input.user.id, text).id;
+  // La conversación que nació de un archivo no tiene título propio: se lo da el primer mensaje
+  else if (existing && existing.title === ATTACHMENT_TITLE && existing.messages.length === 0) {
+    renameConversation(conversationId, conversationTitle(text));
+  }
+
+  // Un id de otra conversación no se cuela: `attachmentsOf` filtra por conversación
+  const attachments = input.attachmentIds?.length ? attachmentsOf(conversationId, input.attachmentIds) : [];
 
   // Historial corto ANTES de guardar el mensaje nuevo (para no duplicarlo)
   const history = recentModelText(conversationId, HISTORY_MESSAGES);
-  const userMessage = appendMessage(conversationId, "user", [{ type: "text", text }], text);
+  const userBlocks: AssistantBlock[] = [
+    { type: "text", text },
+    ...attachments.map((a) => ({ type: "attachment" as const, name: a.summary.fileName, detail: attachmentDetail(a.summary) })),
+  ];
+  const userMessage = appendMessage(conversationId, "user", userBlocks, text);
   // El mensaje del asistente nace vacío: las propuestas cuelgan de él y se rellena al final
   const reply = appendMessage(conversationId, "assistant", [], "");
 
@@ -61,12 +85,12 @@ export async function runTurn(input: TurnInput): Promise<TurnOutput> {
     route: input.route,
     conversationId,
     messageId: reply.id,
-    attachments: [],
+    attachments,
   };
   const tools: ToolDef[] = toolDefsForRole(role);
 
   const items: ChatItem[] = [
-    { role: "system", content: systemPrompt({ user: input.user, scope: input.scope, route: input.route }) },
+    { role: "system", content: systemPrompt({ user: input.user, scope: input.scope, route: input.route, attachments }) },
     ...history.map((m) => ({ role: m.role, content: m.text }) as ChatItem),
     { role: "user", content: text },
   ];
