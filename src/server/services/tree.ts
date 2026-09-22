@@ -1,9 +1,10 @@
 import "server-only";
-import { and, eq, asc, isNull } from "drizzle-orm";
+import { and, eq, asc, inArray, isNull } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { db } from "@/server/db";
 import { enqueueJob } from "@/server/jobs/queue";
 import { fileIdsForItem } from "./storage-layout";
+import { copyStoredFile, deleteFile } from "./storage";
 import {
   courseItems,
   itemDocuments,
@@ -12,6 +13,10 @@ import {
   itemAssignments,
   itemLinks,
   exams,
+  itemResourceFiles,
+  assignmentAttachments,
+  questions,
+  questionOptions,
 } from "@/server/db/schema";
 
 export type ItemKind = (typeof courseItems.$inferSelect)["kind"];
@@ -210,6 +215,202 @@ export function moveItem(opts: {
       }
     }
   });
+}
+
+// ─── Copiar y pegar (copia profunda) ─────────────────────────────────────────
+
+/** Fila copiada sin sus marcas de tiempo (toman las del momento de la copia). */
+function withoutTimestamps<T extends object>(row: T): T {
+  const copy = { ...row } as Record<string, unknown>;
+  delete copy.createdAt;
+  delete copy.updatedAt;
+  return copy as T;
+}
+
+/**
+ * Copia un ítem (y, si es carpeta, todo su contenido) a otro lugar del mismo
+ * curso o de otro. Copia la configuración de cada tipo y sus archivos: cada
+ * copia con los SUYOS (si dos lecciones compartieran un archivo, los permisos
+ * y el avance de los alumnos seguirían solo a una). Nunca copia el avance,
+ * los intentos ni las entregas; un examen copiado empieza sin resultados
+ * publicados. Las imágenes del editor se comparten (son de la plataforma).
+ */
+export async function duplicateItem(opts: {
+  sourceItemId: string;
+  targetCourseId: string;
+  parentId: string | null;
+  index: number;
+  uploadedBy: string;
+}): Promise<{ item: CourseItem; count: number; missingFiles: number }> {
+  const src = getItem(opts.sourceItemId);
+  if (!src) throw new Error("Lo que copiaste ya no existe");
+
+  // Foto del subárbol ANTES de insertar nada (una carpeta puede pegarse dentro de sí misma)
+  const all = getItems(src.courseId);
+  const childrenOf = new Map<string | null, CourseItem[]>();
+  for (const it of all) childrenOf.set(it.parentId, [...(childrenOf.get(it.parentId) ?? []), it]);
+  const subtree: CourseItem[] = [];
+  const walk = (it: CourseItem) => {
+    subtree.push(it);
+    for (const c of (childrenOf.get(it.id) ?? []).sort((a, b) => a.position - b.position)) walk(c);
+  };
+  walk(src);
+
+  const destDepth = folderDepth(opts.targetCourseId, opts.parentId);
+  if (src.kind === "folder") {
+    const hasSubfolders = subtree.some((it) => it.id !== src.id && it.kind === "folder");
+    if (destDepth + 1 + (hasSubfolders ? 1 : 0) > MAX_FOLDER_DEPTH) {
+      throw new Error("Máximo dos niveles de carpetas");
+    }
+  }
+
+  // 1) Archivos (asíncrono, fuera de la transacción)
+  const ids = subtree.map((it) => it.id);
+  const docs = new Map(
+    db.select().from(itemDocuments).where(inArray(itemDocuments.itemId, ids)).all().map((d) => [d.itemId, d])
+  );
+  const resourceFiles = db.select().from(itemResourceFiles).where(inArray(itemResourceFiles.itemId, ids)).all();
+  const attachments = db.select().from(assignmentAttachments).where(inArray(assignmentAttachments.itemId, ids)).all();
+  const fileIds = new Set<string>();
+  for (const d of docs.values()) {
+    if (d.sourceFileId) fileIds.add(d.sourceFileId);
+    if (d.renderFileId) fileIds.add(d.renderFileId);
+  }
+  for (const r of resourceFiles) fileIds.add(r.fileId);
+  for (const a of attachments) fileIds.add(a.fileId);
+
+  const newFile = new Map<string, string>();
+  let missingFiles = 0;
+  try {
+    for (const fid of fileIds) {
+      const copied = await copyStoredFile(fid, opts.uploadedBy);
+      if (copied) newFile.set(fid, copied);
+      else missingFiles++;
+    }
+  } catch (err) {
+    for (const id of newFile.values()) await deleteFile(id).catch(() => {});
+    throw err;
+  }
+  const mapFile = (fid: string | null) => (fid ? newFile.get(fid) ?? null : null);
+
+  // 2) Filas (una sola transacción: o se copia todo o nada)
+  const newId = new Map(subtree.map((it) => [it.id, nanoid()]));
+  const sameCourse = src.courseId === opts.targetCourseId;
+  const reconvert: string[] = [];
+  try {
+    db.transaction(() => {
+      for (const it of subtree) {
+        const id = newId.get(it.id)!;
+        const isTop = it.id === src.id;
+        db.insert(courseItems)
+          .values({
+            id,
+            courseId: opts.targetCourseId,
+            parentId: isTop ? opts.parentId : newId.get(it.parentId!)!,
+            position: isTop ? nextPosition(opts.targetCourseId, opts.parentId) : it.position,
+            kind: it.kind,
+            // En el mismo curso se distingue del original (y su archivo no choca de ruta)
+            title: isTop && sameCourse ? `${it.title} (copia)` : it.title,
+            description: it.description,
+            sequenceMode: it.sequenceMode,
+            requiredForCompletion: it.requiredForCompletion,
+            visible: it.visible,
+          })
+          .run();
+
+        switch (it.kind) {
+          case "document": {
+            const d = docs.get(it.id);
+            if (!d) break;
+            const source = mapFile(d.sourceFileId);
+            // Un PDF usa el mismo archivo como fuente y como versión final
+            const render = d.renderFileId === d.sourceFileId ? source : mapFile(d.renderFileId);
+            let status = d.processingStatus;
+            if (!source) status = "pending";
+            else if (!render && d.sourceType !== "pdf") {
+              // PowerPoint sin versión convertida: se vuelve a convertir
+              status = "pending";
+              reconvert.push(id);
+            }
+            db.insert(itemDocuments)
+              .values(
+                withoutTimestamps({
+                  ...d,
+                  itemId: id,
+                  sourceFileId: source,
+                  renderFileId: render,
+                  thumbnailFileId: null,
+                  processingStatus: status,
+                  pageCount: render ? d.pageCount : null,
+                })
+              )
+              .run();
+            break;
+          }
+          case "text": {
+            const t = db.select().from(itemTexts).where(eq(itemTexts.itemId, it.id)).get();
+            if (t) db.insert(itemTexts).values(withoutTimestamps({ ...t, itemId: id })).run();
+            break;
+          }
+          case "video": {
+            const v = db.select().from(itemVideos).where(eq(itemVideos.itemId, it.id)).get();
+            if (v) db.insert(itemVideos).values(withoutTimestamps({ ...v, itemId: id })).run();
+            break;
+          }
+          case "link": {
+            const l = db.select().from(itemLinks).where(eq(itemLinks.itemId, it.id)).get();
+            if (l) db.insert(itemLinks).values(withoutTimestamps({ ...l, itemId: id })).run();
+            break;
+          }
+          case "assignment": {
+            const a = db.select().from(itemAssignments).where(eq(itemAssignments.itemId, it.id)).get();
+            if (a) db.insert(itemAssignments).values(withoutTimestamps({ ...a, itemId: id })).run();
+            for (const att of attachments.filter((x) => x.itemId === it.id)) {
+              const fid = mapFile(att.fileId);
+              if (fid) db.insert(assignmentAttachments).values({ ...att, id: nanoid(), itemId: id, fileId: fid }).run();
+            }
+            break;
+          }
+          case "resource": {
+            for (const r of resourceFiles.filter((x) => x.itemId === it.id)) {
+              const fid = mapFile(r.fileId);
+              if (fid) db.insert(itemResourceFiles).values({ ...r, id: nanoid(), itemId: id, fileId: fid }).run();
+            }
+            break;
+          }
+          case "exam": {
+            const e = db.select().from(exams).where(eq(exams.itemId, it.id)).get();
+            if (e) {
+              db.insert(exams)
+                .values(withoutTimestamps({ ...e, itemId: id, resultsPublishedAt: null, resultsNotifiedAt: null }))
+                .run();
+            }
+            for (const q of db.select().from(questions).where(eq(questions.examItemId, it.id)).all()) {
+              const qid = nanoid();
+              db.insert(questions)
+                .values(withoutTimestamps({ ...q, id: qid, examItemId: id, imageFileId: null }))
+                .run();
+              for (const o of db.select().from(questionOptions).where(eq(questionOptions.questionId, q.id)).all()) {
+                db.insert(questionOptions).values({ ...o, id: nanoid(), questionId: qid }).run();
+              }
+            }
+            break;
+          }
+        }
+      }
+    });
+  } catch (err) {
+    for (const id of newFile.values()) await deleteFile(id).catch(() => {});
+    throw err;
+  }
+
+  // 3) En su lugar entre los hermanos, sus archivos a su ruta legible y, si hace falta, reconvertir
+  const top = newId.get(src.id)!;
+  moveItem({ courseId: opts.targetCourseId, itemId: top, newParentId: opts.parentId, newIndex: opts.index });
+  if (newFile.size > 0) enqueueJob("relocate_files", { courseId: opts.targetCourseId });
+  for (const itemId of reconvert) enqueueJob("convert_ppt", { itemId });
+
+  return { item: getItem(top)!, count: subtree.length, missingFiles };
 }
 
 /** Borra un ítem y todos sus descendientes (el detalle cae por FK cascade). */

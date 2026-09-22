@@ -227,6 +227,27 @@ export async function pruneEmptyDirs(startDir: string): Promise<void> {
   }
 }
 
+/**
+ * Copia física de un archivo guardado → fila nueva (mismo nombre, tipo y
+ * clase). Queda en la ruta de reserva; el trabajo relocate_files la lleva a
+ * su ruta legible cuando la fila que la usa ya existe. null si el archivo ya
+ * no está en disco (o no existe la fila).
+ */
+export async function copyStoredFile(fileId: string, uploadedBy: string): Promise<string | null> {
+  const src = getFileRecord(fileId);
+  if (!src) return null;
+  const abs = absolutePathFor(src.storedPath);
+  if (!fs.existsSync(abs)) return null;
+  const { id } = await saveStream({
+    stream: fs.createReadStream(abs),
+    originalName: src.originalName,
+    mimeType: src.mimeType,
+    kind: src.kind,
+    uploadedBy,
+  });
+  return id;
+}
+
 export async function deleteFile(fileId: string) {
   const rec = getFileRecord(fileId);
   if (!rec) return;
