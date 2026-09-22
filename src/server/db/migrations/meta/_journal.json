@@ -78,6 +78,13 @@
       "when": 1790107791467,
       "tag": "0010_asistente-ia",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1790117174733,
+      "tag": "0011_asistente-adjuntos",
+      "breakpoints": true
     }
   ]
 }

@@ -90,6 +90,7 @@ export const files = sqliteTable(
         "resource",
         "attachment",
         "editor_image",
+        "assistant_attachment",
       ],
     }).notNull(),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
@@ -777,4 +778,21 @@ export const aiProposals = sqliteTable(
     expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
   },
   (t) => [index("ai_proposals_status_idx").on(t.status, t.expiresAt)]
+);
+
+export const aiAttachments = sqliteTable(
+  "ai_attachments",
+  {
+    id: text("id").primaryKey(),
+    conversationId: text("conversation_id")
+      .notNull()
+      .references(() => aiConversations.id, { onDelete: "cascade" }),
+    fileId: text("file_id").references(() => files.id, { onDelete: "set null" }),
+    /** Resumen que ve la IA y la interfaz (src/lib/attachment-summary.ts) */
+    summary: text("summary", { mode: "json" }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (t) => [index("ai_attachments_conversation_idx").on(t.conversationId, t.createdAt)]
 );
