@@ -13,8 +13,10 @@ import { db } from "@/server/db";
 import { itemDocuments, itemTexts } from "@/server/db/schema";
 import { requireTeacher } from "@/server/auth/guards";
 import { getOwnedCourse } from "@/server/services/courses";
+import { audit } from "@/server/services/audit";
 import {
   createItem,
+  duplicateItem,
   moveItem,
   deleteItem,
   updateItem,
@@ -89,6 +91,50 @@ export async function moveItemAction(input: {
 }
 
 export type DeleteItemResult = { ok: true } | { error: string };
+
+export type DuplicateItemResult =
+  | { ok: true; itemId: string; title: string; missingFiles: number }
+  | { error: string };
+
+/**
+ * Pegar lo copiado (Ctrl+C → Ctrl+V): copia profunda del ítem en este curso,
+ * que puede venir de otro curso del mismo maestro.
+ */
+export async function duplicateItemAction(input: {
+  courseId: string;
+  sourceCourseId: string;
+  itemId: string;
+  parentId: string | null;
+  index: number;
+}): Promise<DuplicateItemResult> {
+  const user = await requireTeacher();
+  if (!getOwnedCourse(input.courseId, user)) return { error: "No encontramos este curso o no te pertenece" };
+  if (!getOwnedCourse(input.sourceCourseId, user)) {
+    return { error: "No tienes acceso al curso de donde copiaste" };
+  }
+  const item = getItem(input.itemId);
+  if (!item || item.courseId !== input.sourceCourseId) return { error: "Lo que copiaste ya no existe" };
+
+  try {
+    const result = await duplicateItem({
+      sourceItemId: input.itemId,
+      targetCourseId: input.courseId,
+      parentId: input.parentId,
+      index: input.index,
+      uploadedBy: user.id,
+    });
+    audit(user.id, "duplicate_item", "course_items", result.item.id, {
+      from: input.itemId,
+      fromCourseId: input.sourceCourseId,
+      courseId: input.courseId,
+      items: result.count,
+    });
+    revalidateContent(input.courseId);
+    return { ok: true, itemId: result.item.id, title: result.item.title, missingFiles: result.missingFiles };
+  } catch (err) {
+    return { error: errorMessage(err, "No se pudo pegar. Intenta de nuevo.") };
+  }
+}
 
 export async function deleteItemAction(
   courseId: string,
