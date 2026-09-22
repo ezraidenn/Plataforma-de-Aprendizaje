@@ -34,7 +34,8 @@ export type SendTurnResult =
 export async function sendTurnAction(input: { conversationId: string | null; text: string; route: string }): Promise<SendTurnResult> {
   const user = await requireTeacher();
   const key = getAiKey();
-  if (!key) return { error: user.role === "admin" ? NO_KEY_ADMIN : NO_KEY_TEACHER, noKey: true };
+  // Solo el admin puede configurar la clave: solo a él se le manda a Configuración
+  if (!key) return user.role === "admin" ? { error: NO_KEY_ADMIN, noKey: true } : { error: NO_KEY_TEACHER };
   const scope = await getViewScope(user);
   const result = await runTurn({
     user,
@@ -57,7 +58,7 @@ async function toolContext(user: Awaited<ReturnType<typeof requireTeacher>>, con
 
 export async function applyProposalAction(input: { proposalId: string; rows: ProposalRow[] }): Promise<{ ok: true; text: string } | { error: string }> {
   const user = await requireTeacher();
-  const rows = Array.isArray(input.rows) ? input.rows : [];
+  const rows = validRows(input.rows);
   const result = await applyProposal(String(input.proposalId ?? ""), rows, await toolContext(user, "", ""));
   if ("error" in result) return result;
   refreshAfterChange();
@@ -102,6 +103,20 @@ export async function getConversationAction(input: { id: string }): Promise<{ id
 export async function deleteConversationAction(input: { id: string }): Promise<{ ok: boolean }> {
   const user = await requireTeacher();
   return { ok: deleteConversation(user.id, String(input.id ?? "")) };
+}
+
+const MAX_ROWS = 5000;
+
+/** Filas del cliente con forma de fila: `id` texto y `cells` objeto; tope de 5000. */
+function validRows(input: unknown): ProposalRow[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .filter((r): r is ProposalRow => {
+      if (!r || typeof r !== "object") return false;
+      const { id, cells } = r as { id?: unknown; cells?: unknown };
+      return typeof id === "string" && !!cells && typeof cells === "object" && !Array.isArray(cells);
+    })
+    .slice(0, MAX_ROWS);
 }
 
 /** Las pantallas de fondo se rearman: una matrícula cambia listas y conteos. */

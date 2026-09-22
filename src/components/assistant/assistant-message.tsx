@@ -123,7 +123,7 @@ function ResultCard({ block, message, conversationId }: { block: Extract<Assista
 }
 
 function Block({ block, message, conversationId }: { block: AssistantBlock; message: AssistantMessage; conversationId: string | null }) {
-  const { send, retry, replaceMessage } = useAssistant();
+  const { send, retry, replaceMessage, busy } = useAssistant();
   switch (block.type) {
     case "text":
       return (
@@ -143,7 +143,8 @@ function Block({ block, message, conversationId }: { block: AssistantBlock; mess
                 key={o}
                 type="button"
                 onClick={() => void send(o)}
-                className="rounded-full border border-indigo-200 bg-white px-3 py-1 text-[11.5px] font-semibold text-indigo-900 hover:bg-indigo-50"
+                disabled={busy}
+                className="rounded-full border border-indigo-200 bg-white px-3 py-1 text-[11.5px] font-semibold text-indigo-900 hover:bg-indigo-50 disabled:opacity-50"
               >
                 {o}
               </button>
@@ -233,7 +234,8 @@ function Block({ block, message, conversationId }: { block: AssistantBlock; mess
             <button
               type="button"
               onClick={() => void retry()}
-              className="shrink-0 rounded-md px-1.5 py-0.5 text-[11.5px] font-semibold text-red-900 hover:bg-red-100"
+              disabled={busy}
+              className="shrink-0 rounded-md px-1.5 py-0.5 text-[11.5px] font-semibold text-red-900 hover:bg-red-100 disabled:opacity-50"
             >
               Reintentar
             </button>

@@ -1,6 +1,8 @@
 import "server-only";
 import { schema, strEnum, str, param, type AssistantTool } from "../tool-types";
 
+const ID_RE = /^[\w-]{1,64}$/;
+
 const DESTINOS = ["alumno", "curso", "contenido", "calificar", "reportes", "certificados", "ajustes", "estudiantes", "cursos", "inicio"] as const;
 
 const FIXED: Record<string, string> = {
@@ -30,6 +32,8 @@ export const irA: AssistantTool = {
     // hasOwn: `in` aceptaría claves heredadas como «toString»
     if (Object.hasOwn(FIXED, destino)) return { forModel: `Abriendo ${destino}.`, navigate: FIXED[destino] };
     if (!id) return { forModel: `Para ir a «${destino}» necesito el id; búscalo con buscar_alumno o buscar_curso.` };
+    // El id va en la URL: solo lo que parece un id
+    if (!ID_RE.test(id)) return { forModel: "Id inválido." };
     if (destino === "alumno") return { forModel: "Abriendo el perfil del alumno.", navigate: `/teach/students/${id}` };
     if (destino === "curso") return { forModel: "Abriendo el curso.", navigate: `/teach/courses/${id}` };
     if (destino === "contenido") return { forModel: "Abriendo el contenido del curso.", navigate: `/teach/courses/${id}/content` };

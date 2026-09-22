@@ -63,6 +63,8 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
   });
   const lastText = useRef<string | null>(null);
   const conversationRef = useRef<string | null>(null);
+  // Un turno a la vez: el estado tarda un render en reflejar `busy`, la ref no
+  const busyRef = useRef(false);
   useEffect(() => {
     conversationRef.current = state.conversationId;
   }, [state.conversationId]);
@@ -98,7 +100,8 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
   const send = useCallback(
     async (raw: string) => {
       const text = raw.trim();
-      if (!text) return;
+      if (!text || busyRef.current) return;
+      busyRef.current = true;
       lastText.current = text;
       setState((s) => ({ ...s, open: true, view: "thread", busy: true, draft: "", pendingText: text }));
       let result: Awaited<ReturnType<typeof sendTurnAction>>;
@@ -106,6 +109,8 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
         result = await sendTurnAction({ conversationId: conversationRef.current, text, route: pathname });
       } catch {
         result = { error: "No se pudo hablar con el servidor. Inténtalo de nuevo." };
+      } finally {
+        busyRef.current = false;
       }
       if ("error" in result) {
         setState((s) => ({ ...s, busy: false, pendingText: null, draft: text }));

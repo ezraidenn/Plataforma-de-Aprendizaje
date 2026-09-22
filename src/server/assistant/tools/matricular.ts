@@ -40,9 +40,10 @@ function isEnrolled(courseId: string, studentId: string): boolean {
   return !!row && row.status !== "dropped";
 }
 
+// Nombre y correo vienen de la base: se ven, no se editan
 const COLUMNS = [
-  { key: "nombre", label: "Nombre" },
-  { key: "correo", label: "Correo" },
+  { key: "nombre", label: "Nombre", editable: false },
+  { key: "correo", label: "Correo", editable: false },
 ];
 
 /** Filas de revisión para una lista de alumnos en un curso. */
@@ -128,13 +129,16 @@ export const matricular: AssistantTool = {
   apply(rows, payload, ctx) {
     return applyRows(rows, payload, ctx, "enroll");
   },
-  /** Deshacer la matrícula instantánea: baja del alumno, sin pasar por revisión. */
+  /**
+   * Deshacer la matrícula instantánea: baja del alumno, sin pasar por revisión.
+   * Si no se puede, lanza: así el mensaje no se marca como deshecho.
+   */
   undo(params, ctx) {
     const studentId = param(params, "alumno_id");
     const course = getOwnedCourse(param(params, "curso_id"), ctx.user);
-    if (!studentId || !course) return { forModel: "No encontramos ese curso o no te pertenece." };
+    if (!studentId || !course) throw new Error("No se pudo deshacer: el curso ya no está disponible.");
     const [row] = rowsFor([studentId], course.id, ctx, "unenroll");
-    if (row.blocked) return { forModel: `No se pudo deshacer: ${row.warning}.` };
+    if (row.blocked) throw new Error(`No se pudo deshacer: ${row.warning}.`);
     unenrollStudent(course.id, row.id, ctx.user.id);
     audit(ctx.user.id, "assistant_matricular_undo", "enrollment", `${course.id}:${row.id}`, { via: "assistant", conversationId: ctx.conversationId });
     const text = `Baja hecha: ${row.cells.nombre} de ${course.title}.`;

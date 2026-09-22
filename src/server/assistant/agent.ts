@@ -74,14 +74,16 @@ export async function runTurn(input: TurnInput): Promise<TurnOutput> {
   const usedTools: string[] = [];
   let undo: ToolResult["undo"];
   let finalText: string | null = null;
-  let proposalCreated = false;
+  // Turno cerrado: ya se hizo una acción instantánea o se creó una propuesta.
+  // Una sola por turno: así cada mensaje tiene como mucho un «Deshacer» y un undo.
+  let closed = false;
 
   try {
     for (let round = 0; round <= MAX_ROUNDS; round++) {
       if (round === MAX_ROUNDS) {
         items.push({ role: "system", content: "Ya no puedes usar más herramientas en este turno: resume lo que encontraste y termina." });
       }
-      const noTools = round === MAX_ROUNDS || proposalCreated;
+      const noTools = round === MAX_ROUNDS || closed;
       const activeTools = noTools ? [] : tools;
       // Una respuesta ilegible se reintenta una vez
       const turn = await requestWithTools(items, activeTools, input.ai, TIMEOUT_MS).catch((err) => {
@@ -95,9 +97,9 @@ export async function runTurn(input: TurnInput): Promise<TurnOutput> {
         items.push({ type: "function_call", call_id: call.callId, name: call.name, arguments: JSON.stringify(call.args ?? {}) });
         const tool = toolByName(call.name);
         let output: string;
-        if (proposalCreated) {
-          // Con una propuesta pendiente no se ejecuta nada más; se contesta para que el historial quede completo
-          output = "no ejecutada: ya hay una propuesta pendiente";
+        if (closed) {
+          // Tras una acción o propuesta no se ejecuta nada más; se contesta para que el historial quede completo
+          output = "no ejecutada: ya se hizo una acción en este turno";
         } else if (!tool || !tool.roles.includes(role)) {
           output = `La herramienta «${call.name}» no existe o no está disponible para este usuario.`;
         } else {
@@ -108,15 +110,19 @@ export async function runTurn(input: TurnInput): Promise<TurnOutput> {
             output = result.forModel;
             if (result.blocks) blocks.push(...result.blocks);
             if (result.navigate) blocks.push({ type: "navigate", href: result.navigate });
-            if (result.undo) undo = result.undo;
+            if (result.undo) {
+              undo = result.undo;
+              closed = true;
+            }
             if (result.proposalId) {
               const block = proposalBlock(result.proposalId);
               if (block) blocks.push(block);
-              proposalCreated = true;
+              closed = true;
             }
           } catch (err) {
+            // El detalle solo al registro: la IA no debe repetir mensajes internos
             console.error(`[asistente] herramienta ${call.name} falló (conversación ${conversationId}):`, err);
-            output = `error: ${err instanceof Error ? err.message : "la herramienta falló"}`;
+            output = "error: la herramienta falló; díselo al usuario en una frase";
           }
         }
         items.push({ type: "function_call_output", call_id: call.callId, output });

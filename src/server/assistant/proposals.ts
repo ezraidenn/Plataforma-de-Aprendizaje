@@ -43,10 +43,22 @@ export async function applyProposal(
   const tool = toolByName(proposal.tool);
   if (!tool?.apply) return { error: "Esta acción ya no está disponible." };
 
+  // Del cliente solo se toman las celdas editables (recortadas); el resto viene de la propuesta original
   const original = new Map(proposal.rows.map((r) => [r.id, r]));
-  const safe = rows
-    .filter((r) => original.has(r.id))
-    .map((r) => ({ ...r, blocked: original.get(r.id)!.blocked, warning: original.get(r.id)!.warning }));
+  const editableKeys = proposal.draft.columns.filter((c) => c.editable !== false).map((c) => c.key);
+  const seen = new Set<string>();
+  const safe: ProposalRow[] = [];
+  for (const r of rows) {
+    const o = original.get(r.id);
+    if (!o || seen.has(r.id)) continue;
+    seen.add(r.id);
+    const cells = { ...o.cells };
+    for (const key of editableKeys) {
+      const v = r.cells?.[key];
+      if (typeof v === "string") cells[key] = v.slice(0, 200);
+    }
+    safe.push({ id: o.id, cells, blocked: o.blocked, warning: o.warning });
+  }
 
   // Se reclama antes de aplicar: dos clics a la vez no la aplican dos veces
   const claimed = db

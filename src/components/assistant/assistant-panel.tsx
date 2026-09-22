@@ -10,7 +10,7 @@ import { AssistantMessageView, UserBubble } from "./assistant-message";
 import { useAssistant } from "./assistant-provider";
 
 const WELCOME =
-  "Dime qué hacer con tus cursos y alumnos: buscar a alguien, ver cómo va, matricular, abrir una pantalla. Antes de cambiar algo te muestro qué va a pasar.";
+  "Dime qué hacer con tus cursos y alumnos: buscar a alguien, ver cómo va, matricular, abrir una pantalla. Lo sencillo se hace al momento y se puede deshacer; lo que afecta a varios lo revisas antes en una tabla.";
 
 const DATE_FMT = new Intl.DateTimeFormat("es-MX", { day: "numeric", month: "short" });
 

@@ -121,7 +121,7 @@ async function clientChecks() {
 }
 
 const P = "zasst";
-const ids = { teacher: nanoid(), admin: nanoid(), s1: nanoid(), s2: nanoid(), s3: nanoid(), course: "" };
+const ids = { teacher: nanoid(), admin: nanoid(), s1: nanoid(), s2: nanoid(), s3: nanoid(), s4: nanoid(), course: "" };
 
 function makeUser(id: string, key: string, name: string, role: "teacher" | "admin" | "student", createdBy: string | null) {
   db.insert(users).values({ id, email: `${P}-${key}@test.local`, passwordHash: "x", fullName: `${P} ${name}`, role, createdBy }).run();
@@ -135,6 +135,8 @@ function setup() {
   makeUser(ids.s2, "beto", "Beto Ruiz", "student", ids.teacher);
   // Alumno de otro maestro: el asistente no debe poder matricularlo
   makeUser(ids.s3, "carla", "Carla Ajena", "student", ids.admin);
+  // Nunca se matricula: sirve para comprobar que una segunda acción en el mismo turno no se ejecuta
+  makeUser(ids.s4, "dora", "Dora Sola", "student", ids.teacher);
   ids.course = createCourse({ ownerId: ids.teacher, title: `${P} Extintores` }).id;
   enrollStudents(ids.course, [ids.s1], ids.teacher);
 }
@@ -193,6 +195,8 @@ async function readToolChecks() {
   check("ir_a contenido → URL del curso", navCourse.navigate === `/teach/courses/${ids.course}/content`);
   const navBad = await toolByName("ir_a")!.run({ destino: "alumno", id: "" }, ctx);
   check("ir_a alumno sin id: lo dice", !navBad.navigate && navBad.forModel.includes("id"));
+  const navEvil = await toolByName("ir_a")!.run({ destino: "alumno", id: "../admin?x=1" }, ctx);
+  check("ir_a con id raro: inválido y sin navegar", !navEvil.navigate && navEvil.forModel === "Id inválido.");
 
   const found = await toolByName("buscar_alumno")!.run({ texto: "ana lópez" }, ctx);
   check("buscar_alumno encuentra a Ana", found.forModel.includes("Ana López") && found.forModel.includes(ids.s1));
@@ -252,6 +256,10 @@ async function proposalChecks() {
   const undone = await undoTool.undo!(one.undo!.params, ctx);
   check("Deshacer la desmatricula", undone.forModel.includes("Baja hecha") && db.select().from(enrollments).where(eq(enrollments.id, enrolled!.id)).get()?.status === "dropped");
   check("Deshacer deja auditoría", db.select().from(auditLog).where(and(eq(auditLog.action, "assistant_matricular_undo"), eq(auditLog.entityId, `${ids.course}:${ids.s2}`))).get() !== undefined);
+  const undoAgain = await Promise.resolve()
+    .then(() => undoTool.undo!(one.undo!.params, ctx))
+    .then(() => null, (e: Error) => e.message);
+  check("Deshacer de nuevo (ya de baja): lanza, no devuelve texto", typeof undoAgain === "string" && undoAgain.startsWith("No se pudo deshacer"), undoAgain);
 
   // Alumno de otro maestro: fila bloqueada
   const foreign = await toolByName("matricular")!.run({ alumno_ids: [ids.s2, ids.s3], curso_id: ids.course }, ctx);
@@ -373,6 +381,17 @@ async function agentChecks() {
     const convP = getConversation(ids.teacher, t4.conversationId)!;
     check("Turno con propuesta: exactamente usuario + asistente", convP.messages.length === 2 && convP.messages[1].id === t4.message.id && convP.messages[1].blocks.some((b) => b.type === "proposal"));
     check("La propuesta cuelga del mensaje del asistente", getProposal(proposalBlock.proposalId)?.messageId === t4.message.id);
+    check("Columnas nombre y correo no editables", proposalBlock.columns.every((c) => c.editable === false));
+    // Se aplica con celdas alteradas y una fila inventada: el bloque congelado conserva lo original
+    const ctxP = { ...ctxFor(user, ownScope(user)), conversationId: t4.conversationId, messageId: t4.message.id };
+    const tampered = [
+      ...proposalBlock.rows.filter((r) => r.id === ids.s1).map((r) => ({ ...r, cells: { nombre: "Hackeado", correo: "x@x" }, blocked: false, warning: undefined })),
+      { id: "fila-inventada", cells: { nombre: "Nadie", correo: "" } },
+    ];
+    const appliedP = await applyProposal(proposalBlock.proposalId, tampered, ctxP);
+    const frozenP = getConversation(ids.teacher, t4.conversationId)!.messages[1].blocks.find((b) => b.type === "proposal");
+    check("Aplicar con nombre alterado: 0 aplicadas (Ana sigue bloqueada)", "text" in appliedP && appliedP.text.startsWith("0 "));
+    check("El bloque congelado conserva nombre y correo originales, sin la fila inventada", frozenP?.type === "proposal" && frozenP.rows.length === 1 && frozenP.rows[0].cells.nombre === `${P} Ana López` && frozenP.rows[0].cells.correo === `${P}-ana@test.local` && frozenP.rows[0].blocked === true, frozenP?.type === "proposal" ? frozenP.rows : frozenP);
   }
 
   // Propuesta y otra llamada en la misma vuelta: la segunda no se ejecuta pero se contesta
@@ -386,6 +405,27 @@ async function agentChecks() {
   const t5 = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: turn.conversationId, text: "matricula a Beto", ai: { key: "k", model: "m", fetchImpl: inst.fetchImpl } });
   check("Instantánea: bloque result deshacible", "message" in t5 && t5.message.blocks.some((b) => b.type === "result" && b.undoable));
   check("…y el undo queda guardado en el mensaje", "message" in t5 && messageUndo(ids.teacher, turn.conversationId, t5.message.id)?.undo.tool === "matricular");
+
+  const activeFor = (studentId: string) =>
+    db.select().from(enrollments).where(and(eq(enrollments.courseId, ids.course), eq(enrollments.studentId, studentId))).all().filter((e) => e.status === "active").length;
+
+  // Una sola acción instantánea por turno: tras matricular, la IA ya no recibe herramientas
+  unenrollStudent(ids.course, ids.s2, ids.teacher);
+  const twice = scripted([[call("c1", "matricular", { alumno_ids: [ids.s2], curso_id: ids.course })], [call("c2", "matricular", { alumno_ids: [ids.s4], curso_id: ids.course })], [say("Listo.")]]);
+  const t5c = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: turn.conversationId, text: "matricula a Beto y luego a Dora", ai: { key: "k", model: "m", fetchImpl: twice.fetchImpl } });
+  const twiceSecond = twice.bodies[1] as { tool_choice?: string; tools?: unknown };
+  check("Tras la instantánea, la vuelta siguiente va sin herramientas", twiceSecond.tool_choice === "none" && twiceSecond.tools === undefined);
+  check("Solo una matrícula nueva (Beto sí, Dora no)", activeFor(ids.s2) === 1 && activeFor(ids.s4) === 0);
+  check("Un solo bloque deshacible y termina en 2 vueltas", "message" in t5c && t5c.message.blocks.filter((b) => b.type === "result" && b.undoable).length === 1 && twice.calls() === 2);
+  check("…y el undo guardado es el de Beto", "message" in t5c && messageUndo(ids.teacher, turn.conversationId, t5c.message.id)?.undo.params.alumno_id === ids.s2);
+
+  // Dos instantáneas en la misma vuelta: la segunda se contesta como no ejecutada
+  unenrollStudent(ids.course, ids.s2, ids.teacher);
+  const sameRound = scripted([[call("c1", "matricular", { alumno_ids: [ids.s2], curso_id: ids.course }), call("c2", "matricular", { alumno_ids: [ids.s4], curso_id: ids.course })], [say("Listo.")]]);
+  const t5d = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: turn.conversationId, text: "matricula a Beto y a Dora", ai: { key: "k", model: "m", fetchImpl: sameRound.fetchImpl } });
+  const sameBody = sameRound.bodies[1] as { input: { type?: string; call_id?: string; output?: string }[] };
+  check("Misma vuelta: la segunda llamada se contesta «no ejecutada: ya se hizo una acción»", "message" in t5d && sameBody.input.some((i) => i.type === "function_call_output" && i.call_id === "c2" && (i.output ?? "").includes("ya se hizo una acción")));
+  check("…y Dora sigue sin matrícula", activeFor(ids.s2) === 1 && activeFor(ids.s4) === 0);
 
   // Matrícula instantánea y luego la API falla: el deshacer sobrevive al error
   unenrollStudent(ids.course, ids.s2, ids.teacher);
