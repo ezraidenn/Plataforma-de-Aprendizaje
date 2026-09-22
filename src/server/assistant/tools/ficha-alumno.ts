@@ -23,12 +23,13 @@ export const fichaAlumno: AssistantTool = {
     // Igual que la página del perfil: el maestro solo abre a los suyos
     const profile = getStudentProfile(id, ctx.scope, fullScope(ctx.user));
     if (!profile) return { forModel: "No encontramos a ese alumno o no está entre los tuyos." };
-    const { student, courses, certificates, totals } = profile;
+    const { student, courses, totals } = profile;
     const courseLines = courses.map((c) => `- ${c.courseTitle}: ${c.percent}% (${statusLabel(c.enrollmentStatus)})`);
     const forModel = [
       `${student.fullName} <${student.email}>${student.active ? "" : " (deshabilitado)"}. Último acceso: ${student.lastLoginAt ? DATE.format(student.lastLoginAt) : "nunca"}.`,
       `Cursos (${totals.courses}, ${totals.completed} completados):`,
       ...courseLines.slice(0, 5),
+      ...(courseLines.length > 5 ? [`… y ${courseLines.length - 5} más`] : []),
       `Certificados: ${totals.certificates}.`,
     ].join("\n");
     return {
@@ -39,7 +40,7 @@ export const fichaAlumno: AssistantTool = {
           tiles: [
             { label: "Cursos", value: String(totals.courses) },
             { label: "Completados", value: String(totals.completed) },
-            { label: "Certificados", value: String(certificates.filter((c) => !c.revoked).length) },
+            { label: "Certificados", value: String(totals.certificates) },
           ],
         },
         {

@@ -8,15 +8,24 @@
  */
 import { placeholderFor } from "../src/lib/assistant-placeholder";
 import { requestWithTools, type ChatItem, type ToolDef } from "../src/server/services/ai-client";
-import { eq, like } from "drizzle-orm";
+import { and, eq, inArray, like } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { db } from "../src/server/db";
-import { aiConversations, courses as coursesTable, enrollments, users } from "../src/server/db/schema";
+import { aiConversations, aiProposals, auditLog, courses as coursesTable, enrollments, users } from "../src/server/db/schema";
 import { createCourse, enrollStudents } from "../src/server/services/courses";
 import { ownScope, type ViewScope } from "../src/server/auth/view-scope";
 import type { SessionUser } from "../src/server/auth/sessions";
 import { toolsForRole, toolByName, toolDefsForRole } from "../src/server/assistant/registry";
 import type { ToolCtx } from "../src/server/assistant/tool-types";
+import {
+  appendMessage,
+  createConversation,
+  deleteConversation,
+  getConversation,
+  listConversations,
+  patchProposalBlock,
+} from "../src/server/services/ai-conversations";
+import { applyProposal, cancelProposal, expireProposals, getProposal } from "../src/server/assistant/proposals";
 
 let failures = 0;
 function check(name: string, cond: boolean, detail?: unknown) {
@@ -128,9 +137,16 @@ function cleanup() {
   const userIds = db.select({ id: users.id }).from(users).where(like(users.email, `${P}-%`)).all().map((u) => u.id);
   if (userIds.length === 0) return;
   db.transaction(() => {
+    // Auditoría que dejó el asistente: propuestas de las conversaciones zasst y matrículas de los cursos zasst
+    const convIds = db.select({ id: aiConversations.id }).from(aiConversations).where(like(aiConversations.title, `${P}%`)).all().map((c) => c.id);
+    const proposalIds = convIds.length
+      ? db.select({ id: aiProposals.id }).from(aiProposals).where(inArray(aiProposals.conversationId, convIds)).all().map((p) => p.id)
+      : [];
+    if (proposalIds.length) db.delete(auditLog).where(and(eq(auditLog.entity, "ai_proposal"), inArray(auditLog.entityId, proposalIds))).run();
     db.delete(aiConversations).where(like(aiConversations.title, `${P}%`)).run();
     const courseIds = db.select({ id: coursesTable.id }).from(coursesTable).where(like(coursesTable.title, `${P}%`)).all().map((c) => c.id);
     for (const id of courseIds) {
+      db.delete(auditLog).where(and(eq(auditLog.entity, "enrollment"), like(auditLog.entityId, `${id}:%`))).run();
       db.delete(enrollments).where(eq(enrollments.courseId, id)).run();
       db.delete(coursesTable).where(eq(coursesTable.id, id)).run();
     }
@@ -193,6 +209,78 @@ async function readToolChecks() {
   check("resumen_curso: 1 matriculado", resumen.forModel.includes("1 matriculado"));
 }
 
+async function conversationChecks() {
+  console.log("\n— Conversaciones");
+  const conv = createConversation(ids.teacher, `${P} primera`);
+  const m1 = appendMessage(conv.id, "user", [{ type: "text", text: "hola" }], "hola");
+  const m2 = appendMessage(conv.id, "assistant", [{ type: "text", text: "¿En qué te ayudo?" }], "¿En qué te ayudo?");
+  const loaded = getConversation(ids.teacher, conv.id);
+  check("Se guardan y se leen en orden", loaded?.messages.map((m) => m.id).join() === `${m1.id},${m2.id}`);
+  check("Otro usuario no la ve", getConversation(ids.admin, conv.id) === null);
+  check("Aparece en el historial con su título", listConversations(ids.teacher).some((c) => c.id === conv.id && c.title === `${P} primera`));
+  check("Historial filtra por texto", listConversations(ids.teacher, "primera").length >= 1 && listConversations(ids.teacher, "zzz-nada").length === 0);
+  check("Borrar: desaparece", deleteConversation(ids.teacher, conv.id) && getConversation(ids.teacher, conv.id) === null);
+}
+
+async function proposalChecks() {
+  console.log("\n— Propuestas y matrícula");
+  const user = { ...teacherUser, id: ids.teacher };
+  const conv = createConversation(ids.teacher, `${P} matrícula`);
+  const ctx = { ...ctxFor(user, ownScope(user)), conversationId: conv.id };
+
+  // 1 alumno: instantánea con deshacer
+  const one = await toolByName("matricular")!.run({ alumno_ids: [ids.s2], curso_id: ids.course }, ctx);
+  check("1 alumno: se matricula al momento", one.forModel.includes("Beto Ruiz") && one.undo?.tool === "desmatricular");
+  const enrolled = db.select().from(enrollments).where(and(eq(enrollments.courseId, ids.course), eq(enrollments.studentId, ids.s2))).get();
+  check("…y la matrícula existe", enrolled?.status === "active");
+  const undone = await toolByName(one.undo!.tool)!.run(one.undo!.params, ctx);
+  check("Deshacer la desmatricula", undone.forModel.includes("baja") && db.select().from(enrollments).where(eq(enrollments.id, enrolled!.id)).get()?.status === "dropped");
+
+  // Varios: propuesta
+  const many = await toolByName("matricular")!.run({ alumno_ids: [ids.s1, ids.s2, "no-existe"], curso_id: ids.course }, ctx);
+  check("Varios: crea una propuesta", typeof many.proposalId === "string" && many.forModel.includes("propuesta"));
+  const proposal = getProposal(many.proposalId!);
+  check("3 filas: 1 bloqueada (id inexistente) y 1 con aviso (ya matriculado)", proposal?.rows.length === 3 && proposal.rows.filter((r) => r.blocked).length === 2 && proposal.rows.some((r) => r.warning?.includes("Ya está matriculado")), proposal?.rows);
+
+  // Se quita una fila y se aplica
+  const kept = proposal!.rows.filter((r) => r.cells.nombre.includes("Beto"));
+  const applied = await applyProposal(many.proposalId!, kept, ctx);
+  check("Aplicar matricula solo a Beto", "text" in applied && applied.text.startsWith("1 ") && db.select().from(enrollments).where(and(eq(enrollments.courseId, ids.course), eq(enrollments.studentId, ids.s2))).get()?.status === "active");
+  check("Queda como aplicada", getProposal(many.proposalId!)?.status === "applied");
+  const again = await applyProposal(many.proposalId!, kept, ctx);
+  check("No se aplica dos veces", "error" in again);
+  check("Auditoría via assistant", db.select().from(auditLog).where(and(eq(auditLog.entity, "ai_proposal"), eq(auditLog.entityId, many.proposalId!))).get() !== undefined);
+
+  // Una fila bloqueada mandada por el cliente no se aplica
+  const p2 = await toolByName("matricular")!.run({ alumno_ids: ["tampoco-existe", "ni-este"], curso_id: ids.course }, ctx);
+  const forced = await applyProposal(p2.proposalId!, getProposal(p2.proposalId!)!.rows.map((r) => ({ ...r, blocked: false, warning: undefined })), ctx);
+  check("Fila bloqueada forzada: 0 aplicadas", "text" in forced && forced.text.startsWith("0 "));
+
+  // Otro usuario no puede aplicar
+  const p3 = await toolByName("matricular")!.run({ alumno_ids: [ids.s1, ids.s2], curso_id: ids.course }, ctx);
+  const otherCtx = { ...ctxFor({ ...teacherUser, id: ids.admin }, ownScope({ ...teacherUser, id: ids.admin })), conversationId: conv.id };
+  check("Otro usuario no aplica ni cancela", "error" in (await applyProposal(p3.proposalId!, [], otherCtx)) && !cancelProposal(p3.proposalId!, ids.admin));
+  check("Cancelar", cancelProposal(p3.proposalId!, ids.teacher) && getProposal(p3.proposalId!)?.status === "cancelled");
+
+  // Caducar
+  const p4 = await toolByName("matricular")!.run({ alumno_ids: [ids.s1, ids.s2], curso_id: ids.course }, ctx);
+  db.update(aiProposals).set({ expiresAt: new Date(Date.now() - 1000) }).where(eq(aiProposals.id, p4.proposalId!)).run();
+  expireProposals();
+  check("Caducar", getProposal(p4.proposalId!)?.status === "expired");
+  const late = await applyProposal(p4.proposalId!, [], ctx);
+  check("Aplicar caducada: error claro", "error" in late && late.error.includes("caducó"));
+
+  // El bloque de la propuesta se congela en el mensaje
+  const withBlock = appendMessage(conv.id, "assistant", [{ type: "proposal", proposalId: p3.proposalId!, title: "t", applyLabel: "Aplicar", columns: [], rows: [], status: "pending" }], "");
+  patchProposalBlock(conv.id, p3.proposalId!, { status: "cancelled" });
+  const frozen = getConversation(ids.teacher, conv.id)!.messages.find((m) => m.id === withBlock.id)!.blocks[0];
+  check("patchProposalBlock cambia el estado en el mensaje", frozen.type === "proposal" && frozen.status === "cancelled");
+
+  // desmatricular normal: propuesta
+  const un = await toolByName("desmatricular")!.run({ alumno_ids: [ids.s1, ids.s2], curso_id: ids.course }, ctx);
+  check("desmatricular varios: propuesta", typeof un.proposalId === "string");
+}
+
 async function main() {
   placeholderChecks();
   await clientChecks();
@@ -200,6 +288,8 @@ async function main() {
   try {
     await catalogChecks();
     await readToolChecks();
+    await conversationChecks();
+    await proposalChecks();
   } finally {
     cleanup();
   }

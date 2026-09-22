@@ -26,7 +26,9 @@ export const irA: AssistantTool = {
   run(params) {
     const destino = param(params, "destino");
     const id = param(params, "id");
-    if (destino in FIXED) return { forModel: `Abriendo ${destino}.`, navigate: FIXED[destino] };
+    if (!destino) return { forModel: "Destino desconocido." };
+    // hasOwn: `in` aceptaría claves heredadas como «toString»
+    if (Object.hasOwn(FIXED, destino)) return { forModel: `Abriendo ${destino}.`, navigate: FIXED[destino] };
     if (!id) return { forModel: `Para ir a «${destino}» necesito el id; búscalo con buscar_alumno o buscar_curso.` };
     if (destino === "alumno") return { forModel: "Abriendo el perfil del alumno.", navigate: `/teach/students/${id}` };
     if (destino === "curso") return { forModel: "Abriendo el curso.", navigate: `/teach/courses/${id}` };
