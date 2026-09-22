@@ -27,8 +27,9 @@ import {
 
 /**
  * Inteligencia artificial (Admin → Configuración): la clave de OpenAI para
- * «Importar con IA». Se guarda cifrada; aquí solo se ve enmascarada. Sin
- * clave, la función no aparece para los maestros.
+ * «Importar con IA» y el asistente del encabezado. Se guarda cifrada; aquí
+ * solo se ve enmascarada. Sin clave, ninguna de las dos funciones aparece
+ * para los maestros.
  */
 export function AiCard({
   configured,
@@ -93,8 +94,8 @@ export function AiCard({
         </CardTitle>
         <CardDescription>
           Permite a los maestros importar preguntas de examen y listas de estudiantes desde cualquier
-          archivo. El texto se envía a OpenAI solo cuando un maestro lo pide; necesita que el servidor
-          tenga internet.
+          archivo («Importar con IA») y usar el asistente del encabezado. El texto se envía a OpenAI
+          solo cuando un maestro lo pide; necesita que el servidor tenga internet.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
