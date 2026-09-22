@@ -175,6 +175,23 @@ export function getFileRecord(fileId: string) {
 }
 
 /**
+ * Contenido completo de un archivo guardado. Solo para archivos pequeños que
+ * hay que procesar enteros (leer una hoja, sacar el texto de un documento):
+ * lo que se sirve al navegador va por streaming, nunca por aquí.
+ */
+export async function readFileBytes(fileId: string): Promise<Buffer> {
+  const rec = getFileRecord(fileId);
+  if (!rec) throw new Error("No encontramos ese archivo.");
+  const abs = absolutePathFor(rec.storedPath);
+  try {
+    return await fsp.readFile(abs);
+  } catch {
+    // La fila existe pero el archivo ya no está en disco (lo reporta `storage:check`)
+    throw new Error("El archivo ya no está en el almacenamiento.");
+  }
+}
+
+/**
  * Mueve un archivo a una ruta legible nueva (renombrar curso, módulo o
  * lección). Primero mueve en disco y después actualiza la fila; si la
  * actualización falla, deshace el movimiento para no dejar inconsistencias.

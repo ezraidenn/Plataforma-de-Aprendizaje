@@ -15,6 +15,7 @@ const ALLOWED_KINDS: FileKind[] = [
   "resource",
   "attachment",
   "editor_image",
+  "assistant_attachment",
 ];
 
 const MAX_BYTES: Record<string, number> = {
@@ -26,6 +27,7 @@ const MAX_BYTES: Record<string, number> = {
   resource: 200 * 1024 * 1024,
   attachment: 50 * 1024 * 1024,
   editor_image: 5 * 1024 * 1024,
+  assistant_attachment: 10 * 1024 * 1024, // el servidor lo lee entero para resumirlo
 };
 
 /**

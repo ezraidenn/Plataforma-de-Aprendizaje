@@ -16,6 +16,14 @@ const GIF = "image/gif";
 const PDF = "application/pdf";
 const PPT = "application/vnd.ms-powerpoint";
 const PPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+const TXT = "text/plain";
+const CSV = "text/csv";
+const XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+const XLS = "application/vnd.ms-excel";
+const DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+const DOC = "application/msword";
+const ODS = "application/vnd.oasis.opendocument.spreadsheet";
+const ODT = "application/vnd.oasis.opendocument.text";
 
 const BY_EXTENSION: Record<string, string> = {
   png: PNG,
@@ -26,6 +34,14 @@ const BY_EXTENSION: Record<string, string> = {
   pdf: PDF,
   ppt: PPT,
   pptx: PPTX,
+  txt: TXT,
+  csv: CSV,
+  xlsx: XLSX,
+  xls: XLS,
+  docx: DOCX,
+  doc: DOC,
+  ods: ODS,
+  odt: ODT,
 };
 
 /** Nombres alternativos que mandan algunos navegadores */
@@ -41,6 +57,11 @@ const RULES: Record<string, { allowed: string[]; error: string }> = {
   cover: { allowed: [PNG, JPEG, WEBP], error: "Solo imágenes PNG, JPG o WEBP" },
   template_bg: { allowed: [PDF, PNG, JPEG], error: "Solo PDF, PNG o JPG" },
   course_source: { allowed: [PDF, PPT, PPTX], error: "Solo PDF, PPT o PPTX" },
+  // Adjunto del asistente: lo que el servidor sabe leer (o mirar, si es imagen)
+  assistant_attachment: {
+    allowed: [PDF, PNG, JPEG, WEBP, GIF, TXT, CSV, XLSX, XLS, DOCX, DOC, PPT, PPTX, ODS, ODT],
+    error: "Solo Excel, CSV, Word, PDF, PowerPoint, texto o imágenes",
+  },
 };
 
 function normalize(mime: string | null | undefined): string {

@@ -38,6 +38,8 @@ import {
   type AttachmentSummary,
 } from "../src/lib/attachment-summary";
 import { readSheetRows } from "../src/server/services/sheet-colors";
+import { summarizeAttachment } from "../src/server/services/attachment-intake";
+import { resolveUploadMime } from "../src/lib/upload-types";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync } from "node:fs";
@@ -600,11 +602,41 @@ async function sheetColorChecks() {
   check("La segunda hoja trae sus propias filas", otra.length === 2 && otra[1]?.cells.join("|") === "Dani Mora|dani@x.com", otra.map((r) => r.cells));
 }
 
+async function intakeChecks() {
+  console.log("\n— Recepción del adjunto");
+  check("Subida: xlsx permitido", resolveUploadMime("assistant_attachment", "lista.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet").ok);
+  check("Subida: xlsx sin tipo declarado, por extensión", resolveUploadMime("assistant_attachment", "lista.xlsx", "application/octet-stream").ok);
+  check("Subida: PDF permitido", resolveUploadMime("assistant_attachment", "lista.pdf", "application/pdf").ok);
+  check("Subida: foto permitida", resolveUploadMime("assistant_attachment", "foto.jpg", "image/jpeg").ok);
+  check("Subida: CSV permitido", resolveUploadMime("assistant_attachment", "lista.csv", "text/csv").ok);
+  check("Subida: ejecutable rechazado", !resolveUploadMime("assistant_attachment", "virus.exe", "application/octet-stream").ok);
+  check("Subida: vídeo rechazado", !resolveUploadMime("assistant_attachment", "clip.mp4", "video/mp4").ok);
+
+  const bytes = await makeColoredXlsx();
+  if (!bytes) {
+    console.log("  (sin LibreOffice: se omite el resumen real)");
+    return;
+  }
+  const summary = await summarizeAttachment(bytes, "prueba.xlsx");
+  check("Resumen: dos hojas", summary.sheets.length === 2, summary.sheets.map((s) => s.name));
+  check("Resumen: encabezados", summary.sheets[0].headers.join("|") === "Nombre|Correo", summary.sheets[0].headers);
+  check("Resumen: no cuenta el encabezado como fila", summary.sheets[0].rowCount === 3, summary.sheets[0].rowCount);
+  check("Resumen: muestra sin encabezado", summary.sheets[0].sample[0][0] === "Ana Lopez", summary.sheets[0].sample[0]);
+  check("Resumen: colores contados", summary.sheets[0].colors.rojo === 1 && summary.sheets[0].colors.verde === 1, summary.sheets[0].colors);
+  check("Resumen: tipo hoja", summary.kind === "sheet" && summary.fileName === "prueba.xlsx");
+
+  const doc = await summarizeAttachment(Buffer.from("Lista de asistentes\nAna Lopez ana@x.com\nBeto Ruiz beto@x.com\n", "utf8"), "lista.txt");
+  check("Documento de texto: sin hojas y con caracteres", doc.sheets.length === 0 && doc.chars > 20 && doc.kind === "doc");
+  const img = await summarizeAttachment(Buffer.from("no importa"), "foto.jpg");
+  check("Imagen: se admite sin leer texto", img.kind === "image" && img.sheets.length === 0);
+}
+
 async function main() {
   placeholderChecks();
   await clientChecks();
   attachmentSummaryChecks();
   await sheetColorChecks();
+  await intakeChecks();
   setup();
   try {
     await catalogChecks();
