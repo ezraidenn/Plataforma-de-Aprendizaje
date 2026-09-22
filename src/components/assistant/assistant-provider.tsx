@@ -73,6 +73,8 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
       remember(null);
       return;
     }
+    // La abierta desde el historial pasa a ser la actual también tras recargar
+    remember(conv.id);
     setState((s) => ({
       ...s,
       conversationId: conv.id,

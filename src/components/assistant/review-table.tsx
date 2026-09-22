@@ -186,7 +186,8 @@ export function ReviewTable({ block, onChange }: { block: ProposalBlock; onChang
       <div className="border-t border-slate-100 px-3 py-2">{footer}</div>
 
       <Dialog open={wide} onOpenChange={setWide}>
-        <DialogContent className="max-w-[960px] sm:max-w-[960px]">
+        {/* Esc cierra solo el diálogo: el panel escucha Escape en window y también se cerraría */}
+        <DialogContent className="max-w-[960px] sm:max-w-[960px]" onEscapeKeyDown={(e) => e.stopPropagation()}>
           <DialogHeader>
             <DialogTitle>{block.title}</DialogTitle>
           </DialogHeader>
