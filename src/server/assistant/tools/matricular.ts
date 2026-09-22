@@ -126,6 +126,7 @@ export const matricular: AssistantTool = {
     const ok = rows.filter((r) => !r.blocked).length;
     return { forModel: `Se creó una propuesta con ${rows.length} fila(s), ${ok} listas para matricular en ${course.title}. El usuario la revisará.`, proposalId };
   },
+  // Sin confirmWord: la matrícula no es irreversible (se puede dar de baja)
   apply(rows, payload, ctx) {
     return applyRows(rows, payload, ctx, "enroll");
   },
@@ -171,6 +172,7 @@ export const desmatricular: AssistantTool = {
     });
     return { forModel: `Se creó una propuesta para dar de baja ${rows.filter((r) => !r.blocked).length} alumno(s) de ${course.title}. El usuario la revisará.`, proposalId };
   },
+  // Sin confirmWord: se puede volver a matricular
   apply(rows, payload, ctx) {
     return applyRows(rows, payload, ctx, "unenroll");
   },

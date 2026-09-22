@@ -31,7 +31,7 @@ export function createProposal(tool: string, ctx: ToolCtx, messageId: string, dr
   const id = nanoid();
   const stored: StoredPayload = {
     data: draft.payload,
-    draft: { title: draft.title, applyLabel: draft.applyLabel, columns: draft.columns },
+    draft: { title: draft.title, applyLabel: draft.applyLabel, columns: draft.columns, confirmWord: draft.confirmWord },
   };
   db.insert(aiProposals)
     .values({

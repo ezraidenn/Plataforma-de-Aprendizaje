@@ -34,6 +34,8 @@ export type AssistantBlock =
       rows: ProposalRow[];
       status: ProposalStatus;
       resultText?: string;
+      /** Para lo irreversible: hay que escribir esta palabra para poder aplicar */
+      confirmWord?: string;
     }
   | { type: "navigate"; href: string }
   | { type: "error"; text: string; retryable?: boolean };

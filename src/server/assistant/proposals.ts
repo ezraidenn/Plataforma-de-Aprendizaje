@@ -33,7 +33,8 @@ function ownsProposal(userId: string, proposal: Proposal): boolean {
 export async function applyProposal(
   id: string,
   rows: ProposalRow[],
-  ctx: ToolCtx
+  ctx: ToolCtx,
+  confirm = ""
 ): Promise<ApplyResult | { error: string }> {
   expireProposals();
   const proposal = getProposal(id);
@@ -42,6 +43,10 @@ export async function applyProposal(
   if (proposal.status !== "pending") return { error: "Esta revisión ya se aplicó o se canceló." };
   const tool = toolByName(proposal.tool);
   if (!tool?.apply) return { error: "Esta acción ya no está disponible." };
+  const { confirmWord } = proposal.draft;
+  if (confirmWord && confirm.trim().toLowerCase() !== confirmWord.toLowerCase()) {
+    return { error: `Escribe ${confirmWord} para confirmar.` };
+  }
 
   // Del cliente solo se toman las celdas editables (recortadas); el resto viene de la propuesta original
   const original = new Map(proposal.rows.map((r) => [r.id, r]));
@@ -69,7 +74,7 @@ export async function applyProposal(
   if (claimed !== 1) return { error: "Esta revisión ya se aplicó o se canceló." };
   let result: ApplyResult;
   try {
-    result = await tool.apply(applicableRows(safe), proposal.payload, ctx);
+    result = await tool.apply(applicableRows(safe), proposal.payload, ctx, confirm);
   } catch (err) {
     // Si la herramienta falla, la propuesta vuelve a estar disponible
     db.update(aiProposals).set({ status: "pending" }).where(eq(aiProposals.id, id)).run();

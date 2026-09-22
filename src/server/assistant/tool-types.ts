@@ -46,6 +46,8 @@ export type ProposalDraft = {
   rows: ProposalRow[];
   /** Datos fijos que `apply` necesita (p. ej. el curso) */
   payload: Record<string, unknown>;
+  /** Si está, hay que escribirla tal cual (sin distinguir mayúsculas ni espacios) para aplicar */
+  confirmWord?: string;
 };
 
 export type ApplyResult = { text: string; blocks?: AssistantBlock[] };
@@ -64,8 +66,8 @@ export type AssistantTool = {
   roles: ToolRole[];
   risk: ToolRisk;
   run(params: Record<string, unknown>, ctx: ToolCtx): Promise<ToolResult> | ToolResult;
-  /** Solo herramientas `review`: aplica las filas ya revisadas (revalida). */
-  apply?(rows: ProposalRow[], payload: Record<string, unknown>, ctx: ToolCtx): Promise<ApplyResult> | ApplyResult;
+  /** Solo herramientas `review`: aplica las filas ya revisadas (revalida). `confirm` es lo que escribió el usuario cuando la propuesta pide `confirmWord`. */
+  apply?(rows: ProposalRow[], payload: Record<string, unknown>, ctx: ToolCtx, confirm: string): Promise<ApplyResult> | ApplyResult;
   /** Solo herramientas `instant`: revierte lo hecho. El servidor llama a esto con `UndoSpec.params`, nunca a `run`. */
   undo?(params: Record<string, unknown>, ctx: ToolCtx): Promise<ToolResult> | ToolResult;
 };

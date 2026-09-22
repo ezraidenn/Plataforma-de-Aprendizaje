@@ -29,7 +29,7 @@ import {
   patchProposalBlock,
   recentModelText,
 } from "../src/server/services/ai-conversations";
-import { applyProposal, cancelProposal, expireProposals, getProposal } from "../src/server/assistant/proposals";
+import { applyProposal, cancelProposal, createProposal, expireProposals, getProposal } from "../src/server/assistant/proposals";
 import {
   MAX_SUMMARY_CHARS,
   colorFamily,
@@ -335,6 +335,41 @@ async function proposalChecks() {
   // desmatricular normal: propuesta
   const un = await toolByName("desmatricular")!.run({ alumno_ids: [ids.s1, ids.s2], curso_id: ids.course }, ctx);
   check("desmatricular varios: propuesta", typeof un.proposalId === "string");
+}
+
+async function confirmWordChecks() {
+  console.log("\n— Confirmación por palabra");
+  const user = { ...teacherUser, id: ids.teacher };
+  const conv = createConversation(ids.teacher, `${P} confirmar`);
+  const anchor = appendMessage(conv.id, "assistant", [], "");
+  const ctx = { ...ctxFor(user, ownScope(user)), conversationId: conv.id, messageId: anchor.id };
+  const proposalId = createProposal("matricular", ctx, anchor.id, {
+    title: "Prueba",
+    applyLabel: "Aplicar",
+    columns: [{ key: "nombre", label: "Nombre", editable: false }],
+    rows: [{ id: ids.s1, cells: { nombre: `${P} Ana López` } }],
+    payload: { courseId: ids.course, courseTitle: `${P} Extintores` },
+    confirmWord: "BORRAR",
+  });
+  check("La propuesta guarda la palabra", getProposal(proposalId)?.draft.confirmWord === "BORRAR");
+  const sin = await applyProposal(proposalId, getProposal(proposalId)!.rows, ctx, "");
+  check("Sin la palabra no se aplica", "error" in sin && sin.error.includes("BORRAR"), sin);
+  const mal = await applyProposal(proposalId, getProposal(proposalId)!.rows, ctx, "borra");
+  check("Palabra distinta no se aplica", "error" in mal);
+  check("Sigue pendiente tras los intentos fallidos", getProposal(proposalId)?.status === "pending");
+  const bien = await applyProposal(proposalId, getProposal(proposalId)!.rows, ctx, " borrar ");
+  check("Con la palabra (sin importar espacios ni mayúsculas) sí se aplica", "text" in bien, bien);
+  check("Queda aplicada", getProposal(proposalId)?.status === "applied");
+
+  // Una propuesta normal no pide nada
+  const normal = createProposal("matricular", ctx, anchor.id, {
+    title: "Prueba 2",
+    applyLabel: "Aplicar",
+    columns: [{ key: "nombre", label: "Nombre", editable: false }],
+    rows: [{ id: ids.s2, cells: { nombre: `${P} Beto Ruiz` } }],
+    payload: { courseId: ids.course, courseTitle: `${P} Extintores` },
+  });
+  check("Sin palabra configurada: se aplica sin confirmar", "text" in (await applyProposal(normal, getProposal(normal)!.rows, ctx, "")));
 }
 
 /** IA de guion: cada llamada devuelve el siguiente `output`. */
@@ -703,6 +738,7 @@ async function main() {
     await readToolChecks();
     await conversationChecks();
     await proposalChecks();
+    await confirmWordChecks();
     await agentChecks();
   } finally {
     cleanup();

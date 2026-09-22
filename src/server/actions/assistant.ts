@@ -56,10 +56,11 @@ async function toolContext(user: Awaited<ReturnType<typeof requireTeacher>>, con
   return { user, scope, actingOwnerId: actingOwnerId(scope, user), route: "/", conversationId, messageId, attachments: [] };
 }
 
-export async function applyProposalAction(input: { proposalId: string; rows: ProposalRow[] }): Promise<{ ok: true; text: string } | { error: string }> {
+export async function applyProposalAction(input: { proposalId: string; rows: ProposalRow[]; confirm?: string }): Promise<{ ok: true; text: string } | { error: string }> {
   const user = await requireTeacher();
   const rows = validRows(input.rows);
-  const result = await applyProposal(String(input.proposalId ?? ""), rows, await toolContext(user, "", ""));
+  const confirm = String(input.confirm ?? "").slice(0, 40);
+  const result = await applyProposal(String(input.proposalId ?? ""), rows, await toolContext(user, "", ""), confirm);
   if ("error" in result) return result;
   refreshAfterChange();
   return { ok: true, text: result.text };

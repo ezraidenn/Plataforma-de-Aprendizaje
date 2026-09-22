@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { applicableRows, type AssistantBlock, type ProposalRow } from "@/lib/assistant-blocks";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { applyProposalAction, cancelProposalAction } from "@/server/actions/assistant";
 
 type ProposalBlock = Extract<AssistantBlock, { type: "proposal" }>;
@@ -21,9 +22,13 @@ const PREVIEW_ROWS = 5;
 export function ReviewTable({ block, onChange }: { block: ProposalBlock; onChange(next: ProposalBlock): void }) {
   const [rows, setRows] = useState<ProposalRow[]>(block.rows);
   const [wide, setWide] = useState(false);
+  const [confirmText, setConfirmText] = useState("");
   const [busy, startTransition] = useTransition();
   const frozen = block.status !== "pending";
   const count = applicableRows(rows).length;
+  // Lo irreversible pide escribir la palabra tal cual, sin distinguir mayúsculas ni espacios
+  const needsConfirm = !frozen && !!block.confirmWord;
+  const confirmed = !needsConfirm || confirmText.trim().toLowerCase() === block.confirmWord!.toLowerCase();
 
   const editCell = (rowId: string, key: string, value: string) =>
     setRows((rs) => rs.map((r) => (r.id === rowId ? { ...r, cells: { ...r.cells, [key]: value } } : r)));
@@ -33,7 +38,7 @@ export function ReviewTable({ block, onChange }: { block: ProposalBlock; onChang
     startTransition(async () => {
       let result: Awaited<ReturnType<typeof applyProposalAction>>;
       try {
-        result = await applyProposalAction({ proposalId: block.proposalId, rows });
+        result = await applyProposalAction({ proposalId: block.proposalId, rows, confirm: confirmText });
       } catch {
         result = { error: "No se pudo aplicar. Inténtalo de nuevo." };
       }
@@ -69,19 +74,41 @@ export function ReviewTable({ block, onChange }: { block: ProposalBlock; onChang
           : "");
 
   const footer = (
-    <div className="flex items-center justify-between gap-2">
-      {frozen ? (
-        <p className="text-[12px] text-slate-500">{statusText}</p>
-      ) : (
-        <>
-          <Button variant="outline" size="sm" onClick={cancel} disabled={busy}>
-            Cancelar
-          </Button>
-          <Button size="sm" onClick={apply} disabled={count === 0 || busy} className="bg-indigo-600 text-white hover:bg-indigo-700">
-            {block.applyLabel} {count}
-          </Button>
-        </>
+    <div className="space-y-2">
+      {needsConfirm && (
+        <div className="space-y-1.5">
+          <p className="text-[12px] text-red-600">
+            Esto no se puede deshacer. Para confirmar, escribe <span className="font-semibold">{block.confirmWord}</span>.
+          </p>
+          <Input
+            value={confirmText}
+            onChange={(e) => setConfirmText(e.target.value)}
+            aria-label={`Escribe ${block.confirmWord} para confirmar`}
+            autoComplete="off"
+            className="h-8 max-w-[220px] text-[13px]"
+          />
+        </div>
       )}
+      <div className="flex items-center justify-between gap-2">
+        {frozen ? (
+          <p className="text-[12px] text-slate-500">{statusText}</p>
+        ) : (
+          <>
+            <Button variant="outline" size="sm" onClick={cancel} disabled={busy}>
+              Cancelar
+            </Button>
+            <Button
+              size="sm"
+              variant={needsConfirm ? "destructive" : undefined}
+              onClick={apply}
+              disabled={count === 0 || busy || !confirmed}
+              className={needsConfirm ? undefined : "bg-indigo-600 text-white hover:bg-indigo-700"}
+            >
+              {block.applyLabel} {count}
+            </Button>
+          </>
+        )}
+      </div>
     </div>
   );
 
