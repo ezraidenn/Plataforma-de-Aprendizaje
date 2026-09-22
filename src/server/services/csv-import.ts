@@ -3,7 +3,10 @@ import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { users } from "@/server/db/schema";
 import { createStudent, enrollStudents } from "./courses";
+import { findOrCreateCohort } from "./cohorts";
+import { BOM, csvLine } from "./csv-core";
 import { generateTempPassword } from "@/server/auth/passwords";
+import { normalizeStudentEmail, normalizeStudentName } from "@/lib/student-draft";
 import { audit } from "./audit";
 
 // ─── Parseo y validación ─────────────────────────────────────────────────────
@@ -126,6 +129,43 @@ export function validateStudentsCsv(text: string): {
   };
 }
 
+// ─── Filas ya revisadas (importar con IA) ────────────────────────────────────
+
+/**
+ * Filas → CSV de esta importación (contraseña vacía = se genera), para que
+ * pasen por las MISMAS reglas que un CSV subido.
+ */
+export function studentRowsToCsv(rows: { fullName: string; email: string }[]): string {
+  // Con encabezado SIEMPRE: si la primera fila trajera un correo inválido, sin
+  // él se tomaría por encabezado y se perdería
+  const lines = [csvLine(["nombre", "correo", "contrasena"])];
+  for (const r of rows) {
+    lines.push(csvLine([normalizeStudentName(r.fullName), normalizeStudentEmail(r.email), ""]));
+  }
+  return BOM + lines.join("\r\n");
+}
+
+/**
+ * Grupo que traía cada fila → grupo del curso (creándolo si no existe; uno
+ * CERRADO se rechaza). Devuelve correo → id del grupo; sin grupo, sin entrada.
+ */
+export function cohortsForRows(
+  courseId: string,
+  rows: { email: string; group?: string }[],
+  actorId: string
+): Record<string, string> {
+  const byEmail: Record<string, string> = {};
+  const idByName = new Map<string, string>();
+  for (const r of rows) {
+    const name = normalizeStudentName(r.group ?? "");
+    if (!name) continue;
+    const key = name.toLowerCase();
+    if (!idByName.has(key)) idByName.set(key, findOrCreateCohort(courseId, name, actorId));
+    byEmail[normalizeStudentEmail(r.email)] = idByName.get(key)!;
+  }
+  return byEmail;
+}
+
 // ─── Importación (paso final) ────────────────────────────────────────────────
 
 export type ImportResult = {
@@ -152,11 +192,15 @@ export async function importStudents(opts: {
   actorId?: string;
   enrollCourseId?: string | null;
   enrollDuplicates?: boolean;
+  /** Grupo del curso de cada correo (importar con IA); sin entrada = sin grupo */
+  cohortByEmail?: Record<string, string>;
+  /** Acción de auditoría (por defecto «import_csv») */
+  auditAction?: string;
 }): Promise<ImportResult> {
   const { rows } = validateStudentsCsv(opts.csvText);
 
   const resultLines = ["﻿nombre,correo,contrasena,resultado"];
-  const toEnroll: string[] = [];
+  const toEnroll: { id: string; email: string }[] = [];
   let created = 0;
   let skipped = 0;
 
@@ -177,7 +221,7 @@ export async function importStudents(opts: {
         .get();
       // Solo cuentas de alumno: un correo de maestro o admin no se inscribe como alumno
       if (existing?.role === "student" && opts.enrollDuplicates && opts.enrollCourseId) {
-        toEnroll.push(existing.id);
+        toEnroll.push({ id: existing.id, email: row.email });
       }
       resultLines.push(
         [row.fullName, row.email, "", "Omitido: ya existía"].map(csvEscape).join(",")
@@ -192,7 +236,7 @@ export async function importStudents(opts: {
         createdBy: opts.createdBy,
       });
       created++;
-      toEnroll.push(id);
+      toEnroll.push({ id, email: row.email });
       resultLines.push(
         [
           row.fullName,
@@ -215,10 +259,18 @@ export async function importStudents(opts: {
 
   let enrolled = 0;
   if (opts.enrollCourseId && toEnroll.length > 0) {
-    enrolled = enrollStudents(opts.enrollCourseId, toEnroll, opts.actorId ?? opts.createdBy);
+    // Una matrícula por grupo (sin grupos, todos juntos como siempre)
+    const byCohort = new Map<string | null, string[]>();
+    for (const s of toEnroll) {
+      const cohortId = opts.cohortByEmail?.[s.email] ?? null;
+      byCohort.set(cohortId, [...(byCohort.get(cohortId) ?? []), s.id]);
+    }
+    for (const [cohortId, ids] of byCohort) {
+      enrolled += enrollStudents(opts.enrollCourseId, ids, opts.actorId ?? opts.createdBy, { cohortId });
+    }
   }
 
-  audit(opts.actorId ?? opts.createdBy, "import_csv", "users", undefined, {
+  audit(opts.actorId ?? opts.createdBy, opts.auditAction ?? "import_csv", "users", undefined, {
     created,
     skipped,
     enrolled,

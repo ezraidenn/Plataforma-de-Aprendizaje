@@ -5,6 +5,7 @@ import { ownedExamItem } from "@/server/services/exam-access";
 import { prepareImage } from "@/server/services/image-prep";
 import { pdfPageCount } from "@/server/services/text-extract";
 import { interpretVisionWithRetry, type VisionPart } from "@/server/services/ai-exam-import";
+import { interpretStudentsVisionWithRetry } from "@/server/services/ai-student-import";
 import {
   MAX_AI_FILES,
   MAX_AI_FILE_BYTES,
@@ -23,7 +24,8 @@ const fail = (error: string, status = 400) => NextResponse.json({ error }, { sta
 /**
  * «Importar con IA» con visión: recibe las imágenes (1 a 5, se leen JUNTAS y en
  * orden) o un PDF escaneado, y devuelve los borradores. No guarda nada.
- * Cuerpo: multipart con courseId, itemId y files.
+ * Cuerpo: multipart con courseId, itemId y files (preguntas de un examen), o
+ * kind=estudiantes y files (una lista de personas; no depende de ningún curso).
  */
 export async function POST(request: NextRequest) {
   const user = await apiUser();
@@ -38,8 +40,11 @@ export async function POST(request: NextRequest) {
   } catch {
     return fail("No se pudieron leer los archivos enviados.");
   }
-  const access = ownedExamItem(user, String(form.get("courseId") ?? ""), String(form.get("itemId") ?? ""));
-  if ("error" in access) return fail(access.error, 404);
+  const forStudents = form.get("kind") === "estudiantes";
+  if (!forStudents) {
+    const access = ownedExamItem(user, String(form.get("courseId") ?? ""), String(form.get("itemId") ?? ""));
+    if ("error" in access) return fail(access.error, 404);
+  }
 
   const files = form.getAll("files").filter((f): f is File => f instanceof File);
   if (files.length === 0) return fail("No llegó ningún archivo.");
@@ -75,7 +80,10 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const drafts = await interpretVisionWithRetry(parts, { key, model: getAiSettings().model });
+    const opts = { key, model: getAiSettings().model };
+    const drafts = forStudents
+      ? await interpretStudentsVisionWithRetry(parts, opts)
+      : await interpretVisionWithRetry(parts, opts);
     return NextResponse.json({ drafts });
   } catch (err) {
     return fail(err instanceof Error && err.message ? err.message : "No se pudo interpretar el archivo.", 502);

@@ -36,6 +36,8 @@ pnpm smoke:guide      # guías animadas: historias de las escenas y su registro
 pnpm smoke:ordering   # preguntas de ordenar pasos: puntaje por pares, barajado y CSV
 pnpm smoke:ai         # importar con IA sin gastar: clave cifrada, lectura de archivos e imágenes, OpenAI simulado
 pnpm smoke:ai --live  # además, una transcripción real de texto y de una imagen con la clave de Configuración (necesita internet)
+pnpm smoke:ai-students         # importar estudiantes con IA sin gastar: tramos, normalización, reglas, grupos por fila
+pnpm smoke:ai-students --live  # además, una lista real en texto y en imagen con la clave de Configuración
 pnpm help:shots       # con el servidor arriba: fotos de cada escena del catálogo
 pnpm help:tips        # con el servidor arriba: abre cada «?» en pantallas reales
 pnpm guide:scenes     # con el servidor arriba: fotos de las escenas de la guía

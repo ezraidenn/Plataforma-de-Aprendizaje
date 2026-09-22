@@ -13,6 +13,8 @@ import { courseProgress } from "@/server/services/progress";
 import { buttonVariants } from "@/components/ui/button";
 import { EnrollDialog } from "@/components/teach/students/enroll-dialog";
 import { RosterCsvDialog } from "@/components/teach/bulk/roster-csv-dialog";
+import { AiImportStudentsDialog } from "@/components/teach/students/ai-import-students-dialog";
+import { getAiSettings } from "@/server/services/ai-settings";
 import {
   CourseRosterTable,
   type RosterRow,
@@ -135,6 +137,12 @@ export default async function CourseStudentsPage({
           <>
             <TrashSheet courseId={courseId} rows={trash} />
             <RosterCsvDialog courseId={courseId} />
+            {getAiSettings().configured && course.status !== "archived" && (
+              <AiImportStudentsDialog
+                courses={[{ id: course.id, title: course.title }]}
+                defaultCourseId={course.id}
+              />
+            )}
             <EnrollDialog
               courseId={courseId}
               defaultCohortId={defaultCohortId}
