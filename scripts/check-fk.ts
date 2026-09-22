@@ -7,6 +7,7 @@
  * Uso: pnpm db:check            (base de data/)
  *      DATABASE_PATH=otra.db pnpm db:check
  */
+import "./lib/load-env.cjs";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { is } from "drizzle-orm";

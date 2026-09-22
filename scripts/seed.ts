@@ -4,6 +4,7 @@
  *
  * Uso: pnpm db:seed
  */
+import "./lib/load-env.cjs";
 import Database from "better-sqlite3";
 import path from "node:path";
 import { hash } from "@node-rs/argon2";
