@@ -48,6 +48,21 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+// Ninguna prueba debe llamar a OpenAI de verdad: las que usan IA la simulan con
+// `fetchImpl`. Si alguna se escapara, apunta a un puerto muerto y falla rápido
+// en vez de gastar la clave real. `openaiBase()` lee esta variable en cada
+// llamada, así que basta con fijarla antes de la primera.
+process.env.OPENAI_BASE_URL = "http://127.0.0.1:1/v1";
+
+// Red de verdad hacia OpenAI: se cuenta para comprobarlo al final
+let openaiCalls = 0;
+const realFetch = globalThis.fetch;
+globalThis.fetch = ((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+  const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+  if (url.includes("api.openai.com")) openaiCalls++;
+  return realFetch(input, init);
+}) as typeof fetch;
+
 const execFileAsync = promisify(execFile);
 
 // LibreOffice: el de .env o el de la instalación estándar de Windows
@@ -924,6 +939,7 @@ async function main() {
   } finally {
     cleanup();
   }
+  check("Ninguna prueba usó la API real", openaiCalls === 0, openaiCalls);
   console.log(failures === 0 ? "\nTodo bien" : `\n${failures} fallo(s)`);
   process.exitCode = failures === 0 ? 0 : 1;
 }
