@@ -12,11 +12,14 @@ import { SECTION_META, sectionFor } from "./sections";
 export function SectionScope({
   children,
   leading,
+  center,
   trailing,
 }: {
   children: React.ReactNode;
   /** Se muestra a la izquierda solo en móvil (logo/nombre) */
   leading?: React.ReactNode;
+  /** Centro de la barra (campo del asistente), solo escritorio */
+  center?: React.ReactNode;
   /** Controles a la derecha (campana, etc.) */
   trailing?: React.ReactNode;
 }) {
@@ -30,7 +33,7 @@ export function SectionScope({
         className="section-gradient sticky top-0 z-30 flex h-14 items-center justify-between gap-3 px-4 text-section-fg shadow-[0_4px_16px_-8px_rgb(15_23_42/0.35)] md:px-6"
         aria-label={`Sección: ${label}`}
       >
-        <div className="flex min-w-0 items-center gap-3">
+        <div className="flex min-w-0 shrink-0 items-center gap-3">
           {leading && <div className="md:hidden">{leading}</div>}
           <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-white/15">
             <Icon className="size-4" aria-hidden />
@@ -39,7 +42,8 @@ export function SectionScope({
             {label}
           </span>
         </div>
-        {trailing && <div className="flex items-center gap-1">{trailing}</div>}
+        {center && <div className="hidden min-w-0 flex-1 justify-center px-4 md:flex">{center}</div>}
+        {trailing && <div className="flex shrink-0 items-center gap-1">{trailing}</div>}
       </header>
       {children}
     </div>

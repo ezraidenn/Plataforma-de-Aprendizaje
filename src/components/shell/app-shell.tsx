@@ -27,6 +27,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { AssistantProvider } from "@/components/assistant/assistant-provider";
+import { AssistantField } from "@/components/assistant/assistant-field";
+import { AssistantButton } from "@/components/assistant/assistant-button";
+import { AssistantPanel } from "@/components/assistant/assistant-panel";
 
 type NavItem = { href: string; label: string; icon: NavIconName; section: SectionKey };
 
@@ -205,39 +209,45 @@ export async function AppShell({
           campana en blanco y, en móvil, el logo a la izquierda. */}
       <main className="md:pl-60">
         <ViewContextProvider value={context}>
-          <SectionScope
-            leading={
-              <div className="flex items-center gap-1">
-                <MobileNav
-                  brand={
-                    <>
-                      <BrandLogo logoFileId={branding.logoFileId} size={32} />
-                      <span className="truncate font-heading text-[15px] font-bold">
-                        {branding.platformName}
-                      </span>
-                    </>
-                  }
-                  groups={mobileGroups}
-                  user={{ fullName: user.fullName, roleLabel: ROLE_LABELS[user.role], email: user.email }}
-                  onLogout={logoutAction}
-                />
-                <Link href={homeHref} className="flex items-center gap-2" aria-label={branding.platformName}>
-                  <BrandLogo logoFileId={branding.logoFileId} size={28} />
-                </Link>
-              </div>
-            }
-            trailing={
-              <>
-                {contextOptions && (
-                  <ViewContextSwitcher current={context} options={contextOptions} selfName={user.fullName} />
-                )}
-                <NotificationsBell tone="onColor" />
-              </>
-            }
-          >
-            <ViewContextStrip />
-            <div className="mx-auto max-w-6xl p-4 md:p-6">{children}</div>
-          </SectionScope>
+          <AssistantProvider>
+            <SectionScope
+              center={!isStudent ? <AssistantField /> : undefined}
+              leading={
+                <div className="flex items-center gap-1">
+                  <MobileNav
+                    brand={
+                      <>
+                        <BrandLogo logoFileId={branding.logoFileId} size={32} />
+                        <span className="truncate font-heading text-[15px] font-bold">
+                          {branding.platformName}
+                        </span>
+                      </>
+                    }
+                    groups={mobileGroups}
+                    user={{ fullName: user.fullName, roleLabel: ROLE_LABELS[user.role], email: user.email }}
+                    onLogout={logoutAction}
+                  />
+                  <Link href={homeHref} className="flex items-center gap-2" aria-label={branding.platformName}>
+                    <BrandLogo logoFileId={branding.logoFileId} size={28} />
+                  </Link>
+                </div>
+              }
+              trailing={
+                <>
+                  {!isStudent && <AssistantButton />}
+                  {contextOptions && (
+                    <ViewContextSwitcher current={context} options={contextOptions} selfName={user.fullName} />
+                  )}
+                  <NotificationsBell tone="onColor" />
+                </>
+              }
+            >
+              <ViewContextStrip />
+              <div className="mx-auto max-w-6xl p-4 md:p-6">{children}</div>
+            </SectionScope>
+            {/* Los alumnos no ven nada del asistente */}
+            {!isStudent && <AssistantPanel />}
+          </AssistantProvider>
         </ViewContextProvider>
       </main>
     </div>
