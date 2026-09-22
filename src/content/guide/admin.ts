@@ -142,7 +142,7 @@ export const ADMIN_GUIDE: RoleGuide = {
         },
         {
           title: "Inteligencia artificial",
-          text: "En «Configuración → Inteligencia artificial (OpenAI)» pega la clave de API, pulsa «Probar conexión» (no gasta saldo) y luego «Guardar». La clave se guarda cifrada y después solo se ve enmascarada. Con ella, los maestros ven «Importar con IA» en el editor de examen; sin clave, el botón no aparece. El texto de un archivo se envía a OpenAI solo cuando un maestro lo pide, y para eso el servidor necesita internet.",
+          text: "En «Configuración → Inteligencia artificial (OpenAI)» pega la clave de API, pulsa «Probar conexión» (no gasta saldo) y luego «Guardar». La clave se guarda cifrada y después solo se ve enmascarada. Con ella, los maestros ven «Importar con IA» en el editor de examen y en Estudiantes (listas en cualquier formato); sin clave, esos botones no aparecen. El texto de un archivo se envía a OpenAI solo cuando un maestro lo pide, y para eso el servidor necesita internet.",
           href: "/admin/settings",
           hrefLabel: "Configuración",
           ui: ["Probar conexión", "Guardar", "Quitar clave"],

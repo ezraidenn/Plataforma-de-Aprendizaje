@@ -173,6 +173,14 @@ export const TEACHER_GUIDE: RoleGuide = {
           hrefLabel: "Estudiantes",
           ui: ["Restablecer contraseña", "Desactivar cuenta", "Quitar del curso"],
         },
+        {
+          title: "Importar estudiantes con IA",
+          text: "Si tu lista no está en la plantilla, «Importar con IA» lee hasta 5 archivos en cualquier formato (Excel, Word, PDF, CSV, fotos o capturas, incluso PDF escaneados) y saca el nombre, el correo y el grupo de cada persona. Antes de crear nada ves la tabla: corriges nombres o correos, quitas o agregas filas, y cada fila dice si se creará, si ya tiene cuenta o qué le falta. Puedes matricularlos en un curso y usar los grupos que traía la lista. Al final descargas las credenciales. También está en la pestaña «Estudiantes» de cada curso.",
+          href: "/teach/students",
+          hrefLabel: "Estudiantes",
+          ui: ["Importar con IA", "Agregar fila", "Usar los grupos de la lista", "Descargar credenciales (CSV)"],
+          tip: "La IA nunca inventa correos: si alguien no trae correo en el archivo, la fila queda marcada para que lo escribas tú.",
+        },
       ],
     },
     {

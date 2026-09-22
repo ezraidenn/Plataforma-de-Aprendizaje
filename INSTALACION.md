@@ -242,7 +242,7 @@ alguien tocó las carpetas del NAS.
 | Los cursos no muestran sus archivos tras cambiar de carpeta | Se cambió la ruta sin copiar el contenido | `pnpm storage check` para confirmarlo; copiar los archivos o volver a la ruta anterior |
 | "Sin permisos para crear o escribir" al guardar la ruta del NAS | El servicio corre con una cuenta sin acceso al recurso | NSSM → *Log on* con una cuenta del dominio con permiso, o dar permiso a la cuenta de equipo |
 | Subidas lentas o cortadas hacia el NAS | Red saturada o suspensión del recurso | Usar cable en el servidor; revisar la energía/suspensión del NAS |
-| El maestro no ve «Importar con IA» en el examen | No hay clave de OpenAI guardada | Administración → Configuración → Inteligencia artificial: pegar la clave, «Probar conexión» y Guardar |
+| El maestro no ve «Importar con IA» (examen o Estudiantes) | No hay clave de OpenAI guardada | Administración → Configuración → Inteligencia artificial: pegar la clave, «Probar conexión» y Guardar |
 | «No hay conexión con OpenAI» al probar o al importar | El servidor no tiene internet o el firewall/proxy bloquea `api.openai.com` | Permitir la salida HTTPS (443) del servidor a `api.openai.com` |
 | La tarjeta de IA dice que la clave ya no se puede leer | Cambió `APP_SECRET` (p. ej. se llevó la base a otro equipo sin su `.env`) | Volver a pegar la clave y Guardar; la clave se cifra con `APP_SECRET` |
 | La foto de iPhone no se acepta al importar con IA | Está en HEIC (formato de Apple que OpenAI no lee) | En el iPhone: Ajustes → Cámara → Formatos → «Más compatible», o guardarla como JPG antes de subirla |

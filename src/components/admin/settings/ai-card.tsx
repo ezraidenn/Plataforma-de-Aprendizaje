@@ -92,8 +92,9 @@ export function AiCard({
           Inteligencia artificial (OpenAI)
         </CardTitle>
         <CardDescription>
-          Permite a los maestros importar preguntas de examen desde un archivo. El texto se envía a
-          OpenAI solo cuando un maestro lo pide; necesita que el servidor tenga internet.
+          Permite a los maestros importar preguntas de examen y listas de estudiantes desde cualquier
+          archivo. El texto se envía a OpenAI solo cuando un maestro lo pide; necesita que el servidor
+          tenga internet.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -180,8 +181,8 @@ export function AiCard({
                 <AlertDialogHeader>
                   <AlertDialogTitle>¿Quitar la clave de OpenAI?</AlertDialogTitle>
                   <AlertDialogDescription>
-                    Los maestros dejarán de ver «Importar con IA». Las preguntas ya importadas no se
-                    tocan.
+                    Los maestros dejarán de ver «Importar con IA». Lo que ya se importó (preguntas y
+                    estudiantes) no se toca.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>

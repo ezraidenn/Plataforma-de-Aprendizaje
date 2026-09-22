@@ -48,6 +48,7 @@ const AUDIT_ACTION_LABEL: Record<string, string> = {
   publish_exam_results: "Publicó los resultados de un examen",
   hide_exam_results: "Ocultó los resultados de un examen",
   ai_import_exam: "Importó preguntas con IA",
+  ai_import_students: "Importó estudiantes con IA",
   import_exam_csv: "Importó preguntas por CSV",
   update_ai_settings: "Configuró la IA (OpenAI)",
   clear_ai_settings: "Quitó la clave de IA",

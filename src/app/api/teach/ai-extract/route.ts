@@ -3,6 +3,7 @@ import { apiUser } from "@/server/auth/guards";
 import { getAiSettings } from "@/server/services/ai-settings";
 import { ScannedPdfError, extractText } from "@/server/services/text-extract";
 import { splitIntoChunks } from "@/server/services/ai-exam-import";
+import { splitRosterChunks } from "@/server/services/ai-student-import";
 
 export const runtime = "nodejs";
 // Convertir un Word o un Excel con LibreOffice puede tardar
@@ -15,6 +16,7 @@ const MAX_BYTES = 10 * 1024 * 1024;
  * lo devuelve partido en tramos. No guarda nada: el archivo vive solo en
  * memoria y en una carpeta temporal que se borra al terminar.
  * Encabezado: X-File-Name (codificado como URI). Cuerpo: el archivo.
+ * `?para=estudiantes`: tramos por filas de una lista, no por preguntas.
  */
 export async function POST(request: NextRequest) {
   const user = await apiUser();
@@ -42,7 +44,9 @@ export async function POST(request: NextRequest) {
 
   try {
     const { text, format, chars } = await extractText(bytes, fileName);
-    return NextResponse.json({ chunks: splitIntoChunks(text), chars, format });
+    const forStudents = request.nextUrl.searchParams.get("para") === "estudiantes";
+    const chunks = forStudents ? splitRosterChunks(text) : splitIntoChunks(text);
+    return NextResponse.json({ chunks, chars, format });
   } catch (err) {
     if (err instanceof ScannedPdfError) {
       // No es un error: el diálogo lo manda a /api/teach/ai-vision

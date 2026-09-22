@@ -1,6 +1,6 @@
 import "server-only";
 import { nanoid } from "nanoid";
-import { aiErrorMessage, openaiBase } from "./ai-settings";
+import { obj, requestStructured, visionMessage, withRetry, type AiOpts, type VisionPart } from "./ai-client";
 import type { DraftType, QuestionDraft } from "@/lib/question-draft";
 
 /**
@@ -70,13 +70,6 @@ const TYPES: DraftType[] = [
   "ordering",
   "open_text",
 ];
-
-const obj = (properties: Record<string, unknown>) => ({
-  type: "object",
-  additionalProperties: false,
-  properties,
-  required: Object.keys(properties),
-});
 
 export const AI_SCHEMA = obj({
   questions: {
@@ -174,103 +167,28 @@ export function toDrafts(parsed: unknown): QuestionDraft[] {
     });
 }
 
-/** Saca el texto (o la negativa) de una respuesta de la Responses API. */
-function outputOf(body: unknown): { text?: string; refusal?: string } {
-  const output = (body as { output?: { content?: { type: string; text?: string; refusal?: string }[] }[] }).output ?? [];
-  for (const item of output) {
-    for (const c of item.content ?? []) {
-      if (c.type === "output_text" && typeof c.text === "string") return { text: c.text };
-      if (c.type === "refusal") return { refusal: c.refusal ?? "" };
-    }
-  }
-  return {};
-}
-
-/** Error de respuesta ilegible: quien llama reintenta una vez. */
-export class MalformedAiResponse extends Error {
-  constructor() {
-    super("La IA devolvió una respuesta mal formada.");
-  }
-}
-
-export type VisionPart =
-  | { kind: "image"; dataUrl: string }
-  | { kind: "pdf"; fileName: string; dataUrl: string };
-
-type ContentPart =
-  | { type: "input_text"; text: string }
-  | { type: "input_image"; image_url: string; detail: "high" }
-  | { type: "input_file"; filename: string; file_data: string };
+// Lo genérico (llamada, reintento, visión) vive en ai-client; se reexporta lo
+// que ya usaban otros módulos.
+export { MalformedAiResponse, type VisionPart } from "./ai-client";
 
 /** Mensaje del usuario para la visión: una instrucción corta y luego las imágenes o el PDF. */
-export function visionContent(parts: VisionPart[]): ContentPart[] {
+export function visionContent(parts: VisionPart[]) {
   const images = parts.filter((p) => p.kind === "image").length;
   const intro = parts.some((p) => p.kind === "pdf")
     ? "Transcribe las preguntas de este PDF escaneado."
     : images === 1
       ? "Transcribe las preguntas de esta imagen."
       : `Transcribe las preguntas de estas ${images} imágenes, en orden.`;
-  return [
-    { type: "input_text", text: intro },
-    ...parts.map(
-      (p): ContentPart =>
-        p.kind === "image"
-          ? { type: "input_image", image_url: p.dataUrl, detail: "high" }
-          : { type: "input_file", filename: p.fileName, file_data: p.dataUrl }
-    ),
-  ];
+  return visionMessage(intro, parts);
 }
-
-type AiOpts = { key: string; model: string; fetchImpl?: typeof fetch };
 
 /** Una llamada a la Responses API con el esquema estricto → borradores. */
-async function requestDrafts(content: string | ContentPart[], opts: AiOpts, timeoutMs: number): Promise<QuestionDraft[]> {
-  const doFetch = opts.fetchImpl ?? fetch;
-  let res: Response;
-  try {
-    res = await doFetch(`${openaiBase()}/responses`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${opts.key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: opts.model,
-        input: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content },
-        ],
-        text: { format: { type: "json_schema", name: "examen", strict: true, schema: AI_SCHEMA } },
-      }),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-  } catch {
-    throw new Error(aiErrorMessage(null));
-  }
-  const raw = await res.text();
-  if (!res.ok) throw new Error(aiErrorMessage(res.status, raw));
-
-  let body: unknown;
-  try {
-    body = JSON.parse(raw);
-  } catch {
-    throw new MalformedAiResponse();
-  }
-  const out = outputOf(body);
-  if (out.refusal !== undefined) throw new Error("La IA se negó a procesar este contenido.");
-  if (!out.text) throw new MalformedAiResponse();
-  try {
-    return toDrafts(JSON.parse(out.text));
-  } catch {
-    throw new MalformedAiResponse();
-  }
-}
-
-/** Una respuesta mal formada se reintenta una vez. */
-async function withRetry<T>(run: () => Promise<T>): Promise<T> {
-  try {
-    return await run();
-  } catch (err) {
-    if (err instanceof MalformedAiResponse) return run();
-    throw err;
-  }
+function requestDrafts(content: Parameters<typeof requestStructured>[0]["content"], opts: AiOpts, timeoutMs: number) {
+  return requestStructured(
+    { system: SYSTEM_PROMPT, content, name: "examen", schema: AI_SCHEMA, parse: toDrafts },
+    opts,
+    timeoutMs
+  );
 }
 
 /** Manda un tramo de texto a OpenAI y devuelve sus borradores. */

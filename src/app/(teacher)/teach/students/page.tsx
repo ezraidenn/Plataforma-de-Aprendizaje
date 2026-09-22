@@ -19,6 +19,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { ImportCsvDialog } from "@/components/teach/students/import-csv-dialog";
+import { AiImportStudentsDialog } from "@/components/teach/students/ai-import-students-dialog";
+import { getAiSettings } from "@/server/services/ai-settings";
 import { NewStudentDialog } from "@/components/teach/students/new-student-dialog";
 import { StudentActions } from "@/components/teach/students/student-actions";
 import { Pagination } from "@/components/teach/pagination";
@@ -41,6 +43,8 @@ export default async function StudentsPage({
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   // Cursos propios (no archivados) para "Matricular a todos en…" del asistente
+  // «Importar con IA» solo si el administrador guardó la clave de OpenAI
+  const aiEnabled = getAiSettings().configured;
   const courses = listTeacherCourses(scope)
     .filter(({ course }) => course.status !== "archived")
     .map(({ course }) => ({ id: course.id, title: course.title }));
@@ -73,6 +77,7 @@ export default async function StudentsPage({
               />
             </Form>
             <ImportCsvDialog courses={courses} />
+            {aiEnabled && <AiImportStudentsDialog courses={courses} />}
             <NewStudentDialog urlTrigger />
           </>
         }
@@ -102,6 +107,7 @@ export default async function StudentsPage({
               </p>
               <div className="flex flex-wrap items-center justify-center gap-2">
                 <ImportCsvDialog courses={courses} />
+                {aiEnabled && <AiImportStudentsDialog courses={courses} />}
                 <NewStudentDialog />
               </div>
             </>

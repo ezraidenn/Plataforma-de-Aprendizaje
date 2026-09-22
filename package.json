@@ -35,6 +35,7 @@
     "smoke:guide": "tsx scripts/smoke-guide.ts",
     "smoke:ordering": "node --conditions=react-server --import tsx scripts/smoke-ordering.ts",
     "smoke:ai": "node --conditions=react-server --import tsx scripts/smoke-ai.ts",
+    "smoke:ai-students": "node --conditions=react-server --import tsx scripts/smoke-ai-students.ts",
     "certs:backfill": "node --conditions=react-server --import tsx scripts/backfill-certificates.ts",
     "certs:backfill-teacher": "node --conditions=react-server --import tsx scripts/backfill-certificates.ts",
     "help:shots": "node scripts/help-shots.cjs",
