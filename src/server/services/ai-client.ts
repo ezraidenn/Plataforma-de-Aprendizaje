@@ -118,3 +118,89 @@ export async function withRetry<T>(run: () => Promise<T>): Promise<T> {
     throw err;
   }
 }
+
+// ─── Conversación con herramientas (asistente) ───────────────────────────────
+
+/** Herramienta tal como la espera la Responses API. */
+export type ToolDef = {
+  type: "function";
+  name: string;
+  description: string;
+  parameters: unknown;
+  strict: true;
+};
+
+/** Un elemento del historial que se manda a la IA. */
+export type ChatItem =
+  | { role: "system" | "user" | "assistant"; content: string }
+  | { type: "function_call"; call_id: string; name: string; arguments: string }
+  | { type: "function_call_output"; call_id: string; output: string };
+
+export type ToolCall = { callId: string; name: string; args: unknown };
+export type ToolTurn = { text: string | null; calls: ToolCall[] };
+
+/**
+ * Una vuelta del asistente: la IA responde con texto, con una o varias
+ * llamadas a herramientas, o con ambos. Quien llama ejecuta las herramientas y
+ * vuelve a llamar con sus `function_call_output`. Sin herramientas
+ * (`tools` vacío) se le pide solo texto.
+ */
+export async function requestWithTools(
+  input: ChatItem[],
+  tools: ToolDef[],
+  opts: AiOpts,
+  timeoutMs: number
+): Promise<ToolTurn> {
+  const doFetch = opts.fetchImpl ?? fetch;
+  let res: Response;
+  try {
+    res = await doFetch(`${openaiBase()}/responses`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${opts.key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: opts.model,
+        input,
+        ...(tools.length ? { tools, tool_choice: "auto", parallel_tool_calls: false } : { tool_choice: "none" }),
+      }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch {
+    throw new Error(aiErrorMessage(null));
+  }
+  const raw = await res.text();
+  if (!res.ok) throw new Error(aiErrorMessage(res.status, raw));
+
+  let body: { output?: unknown[] };
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    throw new MalformedAiResponse();
+  }
+
+  const turn: ToolTurn = { text: null, calls: [] };
+  for (const item of body.output ?? []) {
+    const it = item as {
+      type?: string;
+      call_id?: string;
+      name?: string;
+      arguments?: string;
+      content?: { type: string; text?: string; refusal?: string }[];
+    };
+    if (it.type === "function_call" && it.call_id && it.name) {
+      let args: unknown;
+      try {
+        args = JSON.parse(it.arguments ?? "{}");
+      } catch {
+        throw new MalformedAiResponse();
+      }
+      turn.calls.push({ callId: it.call_id, name: it.name, args });
+    } else if (it.type === "message") {
+      for (const c of it.content ?? []) {
+        if (c.type === "refusal") throw new Error("La IA se negó a procesar este contenido.");
+        if (c.type === "output_text" && typeof c.text === "string") turn.text = (turn.text ?? "") + c.text;
+      }
+    }
+  }
+  if (turn.text === null && turn.calls.length === 0) throw new MalformedAiResponse();
+  return turn;
+}
