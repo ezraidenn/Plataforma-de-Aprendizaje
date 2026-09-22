@@ -8,6 +8,15 @@
  */
 import { placeholderFor } from "../src/lib/assistant-placeholder";
 import { requestWithTools, type ChatItem, type ToolDef } from "../src/server/services/ai-client";
+import { eq, like } from "drizzle-orm";
+import { nanoid } from "nanoid";
+import { db } from "../src/server/db";
+import { aiConversations, courses as coursesTable, enrollments, users } from "../src/server/db/schema";
+import { createCourse, enrollStudents } from "../src/server/services/courses";
+import { ownScope, type ViewScope } from "../src/server/auth/view-scope";
+import type { SessionUser } from "../src/server/auth/sessions";
+import { toolsForRole, toolByName, toolDefsForRole } from "../src/server/assistant/registry";
+import type { ToolCtx } from "../src/server/assistant/tool-types";
 
 let failures = 0;
 function check(name: string, cond: boolean, detail?: unknown) {
@@ -98,9 +107,102 @@ async function clientChecks() {
   check("Clave inválida: mensaje claro", typeof denied === "string" && denied.includes("rechazó la clave"));
 }
 
+const P = "zasst";
+const ids = { teacher: nanoid(), admin: nanoid(), s1: nanoid(), s2: nanoid(), course: "" };
+
+function makeUser(id: string, key: string, name: string, role: "teacher" | "admin" | "student", createdBy: string | null) {
+  db.insert(users).values({ id, email: `${P}-${key}@test.local`, passwordHash: "x", fullName: `${P} ${name}`, role, createdBy }).run();
+}
+
+function setup() {
+  cleanup();
+  makeUser(ids.teacher, "maestro", "Maestro", "teacher", null);
+  makeUser(ids.admin, "admin", "Admin", "admin", null);
+  makeUser(ids.s1, "ana", "Ana López", "student", ids.teacher);
+  makeUser(ids.s2, "beto", "Beto Ruiz", "student", ids.teacher);
+  ids.course = createCourse({ ownerId: ids.teacher, title: `${P} Extintores` }).id;
+  enrollStudents(ids.course, [ids.s1], ids.teacher);
+}
+
+function cleanup() {
+  const userIds = db.select({ id: users.id }).from(users).where(like(users.email, `${P}-%`)).all().map((u) => u.id);
+  if (userIds.length === 0) return;
+  db.transaction(() => {
+    db.delete(aiConversations).where(like(aiConversations.title, `${P}%`)).run();
+    const courseIds = db.select({ id: coursesTable.id }).from(coursesTable).where(like(coursesTable.title, `${P}%`)).all().map((c) => c.id);
+    for (const id of courseIds) {
+      db.delete(enrollments).where(eq(enrollments.courseId, id)).run();
+      db.delete(coursesTable).where(eq(coursesTable.id, id)).run();
+    }
+    for (const id of userIds) db.delete(users).where(eq(users.id, id)).run();
+  });
+}
+
+const teacherUser: SessionUser = { id: "", email: "", fullName: `${P} Maestro`, role: "teacher" };
+function ctxFor(user: SessionUser, scope: ViewScope, route = "/teach/dashboard"): ToolCtx {
+  return { user, scope, actingOwnerId: scope.kind === "teacher" ? scope.ownerId : user.id, route, conversationId: "conv-test" };
+}
+
+async function catalogChecks() {
+  console.log("\n— Catálogo por rol");
+  const teacherNames = toolsForRole("teacher").map((t) => t.name);
+  check("Maestro: ir_a, buscar_alumno, buscar_curso, ficha_alumno, resumen_curso, matricular", ["ir_a", "buscar_alumno", "buscar_curso", "ficha_alumno", "resumen_curso", "matricular"].every((n) => teacherNames.includes(n)), teacherNames);
+  check("Admin tiene las mismas o más", toolsForRole("admin").length >= teacherNames.length);
+  check("Nombres únicos", new Set(teacherNames).size === teacherNames.length);
+  const defs = toolDefsForRole("teacher");
+  check("Definiciones estrictas con esquema de objeto", defs.every((d) => d.strict && (d.parameters as { type: string }).type === "object"));
+  check("Toda propiedad es requerida (esquema estricto)", defs.every((d) => {
+    const p = d.parameters as { properties: Record<string, unknown>; required: string[] };
+    return Object.keys(p.properties).every((k) => p.required.includes(k));
+  }));
+  check("toolByName desconocida: null", toolByName("nada") === null);
+}
+
+async function readToolChecks() {
+  console.log("\n— Herramientas de lectura y navegación");
+  const user = { ...teacherUser, id: ids.teacher };
+  const ctx = ctxFor(user, ownScope(user));
+
+  const nav = await toolByName("ir_a")!.run({ destino: "alumno", id: ids.s1 }, ctx);
+  check("ir_a alumno → URL del perfil", nav.navigate === `/teach/students/${ids.s1}`);
+  const navCourse = await toolByName("ir_a")!.run({ destino: "contenido", id: ids.course }, ctx);
+  check("ir_a contenido → URL del curso", navCourse.navigate === `/teach/courses/${ids.course}/content`);
+  const navBad = await toolByName("ir_a")!.run({ destino: "alumno", id: "" }, ctx);
+  check("ir_a alumno sin id: lo dice", !navBad.navigate && navBad.forModel.includes("id"));
+
+  const found = await toolByName("buscar_alumno")!.run({ texto: "ana lópez" }, ctx);
+  check("buscar_alumno encuentra a Ana", found.forModel.includes("Ana López") && found.forModel.includes(ids.s1));
+  const none = await toolByName("buscar_alumno")!.run({ texto: "nadie-asi" }, ctx);
+  check("buscar_alumno sin resultados lo dice", none.forModel.includes("No hay alumnos"));
+
+  // Id de admin pero rol maestro a propósito: un maestro distinto no ve a los alumnos de otro
+  const other: SessionUser = { id: ids.admin, email: "", fullName: "x", role: "teacher" };
+  const invisible = await toolByName("buscar_alumno")!.run({ texto: "ana" }, ctxFor(other, ownScope(other)));
+  check("Otro maestro no ve a Ana", !invisible.forModel.includes(ids.s1));
+
+  const course = await toolByName("buscar_curso")!.run({ texto: "extintores" }, ctx);
+  check("buscar_curso encuentra el curso", course.forModel.includes(ids.course));
+
+  const ficha = await toolByName("ficha_alumno")!.run({ alumno_id: ids.s1 }, ctx);
+  check("ficha_alumno: cursos y tiles", ficha.forModel.includes("Extintores") && (ficha.blocks ?? []).some((b) => b.type === "tiles"));
+  check("ficha_alumno: enlace al perfil", (ficha.blocks ?? []).some((b) => b.type === "links" && b.links[0].href === `/teach/students/${ids.s1}`));
+  const fichaAjena = await toolByName("ficha_alumno")!.run({ alumno_id: ids.s1 }, ctxFor(other, ownScope(other)));
+  check("ficha_alumno ajena: denegada", fichaAjena.forModel.includes("No encontramos"));
+
+  const resumen = await toolByName("resumen_curso")!.run({ curso_id: ids.course }, ctx);
+  check("resumen_curso: 1 matriculado", resumen.forModel.includes("1 matriculado"));
+}
+
 async function main() {
   placeholderChecks();
   await clientChecks();
+  setup();
+  try {
+    await catalogChecks();
+    await readToolChecks();
+  } finally {
+    cleanup();
+  }
   console.log(failures === 0 ? "\nTodo bien" : `\n${failures} fallo(s)`);
   process.exitCode = failures === 0 ? 0 : 1;
 }

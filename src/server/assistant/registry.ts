@@ -1,0 +1,40 @@
+import "server-only";
+import type { ToolDef } from "@/server/services/ai-client";
+import type { AssistantTool, ToolRole } from "./tool-types";
+import { irA } from "./tools/ir-a";
+import { buscarAlumno } from "./tools/buscar-alumno";
+import { buscarCurso } from "./tools/buscar-curso";
+import { fichaAlumno } from "./tools/ficha-alumno";
+import { resumenCurso } from "./tools/resumen-curso";
+import { matricular, desmatricular } from "./tools/matricular";
+
+/** Catálogo completo. Lo que la IA no ve aquí, no existe para ella. */
+const ALL: AssistantTool[] = [irA, buscarAlumno, buscarCurso, fichaAlumno, resumenCurso, matricular, desmatricular];
+
+/** Capacidades previstas que aún no existen: la IA responde «aún no puedo». */
+export const NOT_YET = [
+  "dar de alta alumnos desde un archivo",
+  "dar de baja o borrar alumnos",
+  "crear cursos",
+  "consultas de movimientos, pendientes o certificados",
+  "descargar certificados o CSV",
+  "grupos, recordatorios, reportes, plantillas de diploma",
+];
+
+export function toolsForRole(role: ToolRole): AssistantTool[] {
+  return ALL.filter((t) => t.roles.includes(role));
+}
+
+export function toolByName(name: string): AssistantTool | null {
+  return ALL.find((t) => t.name === name) ?? null;
+}
+
+export function toolDefsForRole(role: ToolRole): ToolDef[] {
+  return toolsForRole(role).map((t) => ({
+    type: "function",
+    name: t.name,
+    description: t.description,
+    parameters: t.parameters,
+    strict: true,
+  }));
+}
