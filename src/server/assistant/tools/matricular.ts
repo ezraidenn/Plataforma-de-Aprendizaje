@@ -8,7 +8,6 @@ import { fullScope } from "@/server/auth/view-scope";
 import { audit } from "@/server/services/audit";
 import type { ProposalRow } from "@/lib/assistant-blocks";
 import { createProposal } from "../proposal-store";
-import { appendMessage } from "@/server/services/ai-conversations";
 import { schema, str, strList, param, paramList, type AssistantTool, type ToolCtx } from "../tool-types";
 
 /**
@@ -60,11 +59,6 @@ function rowsFor(studentIds: string[], courseId: string, ctx: ToolCtx, action: "
     if (action === "unenroll" && !enrolled) return { id, cells, warning: "No está matriculado", blocked: true };
     return { id, cells };
   });
-}
-
-/** Mensaje vacío que ancla la propuesta (FK); el bucle del agente pone el bloque en el mensaje final del turno. */
-function proposalAnchor(ctx: ToolCtx): string {
-  return appendMessage(ctx.conversationId, "assistant", [], "").id;
 }
 
 /**
@@ -121,7 +115,7 @@ export const matricular: AssistantTool = {
       };
     }
 
-    const proposalId = createProposal("matricular", ctx, proposalAnchor(ctx), {
+    const proposalId = createProposal("matricular", ctx, ctx.messageId, {
       title: `Matricular en ${course.title}`,
       applyLabel: "Matricular",
       columns: COLUMNS,
@@ -164,7 +158,7 @@ export const desmatricular: AssistantTool = {
     const course = getOwnedCourse(courseId, ctx.user);
     if (!course) return { forModel: "No encontramos ese curso o no te pertenece." };
     const rows = rowsFor(studentIds, course.id, ctx, "unenroll");
-    const proposalId = createProposal("desmatricular", ctx, proposalAnchor(ctx), {
+    const proposalId = createProposal("desmatricular", ctx, ctx.messageId, {
       title: `Dar de baja de ${course.title}`,
       applyLabel: "Dar de baja",
       columns: COLUMNS,

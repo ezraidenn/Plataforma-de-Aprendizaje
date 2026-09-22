@@ -78,6 +78,16 @@ export function appendMessage(
   return { id, role, blocks, createdAt: at.getTime() };
 }
 
+/** Rellena el mensaje del asistente creado vacío al inicio del turno. */
+export function updateMessage(messageId: string, blocks: AssistantBlock[], modelText: string, undo?: UndoSpec) {
+  db.transaction(() => {
+    const row = db.select({ conversationId: aiMessages.conversationId }).from(aiMessages).where(eq(aiMessages.id, messageId)).get();
+    if (!row) return;
+    db.update(aiMessages).set({ content: blocks, modelText, undo: undo ?? null }).where(eq(aiMessages.id, messageId)).run();
+    db.update(aiConversations).set({ updatedAt: new Date() }).where(eq(aiConversations.id, row.conversationId)).run();
+  });
+}
+
 /** Historial corto para la IA: últimos `limit` mensajes como texto. */
 export function recentModelText(conversationId: string, limit: number): { role: "user" | "assistant"; text: string }[] {
   return db

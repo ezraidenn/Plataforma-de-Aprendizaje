@@ -163,7 +163,8 @@ function cleanup() {
 
 const teacherUser: SessionUser = { id: "", email: "", fullName: `${P} Maestro`, role: "teacher" };
 function ctxFor(user: SessionUser, scope: ViewScope, route = "/teach/dashboard"): ToolCtx {
-  return { user, scope, actingOwnerId: scope.kind === "teacher" ? scope.ownerId : user.id, route, conversationId: "conv-test" };
+  // Las herramientas de lectura no usan conversationId ni messageId; las de propuesta reciben uno real
+  return { user, scope, actingOwnerId: scope.kind === "teacher" ? scope.ownerId : user.id, route, conversationId: "conv-test", messageId: "msg-test" };
 }
 
 async function catalogChecks() {
@@ -238,7 +239,9 @@ async function proposalChecks() {
   console.log("\n— Propuestas y matrícula");
   const user = { ...teacherUser, id: ids.teacher };
   const conv = createConversation(ids.teacher, `${P} matrícula`);
-  const ctx = { ...ctxFor(user, ownScope(user)), conversationId: conv.id };
+  // Ancla real: las propuestas cuelgan del mensaje del asistente del turno
+  const anchor = appendMessage(conv.id, "assistant", [], "").id;
+  const ctx = { ...ctxFor(user, ownScope(user)), conversationId: conv.id, messageId: anchor };
 
   // 1 alumno: instantánea con deshacer
   const one = await toolByName("matricular")!.run({ alumno_ids: [ids.s2], curso_id: ids.course }, ctx);
@@ -259,6 +262,7 @@ async function proposalChecks() {
   // Varios: propuesta
   const many = await toolByName("matricular")!.run({ alumno_ids: [ids.s1, ids.s2, "no-existe"], curso_id: ids.course }, ctx);
   check("Varios: crea una propuesta", typeof many.proposalId === "string" && many.forModel.includes("propuesta"));
+  check("La propuesta cuelga del mensaje del contexto, sin mensaje fantasma", getProposal(many.proposalId!)?.messageId === anchor && getConversation(ids.teacher, conv.id)!.messages.length === 1);
   const proposal = getProposal(many.proposalId!);
   check("3 filas: 2 bloqueadas (id inexistente y ya matriculado)", proposal?.rows.length === 3 && proposal.rows.filter((r) => r.blocked).length === 2 && proposal.rows.some((r) => r.warning?.includes("Ya está matriculado")), proposal?.rows);
 
@@ -278,7 +282,7 @@ async function proposalChecks() {
 
   // Otro usuario no puede aplicar
   const p3 = await toolByName("matricular")!.run({ alumno_ids: [ids.s1, ids.s2], curso_id: ids.course }, ctx);
-  const otherCtx = { ...ctxFor({ ...teacherUser, id: ids.admin }, ownScope({ ...teacherUser, id: ids.admin })), conversationId: conv.id };
+  const otherCtx = { ...ctxFor({ ...teacherUser, id: ids.admin }, ownScope({ ...teacherUser, id: ids.admin })), conversationId: conv.id, messageId: anchor };
   check("Otro usuario no aplica ni cancela", "error" in (await applyProposal(p3.proposalId!, [], otherCtx)) && !cancelProposal(p3.proposalId!, ids.admin));
   check("Cancelar", cancelProposal(p3.proposalId!, ids.teacher) && getProposal(p3.proposalId!)?.status === "cancelled");
 
@@ -358,12 +362,24 @@ async function agentChecks() {
   check("Herramienta desconocida: se le dice a la IA y sigue", "message" in t3 && u.input.some((i) => i.type === "function_call_output" && (i.output ?? "").includes("no existe")));
   check("Termina con el texto final", "message" in t3 && t3.message.blocks.some((b) => b.type === "text" && b.text.includes("No puedo")));
 
-  // Propuesta: la IA redacta una línea y el turno termina
+  // Propuesta (conversación nueva): la IA redacta una línea y el turno termina
   const prop = scripted([[call("c1", "matricular", { alumno_ids: [ids.s1, ids.s2], curso_id: ids.course })], [say("Revisa la tabla.")]]);
-  const t4 = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: turn.conversationId, text: "matricula a Ana y Beto en extintores", ai: { key: "k", model: "m", fetchImpl: prop.fetchImpl } });
-  check("Propuesta: bloque proposal pendiente + texto", "message" in t4 && t4.message.blocks.some((b) => b.type === "proposal" && b.status === "pending") && t4.message.blocks.some((b) => b.type === "text"));
+  const t4 = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: null, text: `${P} matricula a Ana y Beto en extintores`, ai: { key: "k", model: "m", fetchImpl: prop.fetchImpl } });
+  const proposalBlock = "message" in t4 ? t4.message.blocks.find((b) => b.type === "proposal") : undefined;
+  check("Propuesta: bloque proposal pendiente + texto", "message" in t4 && proposalBlock?.type === "proposal" && proposalBlock.status === "pending" && t4.message.blocks.some((b) => b.type === "text"));
   const p = prop.bodies[1] as { tools?: unknown[]; tool_choice?: string };
   check("Tras la propuesta, la IA ya no puede llamar herramientas", p.tool_choice === "none");
+  if ("message" in t4 && proposalBlock?.type === "proposal") {
+    const convP = getConversation(ids.teacher, t4.conversationId)!;
+    check("Turno con propuesta: exactamente usuario + asistente", convP.messages.length === 2 && convP.messages[1].id === t4.message.id && convP.messages[1].blocks.some((b) => b.type === "proposal"));
+    check("La propuesta cuelga del mensaje del asistente", getProposal(proposalBlock.proposalId)?.messageId === t4.message.id);
+  }
+
+  // Propuesta y otra llamada en la misma vuelta: la segunda no se ejecuta pero se contesta
+  const twoCalls = scripted([[call("c1", "matricular", { alumno_ids: [ids.s1, ids.s2], curso_id: ids.course }), call("c2", "buscar_curso", { texto: "x" })], [say("Revisa.")]]);
+  const t4b = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: turn.conversationId, text: "matricula y busca", ai: { key: "k", model: "m", fetchImpl: twoCalls.fetchImpl } });
+  const twoBody = twoCalls.bodies[1] as { input: { type?: string; call_id?: string; output?: string }[] };
+  check("Tras la propuesta, la llamada siguiente se contesta como no ejecutada", "message" in t4b && twoBody.input.some((i) => i.type === "function_call_output" && i.call_id === "c2" && (i.output ?? "").includes("no ejecutada")) && !t4b.message.blocks.some((b) => b.type === "text" && b.text.includes("x")));
 
   // Matrícula instantánea: el mensaje guarda el undo
   const inst = scripted([[call("c1", "matricular", { alumno_ids: [ids.s2], curso_id: ids.course })], [say("Listo.")]]);
@@ -371,10 +387,36 @@ async function agentChecks() {
   check("Instantánea: bloque result deshacible", "message" in t5 && t5.message.blocks.some((b) => b.type === "result" && b.undoable));
   check("…y el undo queda guardado en el mensaje", "message" in t5 && messageUndo(ids.teacher, turn.conversationId, t5.message.id)?.undo.tool === "matricular");
 
+  // Matrícula instantánea y luego la API falla: el deshacer sobrevive al error
+  unenrollStudent(ids.course, ids.s2, ids.teacher);
+  let n = 0;
+  const thenFail = (async () => {
+    n++;
+    if (n === 1) return new Response(JSON.stringify({ output: [call("c1", "matricular", { alumno_ids: [ids.s2], curso_id: ids.course })] }), { status: 200 });
+    return new Response("{}", { status: 500 });
+  }) as typeof fetch;
+  const t5b = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: turn.conversationId, text: "matricula a Beto otra vez", ai: { key: "k", model: "m", fetchImpl: thenFail } });
+  check("Instantánea + fallo de API: result deshacible y error reintentable", "message" in t5b && t5b.message.blocks.some((b) => b.type === "result" && b.undoable) && t5b.message.blocks.some((b) => b.type === "error" && b.retryable));
+  check("…y el undo se guarda aunque falle la API", "message" in t5b && messageUndo(ids.teacher, turn.conversationId, t5b.message.id)?.undo.tool === "matricular");
+  check("…y el historial recuerda la herramienta usada", recentModelText(turn.conversationId, 1)[0]?.text.includes("[usó: matricular]"));
+
   // Tope de vueltas
   const loop = scripted([[call("c1", "buscar_curso", { texto: "x" })]]);
   const t6 = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: turn.conversationId, text: "bucle", ai: { key: "k", model: "m", fetchImpl: loop.fetchImpl } });
-  check("Tope de 6 vueltas: termina y no se queda en bucle", "message" in t6 && loop.calls() <= 7 && t6.message.blocks.length > 0);
+  const lastBody = loop.bodies[loop.bodies.length - 1] as { tool_choice?: string; input: { role?: string; content?: string }[] };
+  check("Tope de 6 vueltas: 7 llamadas y termina", "message" in t6 && loop.calls() === 7 && t6.message.blocks.length > 0);
+  check("Última vuelta: sin herramientas y aviso como system", lastBody.tool_choice === "none" && lastBody.input.some((i) => i.role === "system" && (i.content ?? "").includes("Ya no puedes")));
+
+  // Argumentos que no son objeto: no revienta y responde a la IA
+  const badArgs = scripted([[call("c1", "buscar_curso", "\"texto\"")], [say("Necesito el nombre del curso.")]]);
+  const t6b = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: turn.conversationId, text: "busca", ai: { key: "k", model: "m", fetchImpl: badArgs.fetchImpl } });
+  const badBody = badArgs.bodies[1] as { input: { type?: string; call_id?: string }[] };
+  check("Args no objeto: se contesta la llamada y termina con texto", "message" in t6b && badBody.input.some((i) => i.type === "function_call_output" && i.call_id === "c1") && t6b.message.blocks.some((b) => b.type === "text"));
+
+  // Rol no admitido: ni toca la base
+  const student: SessionUser = { id: ids.s1, email: "", fullName: "Ana", role: "student" };
+  const denied = await runTurn({ user: student, scope: ownScope(student), route: "/", conversationId: null, text: `${P} hola`, ai: { key: "k", model: "m", fetchImpl: loop.fetchImpl } });
+  check("Alumno: error sin crear conversación", "error" in denied && denied.error.includes("solo para maestros") && listConversations(ids.s1).length === 0 && loop.calls() === 7);
 
   // Error de la API
   const failing = (async () => new Response("{}", { status: 500 })) as typeof fetch;

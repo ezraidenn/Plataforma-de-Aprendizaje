@@ -20,6 +20,8 @@ export type ToolCtx = {
   /** Ruta donde está el usuario */
   route: string;
   conversationId: string;
+  /** Mensaje del asistente de este turno (ancla de propuestas) */
+  messageId: string;
 };
 
 /** Cómo revertir una acción instantánea: la herramienta y los parámetros para su `undo`. */

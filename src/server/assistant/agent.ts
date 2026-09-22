@@ -2,7 +2,7 @@ import "server-only";
 import type { SessionUser } from "@/server/auth/sessions";
 import { actingOwnerId, type ViewScope } from "@/server/auth/view-scope";
 import { requestWithTools, MalformedAiResponse, type AiOpts, type ChatItem, type ToolDef } from "@/server/services/ai-client";
-import { appendMessage, createConversation, getConversation, recentModelText } from "@/server/services/ai-conversations";
+import { appendMessage, createConversation, getConversation, recentModelText, updateMessage } from "@/server/services/ai-conversations";
 import type { AssistantBlock, AssistantMessage } from "@/lib/assistant-blocks";
 import { getProposal } from "./proposal-store";
 import { toolByName, toolDefsForRole } from "./registry";
@@ -41,6 +41,8 @@ function proposalBlock(proposalId: string): AssistantBlock | null {
 export async function runTurn(input: TurnInput): Promise<TurnOutput> {
   const text = input.text.trim();
   if (!text) return { error: "Escribe algo para empezar." };
+  const role = input.user.role;
+  if (role !== "admin" && role !== "teacher") return { error: "El asistente es solo para maestros y administradores." };
 
   let conversationId = input.conversationId;
   if (conversationId && !getConversation(input.user.id, conversationId)) conversationId = null;
@@ -49,6 +51,8 @@ export async function runTurn(input: TurnInput): Promise<TurnOutput> {
   // Historial corto ANTES de guardar el mensaje nuevo (para no duplicarlo)
   const history = recentModelText(conversationId, HISTORY_MESSAGES);
   const userMessage = appendMessage(conversationId, "user", [{ type: "text", text }], text);
+  // El mensaje del asistente nace vacío: las propuestas cuelgan de él y se rellena al final
+  const reply = appendMessage(conversationId, "assistant", [], "");
 
   const ctx: ToolCtx = {
     user: input.user,
@@ -56,8 +60,8 @@ export async function runTurn(input: TurnInput): Promise<TurnOutput> {
     actingOwnerId: actingOwnerId(input.scope, input.user),
     route: input.route,
     conversationId,
+    messageId: reply.id,
   };
-  const role = input.user.role === "admin" ? "admin" : "teacher";
   const tools: ToolDef[] = toolDefsForRole(role);
 
   const items: ChatItem[] = [
@@ -75,7 +79,7 @@ export async function runTurn(input: TurnInput): Promise<TurnOutput> {
   try {
     for (let round = 0; round <= MAX_ROUNDS; round++) {
       if (round === MAX_ROUNDS) {
-        items.push({ role: "user", content: "Ya no puedes usar más herramientas en este turno: resume lo que encontraste y termina." });
+        items.push({ role: "system", content: "Ya no puedes usar más herramientas en este turno: resume lo que encontraste y termina." });
       }
       const noTools = round === MAX_ROUNDS || proposalCreated;
       const activeTools = noTools ? [] : tools;
@@ -91,7 +95,10 @@ export async function runTurn(input: TurnInput): Promise<TurnOutput> {
         items.push({ type: "function_call", call_id: call.callId, name: call.name, arguments: JSON.stringify(call.args ?? {}) });
         const tool = toolByName(call.name);
         let output: string;
-        if (!tool || !tool.roles.includes(role)) {
+        if (proposalCreated) {
+          // Con una propuesta pendiente no se ejecuta nada más; se contesta para que el historial quede completo
+          output = "no ejecutada: ya hay una propuesta pendiente";
+        } else if (!tool || !tool.roles.includes(role)) {
           output = `La herramienta «${call.name}» no existe o no está disponible para este usuario.`;
         } else {
           try {
@@ -116,15 +123,20 @@ export async function runTurn(input: TurnInput): Promise<TurnOutput> {
       }
     }
   } catch (err) {
+    // Lo que las herramientas ya hicieron (y su deshacer) se conserva junto al error
     const message = err instanceof Error ? err.message : "La IA no respondió.";
-    const saved = appendMessage(conversationId, "assistant", [...blocks, { type: "error", text: message, retryable: true }], "");
-    return { conversationId, userMessage, message: saved };
+    blocks.push({ type: "error", text: message, retryable: true });
+    return { conversationId, userMessage, message: finish(reply, blocks, null, usedTools, undo) };
   }
 
   if (finalText) blocks.push({ type: "text", text: finalText });
   if (blocks.length === 0) blocks.push({ type: "error", text: "No obtuve una respuesta. Intenta de nuevo.", retryable: true });
+  return { conversationId, userMessage, message: finish(reply, blocks, finalText, usedTools, undo) };
+}
 
+/** Rellena el mensaje del asistente y lo devuelve tal como quedó. */
+function finish(reply: AssistantMessage, blocks: AssistantBlock[], finalText: string | null, usedTools: string[], undo: ToolResult["undo"]): AssistantMessage {
   const modelText = [finalText ?? "", usedTools.length ? `[usó: ${[...new Set(usedTools)].join(", ")}]` : ""].filter(Boolean).join(" ");
-  const message = appendMessage(conversationId, "assistant", blocks, modelText, undo);
-  return { conversationId, userMessage, message };
+  updateMessage(reply.id, blocks, modelText, undo);
+  return { ...reply, blocks };
 }

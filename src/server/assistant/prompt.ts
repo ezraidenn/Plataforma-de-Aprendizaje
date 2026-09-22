@@ -14,7 +14,7 @@ export function systemPrompt(opts: { user: SessionUser; scope: ViewScope; route:
     scope.kind === "all"
       ? "Contexto: General, ve todos los cursos y maestros."
       : scope.kind === "teacher"
-        ? `Contexto: está viendo como el maestro ${ownerNameOf(scope) ?? ""}; lo que se cree queda a nombre de ese maestro.`
+        ? `Contexto: está viendo como el maestro ${ownerNameOf(scope) ?? "otro maestro"}; lo que se cree queda a nombre de ese maestro.`
         : "Contexto: Mi contenido (sus propios cursos y alumnos).";
   return [
     `Eres el asistente de una plataforma de capacitación. Hablas con ${user.fullName}, ${role}. Fecha: ${DATE.format(opts.now ?? new Date())}. Página actual: ${route}.`,
