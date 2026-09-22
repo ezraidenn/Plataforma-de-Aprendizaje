@@ -32,15 +32,15 @@ export const ADMIN_GUIDE: RoleGuide = {
           ui: ["Activo", "Inactivo"],
         },
         {
-          title: "Eliminar definitivamente",
-          text: "Para cuentas creadas por error o de prueba: borra la cuenta con sus inscripciones, progreso, intentos y entregas. Pide dos confirmaciones (ver qué se borra y escribir su correo). No se puede con quien tiene certificados emitidos (son registros históricos: desactívala) ni con dueños de cursos o plantillas (reasígnalos antes).",
-          ui: ["Eliminar definitivamente"],
-        },
-        {
           title: "Permiso de identidad",
           text: "A un maestro de confianza puedes activarle «Puede editar identidad» para que cambie logo, nombre y portada desde sus Ajustes. Aparece la etiqueta «Identidad» junto a su rol.",
           scene: "admin-usuarios-4",
           ui: ["Identidad"],
+        },
+        {
+          title: "Eliminar definitivamente",
+          text: "Para cuentas creadas por error o de prueba: borra la cuenta con sus inscripciones, progreso, intentos y entregas. Pide dos confirmaciones (ver qué se borra y escribir su correo). No se puede con quien tiene certificados emitidos (son registros históricos: desactívala) ni con dueños de cursos o plantillas (reasígnalos antes).",
+          ui: ["Eliminar definitivamente"],
         },
       ],
     },
