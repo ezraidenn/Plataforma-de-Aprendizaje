@@ -16,6 +16,7 @@
  *
  * Los archivos (storage/) no se tocan: la tabla `files` se copia tal cual.
  */
+require("./lib/load-env.cjs");
 const Database = require("better-sqlite3");
 const fs = require("node:fs");
 const path = require("node:path");

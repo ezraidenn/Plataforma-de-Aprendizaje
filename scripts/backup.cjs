@@ -12,6 +12,7 @@
  *
  * Programar diario (Programador de tareas de Windows) — ver INSTALACION.md.
  */
+require("./lib/load-env.cjs");
 const Database = require("better-sqlite3");
 const fs = require("node:fs");
 const path = require("node:path");
