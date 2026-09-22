@@ -259,6 +259,27 @@ export function setCohortStatus(id: string, status: "open" | "closed", actorId: 
 }
 
 /**
+ * Borra el grupo para siempre. Sus matrículas NO se borran: quedan en el curso
+ * sin grupo (la base las pone en null por su `onDelete: "set null"`).
+ */
+export function deleteCohort(id: string, actorId: string) {
+  const cohort = getCohort(id);
+  if (!cohort) throw new Error("El grupo no existe");
+  const enrollmentCount =
+    db
+      .select({ n: sql<number>`COUNT(*)` })
+      .from(enrollments)
+      .where(eq(enrollments.cohortId, id))
+      .get()?.n ?? 0;
+  db.delete(cohorts).where(eq(cohorts.id, id)).run();
+  audit(actorId, "delete_cohort", "cohorts", id, {
+    name: cohort.name,
+    courseId: cohort.courseId,
+    enrollmentCount,
+  });
+}
+
+/**
  * Mueve matrículas a un grupo (o las deja sin grupo con `null`). Solo se
  * mueven las matrículas del MISMO curso que el grupo.
  */

@@ -25,7 +25,9 @@ import {
   getOwnedCourse,
   restoreEnrollments,
   listDroppedEnrollments,
+  purgeDroppedEnrollments,
 } from "@/server/services/courses";
+import { isDeleteConfirmed } from "@/lib/delete-confirm";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -270,6 +272,31 @@ export async function enrollStudentInCoursesAction(
 export type RestoreEnrollmentsResult = { ok: true; count: number } | { error: string };
 
 /** Saca de la papelera: el alumno recupera su estatus (aprobado vuelve aprobado). */
+/**
+ * Elimina para siempre bajas de la papelera (segunda confirmación: escribir
+ * ELIMINAR). Las que tienen certificado se quedan en la papelera.
+ */
+export async function purgeEnrollmentsAction(
+  courseId: string,
+  enrollmentIds: string[],
+  confirmWord: string
+): Promise<{ ok: true; deleted: number; keptWithCertificate: number } | { error: string }> {
+  const user = await requireTeacher();
+  const course = getOwnedCourse(courseId, user);
+  if (!course) return { error: "No encontramos este curso o no te pertenece" };
+  if (enrollmentIds.length === 0) return { error: "Selecciona al menos un estudiante" };
+  if (!isDeleteConfirmed(confirmWord)) return { error: "Escribe ELIMINAR para confirmar" };
+  try {
+    const result = purgeDroppedEnrollments(courseId, enrollmentIds);
+    audit(user.id, "purge_enrollments", "enrollments", courseId, result);
+    revalidatePath(`/teach/courses/${courseId}/students`);
+    revalidatePath("/teach/students");
+    return { ok: true, ...result };
+  } catch {
+    return { error: "No se pudo eliminar. Intenta de nuevo." };
+  }
+}
+
 export async function restoreEnrollmentsAction(
   courseId: string,
   enrollmentIds: string[]
