@@ -9,6 +9,10 @@ import {
   adminResetPassword,
   adminSetActive,
   adminSetCanEditBranding,
+  adminDeleteUser,
+  adminDeleteUserImpact,
+  adminUpdateUser,
+  type DeleteUserImpact,
   type Role,
 } from "@/server/services/admin";
 
@@ -60,13 +64,78 @@ export async function adminCreateUserAction(input: {
   }
 }
 
-export type AdminResetPasswordResult = { ok: true; password: string } | { error: string };
+export type AdminUpdateUserResult = { ok: true } | { error: string };
 
-/** Genera y asigna una contraseña temporal; se muestra UNA sola vez. Cierra las sesiones del usuario. */
-export async function adminResetPasswordAction(userId: string): Promise<AdminResetPasswordResult> {
+/** Corrige nombre y correo de una cuenta (el correo es con el que inicia sesión). */
+export async function adminUpdateUserAction(
+  userId: string,
+  input: { fullName: string; email: string }
+): Promise<AdminUpdateUserResult> {
+  const actor = await requireAdmin();
+
+  const fullName = input.fullName?.trim();
+  const email = input.email?.trim().toLowerCase();
+  if (!fullName) return { error: "Escribe el nombre de la persona" };
+  if (!email || !EMAIL_RE.test(email)) return { error: "El correo no es válido" };
+
+  try {
+    adminUpdateUser(actor.id, userId, { fullName, email });
+    revalidatePath("/admin/users");
+    // Si es la propia cuenta, el nombre aparece en el shell (header/menú) de todas las rutas
+    if (userId === actor.id) revalidatePath("/", "layout");
+    return { ok: true };
+  } catch (err) {
+    return { error: errorMessage(err, "No se pudieron guardar los datos. Intenta de nuevo.") };
+  }
+}
+
+/** Primera confirmación del borrado: qué se perdería y qué lo impide. */
+export async function adminDeleteUserPreviewAction(
+  userId: string
+): Promise<{ ok: true; impact: DeleteUserImpact } | { error: string }> {
   const actor = await requireAdmin();
   try {
-    const password = generateTempPassword();
+    return { ok: true, impact: adminDeleteUserImpact(actor.id, userId) };
+  } catch (err) {
+    return { error: errorMessage(err, "No se pudo revisar la cuenta. Intenta de nuevo.") };
+  }
+}
+
+/**
+ * Segunda confirmación: el admin escribe el correo de la cuenta. Se vuelve a
+ * comprobar aquí, no solo en el navegador.
+ */
+export async function adminDeleteUserAction(
+  userId: string,
+  confirmEmail: string
+): Promise<{ ok: true } | { error: string }> {
+  const actor = await requireAdmin();
+  try {
+    adminDeleteUser(actor.id, userId, confirmEmail);
+    revalidatePath("/admin/users");
+    revalidatePath("/admin/settings");
+    return { ok: true };
+  } catch (err) {
+    return { error: errorMessage(err, "No se pudo eliminar la cuenta. Intenta de nuevo.") };
+  }
+}
+
+export type AdminResetPasswordResult = { ok: true; password: string } | { error: string };
+
+/**
+ * Asigna la contraseña que escribió el admin o, si no escribió ninguna, una
+ * temporal; se muestra UNA sola vez. Cierra las sesiones del usuario.
+ */
+export async function adminResetPasswordAction(
+  userId: string,
+  chosenPassword?: string
+): Promise<AdminResetPasswordResult> {
+  const actor = await requireAdmin();
+  if (chosenPassword && chosenPassword.length < 8) {
+    return { error: "La contraseña debe tener al menos 8 caracteres" };
+  }
+  try {
+    const password = chosenPassword || generateTempPassword();
     await adminResetPassword(actor.id, userId, password);
     revalidatePath("/admin/users");
     return { ok: true, password };

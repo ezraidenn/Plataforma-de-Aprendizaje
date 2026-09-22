@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { BookPlus, Check, Copy, Loader2, Plus, RefreshCw, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
+import { copyToClipboard } from "@/lib/clipboard";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -52,11 +53,10 @@ export function NewStudentDialog({ urlTrigger = false }: { urlTrigger?: boolean 
   }
 
   async function copyText(text: string) {
-    try {
-      await navigator.clipboard.writeText(text);
+    if (await copyToClipboard(text)) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch {
+    } else {
       toast.error("No se pudo copiar. Copia el texto manualmente.");
     }
   }

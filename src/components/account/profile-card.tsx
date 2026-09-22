@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, UserRound } from "lucide-react";
 import { toast } from "sonner";
-import { updateOwnNameAction } from "@/server/actions/account";
+import { updateOwnEmailAction, updateOwnNameAction } from "@/server/actions/account";
 import { RoleBadge } from "@/components/admin/role-badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -28,22 +28,41 @@ export function ProfileCard({
   className?: string;
 }) {
   const router = useRouter();
+  // Nombre y correo: maestro/admin los editan; al estudiante se los administra su instructor
   const canEditName = profile.role !== "student";
   const [name, setName] = useState(profile.fullName);
+  const [email, setEmail] = useState(profile.email);
+  const [currentPassword, setCurrentPassword] = useState("");
   const [saving, startSaving] = useTransition();
   const trimmed = name.trim().replace(/\s+/g, " ");
-  const dirty = trimmed !== profile.fullName;
+  const normalizedEmail = email.trim().toLowerCase();
+  const nameDirty = trimmed !== profile.fullName;
+  const emailDirty = normalizedEmail !== profile.email;
+  const dirty = nameDirty || emailDirty;
 
   function save(e: React.FormEvent) {
     e.preventDefault();
     if (!dirty) return;
     startSaving(async () => {
-      const result = await updateOwnNameAction(trimmed);
-      if ("error" in result) {
-        toast.error(result.error);
-        return;
+      if (nameDirty) {
+        const result = await updateOwnNameAction(trimmed);
+        if ("error" in result) {
+          toast.error(result.error);
+          return;
+        }
+        toast.success("Nombre actualizado");
       }
-      toast.success("Nombre actualizado");
+      if (emailDirty) {
+        const result = await updateOwnEmailAction({ email: normalizedEmail, currentPassword });
+        if ("error" in result) {
+          toast.error(result.error);
+          if (nameDirty) router.refresh();
+          return;
+        }
+        setEmail(normalizedEmail);
+        setCurrentPassword("");
+        toast.success("Correo actualizado: úsalo la próxima vez que inicies sesión");
+      }
       router.refresh();
     });
   }
@@ -103,15 +122,48 @@ export function ProfileCard({
                 className="h-11"
               />
             </div>
-            {emailField}
+            <div className="space-y-2">
+              <Label htmlFor="profile-email">Correo</Label>
+              <Input
+                id="profile-email"
+                type="email"
+                value={email}
+                maxLength={120}
+                autoComplete="email"
+                onChange={(e) => setEmail(e.target.value)}
+                className="h-11"
+              />
+            </div>
+            {emailDirty && (
+              <div className="space-y-2 sm:col-span-2">
+                <Label htmlFor="profile-email-password">Tu contraseña actual</Label>
+                <Input
+                  id="profile-email-password"
+                  type="password"
+                  value={currentPassword}
+                  autoComplete="current-password"
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  className="h-11 sm:max-w-sm"
+                />
+                <p className="text-xs text-muted-foreground">
+                  El correo es con el que inicias sesión: confírmalo con tu contraseña.
+                </p>
+              </div>
+            )}
             <div className="sm:col-span-2">
               <Button
                 type="submit"
                 className="h-11 bg-section text-white hover:bg-section-strong"
-                disabled={saving || !dirty || trimmed.length < 3}
+                disabled={
+                  saving ||
+                  !dirty ||
+                  trimmed.length < 3 ||
+                  !normalizedEmail ||
+                  (emailDirty && !currentPassword)
+                }
               >
                 {saving && <Loader2 className="size-4 animate-spin" aria-hidden />}
-                Guardar nombre
+                Guardar cambios
               </Button>
             </div>
           </form>

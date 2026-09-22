@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Check, Copy, EllipsisVertical, KeyRound, TriangleAlert, UserRoundCheck, UserRoundX } from "lucide-react";
 import { toast } from "sonner";
+import { copyToClipboard } from "@/lib/clipboard";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -85,11 +86,10 @@ export function StudentActions({
 
   async function copyPassword() {
     if (!newPassword) return;
-    try {
-      await navigator.clipboard.writeText(newPassword);
+    if (await copyToClipboard(newPassword)) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch {
+    } else {
       toast.error("No se pudo copiar. Copia el texto manualmente.");
     }
   }
