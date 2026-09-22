@@ -114,7 +114,7 @@ function standardFontsDir(): string {
 }
 
 /** Convierte con LibreOffice y devuelve las rutas de salida generadas. */
-async function soffice(input: string, filter: string, outDir: string): Promise<string[]> {
+export async function soffice(input: string, filter: string, outDir: string): Promise<string[]> {
   const bin = process.env.SOFFICE_PATH ?? "soffice";
   try {
     await execFileAsync(bin, ["--headless", "--norestore", "--convert-to", filter, "--outdir", outDir, input], {

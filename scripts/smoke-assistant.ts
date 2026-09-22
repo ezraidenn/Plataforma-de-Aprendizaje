@@ -37,6 +37,20 @@ import {
   summaryForModel,
   type AttachmentSummary,
 } from "../src/lib/attachment-summary";
+import { readSheetRows } from "../src/server/services/sheet-colors";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { existsSync } from "node:fs";
+import fsp from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
+const execFileAsync = promisify(execFile);
+
+// LibreOffice: el de .env o el de la instalación estándar de Windows
+const SOFFICE_DEFAULT = "C:/Program Files/LibreOffice/program/soffice.exe";
+if (!process.env.SOFFICE_PATH && existsSync(SOFFICE_DEFAULT)) process.env.SOFFICE_PATH = SOFFICE_DEFAULT;
+const HAS_SOFFICE = !!process.env.SOFFICE_PATH && existsSync(process.env.SOFFICE_PATH);
 
 let failures = 0;
 function check(name: string, cond: boolean, detail?: unknown) {
@@ -534,10 +548,63 @@ function attachmentSummaryChecks() {
   check("Un archivo enorme no desborda el resumen", summaryForModel(largo).length <= MAX_SUMMARY_CHARS, summaryForModel(largo).length);
 }
 
+const FODS = `<?xml version="1.0" encoding="UTF-8"?>
+<office:document xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.3" office:mimetype="application/vnd.oasis.opendocument.spreadsheet">
+<office:automatic-styles>
+<style:style style:name="rojo" style:family="table-cell"><style:table-cell-properties fo:background-color="#ff0000"/></style:style>
+<style:style style:name="verde" style:family="table-cell"><style:table-cell-properties fo:background-color="#00b050"/></style:style>
+</office:automatic-styles>
+<office:body><office:spreadsheet><table:table table:name="Turno A">
+<table:table-row><table:table-cell office:value-type="string"><text:p>Nombre</text:p></table:table-cell><table:table-cell office:value-type="string"><text:p>Correo</text:p></table:table-cell></table:table-row>
+<table:table-row><table:table-cell office:value-type="string"><text:p>Ana Lopez</text:p></table:table-cell><table:table-cell office:value-type="string"><text:p>ana@x.com</text:p></table:table-cell></table:table-row>
+<table:table-row><table:table-cell table:style-name="rojo" office:value-type="string"><text:p>Beto Ruiz</text:p></table:table-cell><table:table-cell table:style-name="rojo" office:value-type="string"><text:p>beto@x.com</text:p></table:table-cell></table:table-row>
+<table:table-row><table:table-cell table:style-name="verde" office:value-type="string"><text:p>Carla &amp; Diaz</text:p></table:table-cell><table:table-cell office:value-type="string"><text:p>carla@x.com</text:p></table:table-cell></table:table-row>
+</table:table>
+<table:table table:name="Turno B">
+<table:table-row><table:table-cell office:value-type="string"><text:p>Nombre</text:p></table:table-cell><table:table-cell office:value-type="string"><text:p>Correo</text:p></table:table-cell></table:table-row>
+<table:table-row><table:table-cell office:value-type="string"><text:p>Dani Mora</text:p></table:table-cell><table:table-cell office:value-type="string"><text:p>dani@x.com</text:p></table:table-cell></table:table-row>
+</table:table></office:spreadsheet></office:body></office:document>`;
+
+/** Hoja de prueba con filas pintadas: se arma con LibreOffice, sin binarios en el repo. */
+async function makeColoredXlsx(): Promise<Buffer | null> {
+  if (!HAS_SOFFICE) return null;
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "zasst-hoja-"));
+  try {
+    const fods = path.join(dir, "prueba.fods");
+    await fsp.writeFile(fods, FODS, "utf8");
+    await execFileAsync(process.env.SOFFICE_PATH!, ["--headless", "--convert-to", "xlsx", "--outdir", dir, fods], { timeout: 120_000 });
+    return await fsp.readFile(path.join(dir, "prueba.xlsx"));
+  } finally {
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+}
+
+async function sheetColorChecks() {
+  console.log("\n— Filas y colores de la hoja");
+  const bytes = await makeColoredXlsx();
+  if (!bytes) {
+    console.log("  (sin LibreOffice: se omite)");
+    return;
+  }
+  const sheets = await readSheetRows(bytes, "prueba.xlsx");
+  check("Dos hojas con sus nombres", sheets.length === 2 && sheets[0].name === "Turno A" && sheets[1].name === "Turno B", sheets.map((s) => s.name));
+  const rows = sheets[0]?.rows ?? [];
+  check("Cuatro filas (con encabezado)", rows.length === 4, rows.length);
+  check("Texto de las celdas", rows[1]?.cells.join("|") === "Ana Lopez|ana@x.com", rows[1]?.cells);
+  check("Entidades HTML decodificadas", rows[3]?.cells[0] === "Carla & Diaz", rows[3]?.cells[0]);
+  check("Fila sin pintar: sin color", rows[1]?.color === null);
+  check("Fila roja", rows[2]?.color === "rojo");
+  check("Fila verde (basta una celda pintada)", rows[3]?.color === "verde");
+  check("El encabezado no se pinta", rows[0]?.color === null);
+  const otra = sheets[1]?.rows ?? [];
+  check("La segunda hoja trae sus propias filas", otra.length === 2 && otra[1]?.cells.join("|") === "Dani Mora|dani@x.com", otra.map((r) => r.cells));
+}
+
 async function main() {
   placeholderChecks();
   await clientChecks();
   attachmentSummaryChecks();
+  await sheetColorChecks();
   setup();
   try {
     await catalogChecks();
