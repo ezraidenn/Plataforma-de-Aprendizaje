@@ -9,13 +9,13 @@ import { resumenCurso } from "./tools/resumen-curso";
 import { matricular, desmatricular } from "./tools/matricular";
 import { altaAlumnos } from "./tools/alta-alumnos";
 import { bajaAlumnos } from "./tools/baja-alumnos";
+import { crearCursos } from "./tools/crear-cursos";
 
 /** Catálogo completo. Lo que la IA no ve aquí, no existe para ella. */
-const ALL: AssistantTool[] = [irA, buscarAlumno, buscarCurso, fichaAlumno, resumenCurso, matricular, desmatricular, altaAlumnos, bajaAlumnos];
+const ALL: AssistantTool[] = [irA, buscarAlumno, buscarCurso, fichaAlumno, resumenCurso, matricular, desmatricular, altaAlumnos, bajaAlumnos, crearCursos];
 
 /** Capacidades previstas que aún no existen: la IA responde «aún no puedo». */
 export const NOT_YET = [
-  "crear cursos",
   "consultas de movimientos, pendientes o certificados",
   "descargar certificados o CSV",
   "grupos, recordatorios, reportes, plantillas de diploma",

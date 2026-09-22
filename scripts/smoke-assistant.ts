@@ -40,6 +40,7 @@ import {
 import { readSheetRows } from "../src/server/services/sheet-colors";
 import { summarizeAttachment } from "../src/server/services/attachment-intake";
 import { peopleRows, headerIndex } from "../src/server/assistant/rows-from-attachment";
+import { toCourseDrafts } from "../src/server/services/ai-course-import";
 import { resolveUploadMime } from "../src/lib/upload-types";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -489,6 +490,50 @@ async function altaAlumnosChecks() {
   }
 }
 
+async function crearCursosChecks() {
+  console.log("\n— Crear cursos en lote");
+  const user = { ...teacherUser, id: ids.teacher };
+  const conv = createConversation(ids.teacher, `${P} cursos`);
+  const anchor = appendMessage(conv.id, "assistant", [], "");
+  const ctx = { ...ctxFor(user, ownScope(user)), conversationId: conv.id, messageId: anchor.id };
+
+  const drafts = toCourseDrafts({
+    courses: [
+      { title: `${P} Alturas`, description: "Trabajos en altura", validity_months: 24 },
+      { title: "  ", description: "sin título", validity_months: 0 },
+      { title: `${P} Montacargas`, description: "", validity_months: 0 },
+    ],
+  });
+  check("Conversión: tres borradores", drafts.length === 3, drafts.length);
+  check("Vigencia en meses", drafts[0].validityMonths === 24);
+  check("Sin vigencia: vitalicio", drafts[2].validityMonths === null);
+
+  const result = await toolByName("crear_cursos")!.run(
+    { origen: "texto", texto: `Titulo,Descripcion,Vigencia\n${P} Alturas,Trabajos en altura,24\n${P} Montacargas,,\n,,12`, hoja: "" },
+    ctx
+  );
+  check("Crea la propuesta", typeof result.proposalId === "string", result.forModel);
+  const proposal = getProposal(result.proposalId!)!;
+  check("Tres filas", proposal.rows.length === 3, proposal.rows);
+  check("Fila sin título: bloqueada", proposal.rows[2].blocked === true, proposal.rows[2]);
+  check("Columnas editables", proposal.draft.columns.every((c) => c.editable !== false));
+
+  const applied = await applyProposal(result.proposalId!, proposal.rows, ctx, "");
+  check("Se crean dos", "text" in applied && applied.text.includes("2"), applied);
+  const creados = db.select().from(coursesTable).where(like(coursesTable.title, `${P} %`)).all();
+  const alturas = creados.find((c) => c.title.includes("Alturas"));
+  const monta = creados.find((c) => c.title.includes("Montacargas"));
+  check("Nacen en borrador y a nombre del maestro", !!alturas && alturas!.status === "draft" && alturas!.ownerId === ids.teacher, alturas && [alturas.status, alturas.ownerId]);
+  check("Guarda la vigencia en meses", alturas?.validityMonths === 24, alturas?.validityMonths);
+  check("Sin vigencia queda como el resto de cursos nuevos", !!monta && monta!.validityMonths === null, monta?.validityMonths);
+  check("Auditoría", db.select().from(auditLog).where(eq(auditLog.action, "assistant_crear_cursos")).get() !== undefined);
+
+  // Título repetido
+  const repetido = await toolByName("crear_cursos")!.run({ origen: "texto", texto: `Titulo,Descripcion\n${P} Alturas,otra vez`, hoja: "" }, ctx);
+  const pRep = getProposal(repetido.proposalId!)!;
+  check("Título que ya existe: bloqueado", pRep.rows[0].blocked === true && (pRep.rows[0].warning ?? "").toLowerCase().includes("ya"), pRep.rows[0]);
+}
+
 async function bajaAlumnosChecks() {
   console.log("\n— Baja de alumnos");
   const user = { ...teacherUser, id: ids.teacher };
@@ -934,6 +979,7 @@ async function main() {
     await confirmWordChecks();
     await altaAlumnosChecks();
     await agentChecks();
+    await crearCursosChecks();
     // Al final: borrar a Dora dejaría sin alumno a las demás secciones
     await bajaAlumnosChecks();
   } finally {
