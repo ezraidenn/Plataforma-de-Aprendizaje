@@ -42,6 +42,7 @@ const AUDIT_ACTION_LABEL: Record<string, string> = {
   deactivate_user: "Desactivó una cuenta",
   change_role: "Cambió un rol",
   reassign_course: "Reasignó un curso",
+  issue_certificate: "Se emitió un certificado",
   archive_course: "Archivó un curso",
   retry_job: "Reintentó un trabajo",
   import_csv: "Importó estudiantes por CSV",

@@ -16,6 +16,7 @@ import {
   users,
 } from "@/server/db/schema";
 import { getFileRecord, absolutePathFor } from "./storage";
+import { audit } from "./audit";
 import { appUrl } from "./app-url";
 import { computeExpiry } from "@/lib/validity";
 import { notify } from "./notifications";
@@ -626,6 +627,17 @@ export async function issueCertificate(enrollmentId: string): Promise<Certificat
     folio,
     courseId: course.id,
     courseTitle: course.title,
+  });
+
+  // El certificado es el documento que la empresa enseña a una auditoría: su
+  // emisión tiene que dejar rastro. La emite el sistema al completarse el
+  // curso, así que no hay un usuario detrás (userId = null).
+  audit(null, "issue_certificate", "certificates", id, {
+    folio,
+    courseId: course.id,
+    courseTitle: course.title,
+    studentId: enrollment.studentId,
+    studentName: student.fullName,
   });
 
   return db.select().from(certificates).where(eq(certificates.id, id)).get()!;
