@@ -10,7 +10,7 @@ import { placeholderFor } from "../src/lib/assistant-placeholder";
 import { dateRange } from "../src/lib/assistant-dates";
 import type { AssistantBlock } from "../src/lib/assistant-blocks";
 import { requestWithTools, type ChatItem, type ToolDef } from "../src/server/services/ai-client";
-import { and, eq, inArray, like, or } from "drizzle-orm";
+import { and, desc, eq, inArray, like, or } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { db } from "../src/server/db";
 import {
@@ -20,6 +20,7 @@ import {
   assignmentSubmissions,
   auditLog,
   certificates,
+  certificateTemplates,
   courseItems,
   courses as coursesTable,
   enrollments,
@@ -32,6 +33,7 @@ import {
   users,
 } from "../src/server/db/schema";
 import { createCourse, enrollStudents, setStudentActive, unenrollStudent } from "../src/server/services/courses";
+import { createTemplate } from "../src/server/services/certificates";
 import { createItem, getItem } from "../src/server/services/tree";
 import { listQuestions } from "../src/server/services/exams";
 import { detectFormat } from "../src/lib/excel-formats";
@@ -257,9 +259,14 @@ const ids = {
   a1: nanoid(),
   a2: nanoid(),
   a3: nanoid(),
+  // Maestro de otra cuenta: su plantilla de diploma no debe poder usarse
+  otroMaestro: nanoid(),
   course: "",
   grupoCourse: "",
   avisoCourse: "",
+  // Entrega 5: un curso con tareas y examen y otro sin contenido
+  e5Course: "",
+  e5Vacio: "",
 };
 
 function makeUser(id: string, key: string, name: string, role: "teacher" | "admin" | "student", createdBy: string | null) {
@@ -347,6 +354,8 @@ async function cleanup() {
     db.delete(certificates).where(inArray(certificates.studentId, userIds)).run();
     // Los avisos que mandaron las pruebas (la campana de los alumnos zasst)
     db.delete(notifications).where(inArray(notifications.userId, userIds)).run();
+    // Plantillas de diploma de las pruebas: su dueño es una cuenta zasst y esa FK no borra en cascada
+    db.delete(certificateTemplates).where(inArray(certificateTemplates.ownerId, userIds)).run();
     for (const id of userIds) db.delete(users).where(eq(users.id, id)).run();
   });
 }
@@ -2444,6 +2453,302 @@ async function avisarChecks() {
   check("Curso ajeno: negado y sin propuesta", !cursoAjeno.proposalId && cursoAjeno.forModel.includes("no te pertenece"), cursoAjeno.forModel);
 }
 
+/** Fecha límite guardada de una tarea (lo que lee la pantalla del alumno). */
+function fechaDe(itemId: string): Date | null {
+  return db.select({ dueAt: itemAssignments.dueAt }).from(itemAssignments).where(eq(itemAssignments.itemId, itemId)).get()?.dueAt ?? null;
+}
+
+/** «2026-10-15» de una fecha, que es como la escribe el usuario. */
+function isoDe(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** Último instante de ese día: es donde debe quedar toda fecha límite. */
+function finDelDia(d: Date): number {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999).getTime();
+}
+
+const enDias = (n: number) => new Date(Date.now() + n * 86_400_000);
+
+/** Estado de un curso, leído de la base. */
+function estadoDe(courseId: string): string | undefined {
+  return db.select({ status: coursesTable.status }).from(coursesTable).where(eq(coursesTable.id, courseId)).get()?.status;
+}
+
+/** Plantilla de diploma que tiene puesta un curso. */
+function diplomaDe(courseId: string): string | null {
+  return db.select({ t: coursesTable.certificateTemplateId }).from(coursesTable).where(eq(coursesTable.id, courseId)).get()?.t ?? null;
+}
+
+function hayAuditoria(action: string, entityId: string): boolean {
+  return db.select().from(auditLog).where(and(eq(auditLog.action, action), eq(auditLog.entityId, entityId))).get() !== undefined;
+}
+
+async function recertificarChecks() {
+  console.log("\n— Recertificar");
+  const user = { ...teacherUser, id: ids.teacher };
+  const conv = createConversation(ids.teacher, `${P} recertificar`);
+  const anchor = appendMessage(conv.id, "assistant", [], "");
+  const ctx = { ...ctxFor(user, ownScope(user)), conversationId: conv.id, messageId: anchor.id };
+  const tool = toolByName("recertificar")!;
+  const params = (extra: Record<string, unknown> = {}) => ({ curso_id: "", alumno_ids: [] as string[], estado: "por_vencer", dias: "", ...extra });
+
+  // El certificado de Ana vence en 10 días (lo sembró seedMovimientos)
+  const cert = db.select().from(certificates).where(eq(certificates.courseId, ids.course)).get()!;
+
+  const vencidos = await tool.run(params({ curso_id: ids.course, estado: "vencidos" }), ctx);
+  check("Sin vencidos: lo dice y no propone", !vencidos.proposalId && vencidos.forModel.includes("No hay ningún certificado"), vencidos.forModel);
+  const corta = await tool.run(params({ curso_id: ids.course, dias: "3" }), ctx);
+  check("Ventana de 3 días: el que vence en 10 no entra", !corta.proposalId, corta.forModel);
+
+  const propuesta = await tool.run(params({ curso_id: ids.course }), ctx);
+  const p = getProposal(propuesta.proposalId!)!;
+  check("Lista el certificado por vencer, con su folio", p.rows.length === 1 && p.rows[0].id === cert.id && p.rows[0].cells.folio === cert.folio, p.rows);
+  check(
+    "Columnas Alumno, Curso, Folio, Vence y Qué pasará, no editables",
+    p.draft.columns.map((c) => c.key).join(",") === "alumno,curso,folio,vence,que_pasara" && p.draft.columns.every((c) => c.editable === false),
+    p.draft.columns
+  );
+  check("La columna «Qué pasará» avisa del ciclo nuevo", p.rows[0].cells.que_pasara.includes("ciclo nuevo"), p.rows[0].cells);
+  check("Nunca es instantáneo: siempre propuesta", !!propuesta.proposalId && !propuesta.undo, propuesta.forModel);
+  check("La IA no recibe correos", !propuesta.forModel.includes("@test.local"), propuesta.forModel);
+
+  const aplicada = await applyProposal(propuesta.proposalId!, p.rows, ctx, "");
+  const ciclos = db
+    .select()
+    .from(enrollments)
+    .where(and(eq(enrollments.courseId, ids.course), eq(enrollments.studentId, ids.s1)))
+    .orderBy(desc(enrollments.cycle))
+    .all();
+  const nuevo = ciclos[0];
+  check(
+    "Al aplicar se abre un ciclo nuevo, en cero, para que repita el curso",
+    "text" in aplicada && ciclos.length === 2 && nuevo.cycle === 2 && nuevo.status === "active" && nuevo.completedAt === null,
+    [aplicada, ciclos]
+  );
+  const despues = db.select().from(certificates).where(eq(certificates.id, cert.id)).get()!;
+  check(
+    "El certificado anterior no se toca: solo sale del panel",
+    despues.revoked === false &&
+      despues.renewalState === "renewed" &&
+      despues.renewedEnrollmentId === nuevo.id &&
+      despues.expiresAt?.getTime() === cert.expiresAt?.getTime(),
+    despues
+  );
+  check("El texto explica que tendrá que volver a completar el curso", "text" in aplicada && aplicada.text.includes("volver a completarlo"), aplicada);
+  check("Auditoría del asistente con el folio", hayAuditoria("assistant_recertificar", cert.id));
+
+  const otraVez = await tool.run(params({ curso_id: ids.course, estado: "ambos" }), ctx);
+  check("Ya atendido: deja de aparecer y no propone", !otraVez.proposalId, otraVez.forModel);
+
+  // Curso ajeno
+  const otro = { ...teacherUser, id: ids.admin };
+  const ajeno = await tool.run(params({ curso_id: ids.course }), { ...ctxFor(otro, ownScope(otro)), conversationId: conv.id, messageId: anchor.id });
+  check("Curso ajeno: negado y sin propuesta", !ajeno.proposalId && ajeno.forModel.includes("no te pertenece"), ajeno.forModel);
+}
+
+/** Curso con dos tareas y un examen, y otro sin nada: los usan las tres últimas secciones. */
+function seedEntrega5() {
+  ids.e5Course = createCourse({ ownerId: ids.teacher, title: `${P} Entrega 5` }).id;
+  ids.e5Vacio = createCourse({ ownerId: ids.teacher, title: `${P} Sin contenido` }).id;
+  enrollStudents(ids.e5Course, [ids.s2], ids.teacher);
+  const tareaA = createItem({ courseId: ids.e5Course, parentId: null, kind: "assignment", title: `${P} Tarea A` });
+  const tareaB = createItem({ courseId: ids.e5Course, parentId: null, kind: "assignment", title: `${P} Tarea B` });
+  createItem({ courseId: ids.e5Course, parentId: null, kind: "exam", title: `${P} Examen E5` });
+  return { tareaA: tareaA.id, tareaB: tareaB.id };
+}
+
+async function publicarCursoChecks() {
+  console.log("\n— Publicar, archivar y volver a borrador");
+  const user = { ...teacherUser, id: ids.teacher };
+  const conv = createConversation(ids.teacher, `${P} publicar`);
+  const anchor = appendMessage(conv.id, "assistant", [], "");
+  const ctx = { ...ctxFor(user, ownScope(user)), conversationId: conv.id, messageId: anchor.id };
+  const tool = toolByName("publicar_curso")!;
+
+  const vacio = await tool.run({ curso_id: ids.e5Vacio, accion: "publicar" }, ctx);
+  check(
+    "Curso sin lecciones: no se publica y dice qué falta",
+    estadoDe(ids.e5Vacio) === "draft" &&
+      !vacio.undo &&
+      (vacio.blocks ?? []).some((b) => b.type === "text" && b.text.includes("lección")) &&
+      (vacio.blocks ?? []).some((b) => b.type === "links" && b.links.some((l) => l.href === `/teach/courses/${ids.e5Vacio}/content`)),
+    vacio
+  );
+
+  // El bloqueo de verdad de publishCourse: un documento que sigue procesándose
+  createItem({ courseId: ids.e5Vacio, parentId: null, kind: "document", title: `${P} Manual` });
+  const conDoc = await tool.run({ curso_id: ids.e5Vacio, accion: "publicar" }, ctx);
+  check(
+    "Documento sin procesar: tampoco publica y lo nombra",
+    estadoDe(ids.e5Vacio) === "draft" && (conDoc.blocks ?? []).some((b) => b.type === "text" && b.text.includes(`${P} Manual`)),
+    conDoc
+  );
+
+  const pub = await tool.run({ curso_id: ids.e5Course, accion: "publicar" }, ctx);
+  check("Curso completo: se publica al momento", estadoDe(ids.e5Course) === "published" && !pub.proposalId, pub.forModel);
+  check("Trae deshacer y bloque de resultado", pub.undo?.tool === "publicar_curso" && (pub.blocks ?? []).some((b) => b.type === "result" && b.undoable === true), pub.undo);
+  check("Auditoría de la publicación", hayAuditoria("assistant_publicar_curso", ids.e5Course));
+  await tool.undo!(pub.undo!.params, ctx);
+  check("Deshacer lo devuelve a borrador", estadoDe(ids.e5Course) === "draft");
+  check("Deshacer deja auditoría", hayAuditoria("assistant_publicar_curso_undo", ids.e5Course));
+  const dosVeces = await errorOf(async () => tool.undo!(pub.undo!.params, ctx));
+  check("Deshacer dos veces: error claro", dosVeces.startsWith("No se pudo deshacer"), dosVeces);
+
+  const yaEsta = await tool.run({ curso_id: ids.e5Course, accion: "borrador" }, ctx);
+  check("Ya estaba en borrador: lo dice y no cambia nada", !yaEsta.undo && yaEsta.forModel.includes("ya está"), yaEsta.forModel);
+
+  const archivado = await tool.run({ curso_id: ids.e5Course, accion: "archivar" }, ctx);
+  check("Archivar: deja de verse y se puede deshacer", estadoDe(ids.e5Course) === "archived" && archivado.undo?.params.estado_anterior === "draft", archivado);
+  const borrador = await tool.run({ curso_id: ids.e5Course, accion: "borrador" }, ctx);
+  check("Volver a borrador desde archivado", estadoDe(ids.e5Course) === "draft" && borrador.undo?.params.estado_anterior === "archived", borrador);
+
+  const otro = { ...teacherUser, id: ids.admin };
+  const ajeno = await tool.run({ curso_id: ids.e5Course, accion: "publicar" }, { ...ctxFor(otro, ownScope(otro)), conversationId: conv.id, messageId: anchor.id });
+  check("Curso ajeno: negado y sin cambiar nada", ajeno.forModel.includes("no te pertenece") && estadoDe(ids.e5Course) === "draft", ajeno.forModel);
+}
+
+async function asignarDiplomaChecks() {
+  console.log("\n— Asignar diploma al curso");
+  const user = { ...teacherUser, id: ids.teacher };
+  const conv = createConversation(ids.teacher, `${P} diploma`);
+  const anchor = appendMessage(conv.id, "assistant", [], "");
+  const ctx = { ...ctxFor(user, ownScope(user)), conversationId: conv.id, messageId: anchor.id };
+  const tool = toolByName("asignar_diploma")!;
+  const params = (extra: Record<string, unknown> = {}) => ({ plantilla: "", curso_ids: [] as string[], quitar: "", ...extra });
+
+  check(
+    "Asignar el diploma ya no se anuncia como «aún no puedo» (crear plantillas sí)",
+    NOT_YET.includes("crear o editar plantillas de diploma"),
+    NOT_YET
+  );
+
+  makeUser(ids.otroMaestro, "maestro2", "Maestro Dos", "teacher", null);
+  const mia = createTemplate(ids.teacher, `${P} Diploma Azul`);
+  const general = createTemplate(ids.admin, `${P} Diploma General`);
+  createTemplate(ids.otroMaestro, `${P} Diploma Ajeno`);
+
+  const sinCurso = await tool.run(params({ plantilla: mia.name }), ctx);
+  check("Sin curso: lo pide y no hace nada", !sinCurso.undo && sinCurso.forModel.includes("Falta a qué curso"), sinCurso.forModel);
+
+  // Por nombre, sin distinguir mayúsculas
+  const una = await tool.run(params({ plantilla: `${P} diploma azul`, curso_ids: [ids.e5Course] }), ctx);
+  check("Un curso: se asigna al momento por nombre", diplomaDe(ids.e5Course) === mia.id && !una.proposalId, una.forModel);
+  check("Trae deshacer y bloque de resultado", una.undo?.params.plantilla_anterior === "" && (una.blocks ?? []).some((b) => b.type === "result" && b.undoable === true), una.undo);
+  check("Auditoría del diploma", hayAuditoria("assistant_asignar_diploma", ids.e5Course));
+  await tool.undo!(una.undo!.params, ctx);
+  check("Deshacer lo deja otra vez sin diploma", diplomaDe(ids.e5Course) === null);
+
+  // Varios cursos: tabla de revisión
+  const varios = await tool.run(params({ plantilla: `${P} Diploma General`, curso_ids: [ids.e5Course, ids.e5Vacio] }), ctx);
+  const p = getProposal(varios.proposalId!)!;
+  check(
+    "Dos cursos: propuesta con Curso, Diploma actual y Diploma nuevo, no editables",
+    p.rows.length === 2 && p.draft.columns.map((c) => c.key).join(",") === "curso,actual,nuevo" && p.draft.columns.every((c) => c.editable === false),
+    p.draft.columns
+  );
+  check("La fila dice de qué diploma viene y a cuál va", p.rows.every((r) => r.cells.actual === "Sin diploma" && r.cells.nuevo === general.name), p.rows);
+  const aplicada = await applyProposal(varios.proposalId!, p.rows, ctx, "");
+  check(
+    "Al aplicar, los dos cursos emiten la plantilla general",
+    "text" in aplicada && diplomaDe(ids.e5Course) === general.id && diplomaDe(ids.e5Vacio) === general.id,
+    aplicada
+  );
+
+  // Quitar
+  const quitada = await tool.run(params({ quitar: "si", curso_ids: [ids.e5Course] }), ctx);
+  check("Quitar: el curso se queda sin diploma", diplomaDe(ids.e5Course) === null && quitada.undo?.params.plantilla_anterior === general.id, quitada.forModel);
+  await tool.undo!(quitada.undo!.params, ctx);
+  check("Deshacer devuelve el diploma que tenía", diplomaDe(ids.e5Course) === general.id);
+
+  const repetida = await tool.run(params({ plantilla: general.name, curso_ids: [ids.e5Course] }), ctx);
+  check("Si ya lo tenía: lo dice y no cambia nada", repetida.forModel.includes("Ya tiene ese diploma"), repetida.forModel);
+
+  const noExiste = await tool.run(params({ plantilla: "Diploma que no existe", curso_ids: [ids.e5Course] }), ctx);
+  check("Plantilla inexistente: lo dice y enumera las que hay", noExiste.forModel.includes("No encontré ninguna plantilla") && noExiste.forModel.includes(mia.name), noExiste.forModel);
+
+  const deOtro = await tool.run(params({ plantilla: `${P} Diploma Ajeno`, curso_ids: [ids.e5Course] }), ctx);
+  check(
+    "Plantilla de otro maestro: ni se encuentra ni se asigna",
+    deOtro.forModel.includes("No encontré ninguna plantilla") && diplomaDe(ids.e5Course) === general.id,
+    deOtro.forModel
+  );
+
+  const ambigua = await tool.run(params({ plantilla: `${P} Diploma`, curso_ids: [ids.e5Course] }), ctx);
+  check("Varias parecidas: las enumera y pregunta", ambigua.forModel.includes("varias plantillas") && !ambigua.undo, ambigua.forModel);
+
+  const otro = { ...teacherUser, id: ids.admin };
+  const ajeno = await tool.run(params({ plantilla: general.name, curso_ids: [ids.e5Course] }), {
+    ...ctxFor(otro, ownScope(otro)),
+    conversationId: conv.id,
+    messageId: anchor.id,
+  });
+  check("Curso ajeno: negado y sin tocar el diploma", ajeno.forModel.includes("No es uno de tus cursos") && diplomaDe(ids.e5Course) === general.id, ajeno.forModel);
+}
+
+async function fechaLimiteChecks(tareas: { tareaA: string; tareaB: string }) {
+  console.log("\n— Fecha límite de las tareas");
+  const user = { ...teacherUser, id: ids.teacher };
+  const conv = createConversation(ids.teacher, `${P} fechas`);
+  const anchor = appendMessage(conv.id, "assistant", [], "");
+  const ctx = { ...ctxFor(user, ownScope(user)), conversationId: conv.id, messageId: anchor.id };
+  const tool = toolByName("fecha_limite")!;
+  const params = (extra: Record<string, unknown> = {}) => ({ curso_id: ids.e5Course, item_id: "", fecha: "", ...extra });
+
+  // Una fecha exacta en una sola tarea: al momento y hasta el final de ese día
+  const dentroDe20 = enDias(20);
+  const una = await tool.run(params({ item_id: tareas.tareaA, fecha: isoDe(dentroDe20) }), ctx);
+  check("Una tarea: se guarda al momento, hasta el final de ese día", fechaDe(tareas.tareaA)?.getTime() === finDelDia(dentroDe20) && !una.proposalId, una.forModel);
+  check("Trae deshacer y bloque de resultado", una.undo?.params.fecha_anterior === "" && (una.blocks ?? []).some((b) => b.type === "result" && b.undoable === true), una.undo);
+  check("Auditoría de la fecha", hayAuditoria("assistant_fecha_limite", tareas.tareaA));
+  await tool.undo!(una.undo!.params, ctx);
+  check("Deshacer deja la tarea otra vez sin fecha", fechaDe(tareas.tareaA) === null);
+
+  const enSemanas = await tool.run(params({ item_id: tareas.tareaA, fecha: "en 2 semanas" }), ctx);
+  check("«en 2 semanas» se entiende", fechaDe(tareas.tareaA)?.getTime() === finDelDia(enDias(14)), enSemanas.forModel);
+
+  // Todas las tareas del curso: tabla de revisión (el examen no es tarea)
+  const todas = await tool.run(params({ fecha: "viernes" }), ctx);
+  const p = getProposal(todas.proposalId!)!;
+  check(
+    "Todas las tareas: propuesta con Tarea, Fecha actual y Fecha nueva, sin el examen",
+    p.rows.length === 2 &&
+      p.draft.columns.map((c) => c.key).join(",") === "tarea,actual,nueva" &&
+      !p.rows.some((r) => r.cells.tarea.includes("Examen")),
+    p.rows
+  );
+  const aplicada = await applyProposal(todas.proposalId!, p.rows, ctx, "");
+  const viernes = fechaDe(tareas.tareaB);
+  check(
+    "«viernes» cae en el viernes siguiente y se guarda en las dos tareas",
+    "text" in aplicada && viernes !== null && viernes.getDay() === 5 && viernes.getTime() > Date.now() && fechaDe(tareas.tareaA)?.getTime() === viernes.getTime(),
+    [aplicada, viernes]
+  );
+
+  // Quitar
+  const quitada = await tool.run(params({ item_id: tareas.tareaB, fecha: "quitar" }), ctx);
+  check("«quitar» deja la tarea sin fecha", fechaDe(tareas.tareaB) === null && quitada.undo?.params.fecha_anterior !== "", quitada.forModel);
+  const otraVez = await tool.run(params({ item_id: tareas.tareaB, fecha: "sin fecha" }), ctx);
+  check("Si ya estaba sin fecha: lo dice y no cambia nada", otraVez.forModel.includes("Ya estaba sin fecha"), otraVez.forModel);
+
+  const rara = await tool.run(params({ item_id: tareas.tareaB, fecha: "cuando se pueda" }), ctx);
+  check("Fecha ilegible: lo dice, pide una concreta y no inventa", !rara.undo && rara.forModel.includes("No entendí") && fechaDe(tareas.tareaB) === null, rara.forModel);
+
+  const pasada = await tool.run(params({ item_id: tareas.tareaB, fecha: isoDe(enDias(-10)) }), ctx);
+  check("Fecha ya pasada: se guarda pero se avisa", fechaDe(tareas.tareaB)?.getTime() === finDelDia(enDias(-10)) && pasada.forModel.includes("ya pasó"), pasada.forModel);
+
+  const sinTareas = await tool.run(params({ curso_id: ids.e5Vacio, fecha: "mañana" }), ctx);
+  check("Curso sin tareas: lo dice y no propone", !sinTareas.proposalId && sinTareas.forModel.includes("no tiene ninguna tarea"), sinTareas.forModel);
+
+  const otro = { ...teacherUser, id: ids.admin };
+  const ajeno = await tool.run(params({ item_id: tareas.tareaA, fecha: "mañana" }), {
+    ...ctxFor(otro, ownScope(otro)),
+    conversationId: conv.id,
+    messageId: anchor.id,
+  });
+  check("Curso ajeno: negado y sin tocar la fecha", ajeno.forModel.includes("no te pertenece") && fechaDe(tareas.tareaA)?.getDay() === 5, ajeno.forModel);
+}
+
 async function reactivarAlumnosChecks() {
   console.log("\n— Reactivar alumnos");
   const user = { ...teacherUser, id: ids.teacher };
@@ -3254,6 +3559,11 @@ async function main() {
     await gruposChecks();
     await restaurarChecks();
     await avisarChecks();
+    await recertificarChecks();
+    const tareasE5 = seedEntrega5();
+    await publicarCursoChecks();
+    await asignarDiplomaChecks();
+    await fechaLimiteChecks(tareasE5);
     // Al final: borrar a Dora dejaría sin alumno a las demás secciones
     await reactivarAlumnosChecks();
     await bajaAlumnosChecks();

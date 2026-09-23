@@ -74,7 +74,13 @@ export function updateCourse(
   patch: Partial<
     Pick<
       Course,
-      "title" | "description" | "enforceSequence" | "coverFileId" | "validityMode" | "validityMonths"
+      | "title"
+      | "description"
+      | "enforceSequence"
+      | "coverFileId"
+      | "validityMode"
+      | "validityMonths"
+      | "certificateTemplateId"
     >
   >
 ) {
