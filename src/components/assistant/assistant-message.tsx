@@ -106,7 +106,8 @@ function ResultCard({ block, message, conversationId }: { block: Extract<Assista
       )}
     >
       <Check className="mt-0.5 size-4 shrink-0" aria-hidden />
-      <span className={cn("min-w-0 flex-1", block.undone && "line-through")}>{block.text}</span>
+      {/* Una línea, pero con sus negritas: el nombre de lo que se acaba de hacer se lee de un vistazo */}
+      <span className={cn("min-w-0 flex-1", block.undone && "line-through")}>{inline(block.text)}</span>
       {block.undoable && !block.undone && (
         <button
           type="button"

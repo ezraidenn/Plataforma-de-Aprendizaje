@@ -3131,6 +3131,21 @@ async function historialChecks() {
   check("Quién es el nombre de la persona", porCurso.some((r) => r[1] === `${P} Admin`) && porCurso.some((r) => r[1] === `${P} Maestro`), porCurso);
   check("Filtro por curso: solo lo de ese curso", porCurso.length === 3 && porCurso.every((r) => r[3].includes(`${P} Historial`)), porCurso);
 
+  // «grupos» hace varias cosas con el mismo nombre: cada una se lee como es,
+  // no todas como «movió alumnos de grupo»
+  const grupos = toolByName("grupos")!;
+  await grupos.run({ accion: "crear", curso_id: curso, grupo: `${P} Oleada`, nombre_nuevo: "", alumno_ids: [] }, ctx);
+  await grupos.run({ accion: "mover", curso_id: curso, grupo: `${P} Oleada`, nombre_nuevo: "", alumno_ids: [hilda] }, ctx);
+  await grupos.run({ accion: "renombrar", curso_id: curso, grupo: `${P} Oleada`, nombre_nuevo: `${P} Oleada 2`, alumno_ids: [] }, ctx);
+  const conGrupos = filasDeTabla((await tool.run(params({ sobre: "curso", id: curso }), ctx)).blocks);
+  check(
+    "Crear, mover y renombrar un grupo se leen distinto (no todo «movió alumnos»)",
+    hay(conGrupos, "creó el grupo (con el asistente)") &&
+      hay(conGrupos, "movió alumnos de grupo (con el asistente)") &&
+      hay(conGrupos, "renombró el grupo (con el asistente)"),
+    conGrupos.filter((r) => r[2].includes("grupo"))
+  );
+
   // Permisos: lo de otro maestro sobre lo suyo no se ve; el admin sí lo ve
   const ajenoParaElMaestro = await tool.run(params({ sobre: "curso", id: cursoAjeno }), ctx);
   check("El maestro no ve las acciones de otro maestro sobre un curso ajeno", ajenoParaElMaestro.forModel.includes("Sin cambios"), ajenoParaElMaestro.forModel);

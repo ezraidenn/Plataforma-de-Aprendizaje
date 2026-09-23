@@ -128,10 +128,17 @@ export function ReviewTable({
     </div>
   );
 
-  const table = (limit?: number) => {
+  /**
+   * `ancha`: con más de cuatro columnas el panel de 440 px las aplasta (un
+   * nombre se parte en cuatro renglones, las filas miden seis y la última
+   * columna se sale sin que se note). Con el ancho repartido a partes iguales
+   * caben todas, una línea por celda y con el texto entero en el `title`; para
+   * leerlo cómodo está «Ampliar», que enseña la tabla en 960 px sin recortes.
+   */
+  const table = (limit?: number, ancha = false) => {
     const shown = limit ? rows.slice(0, limit) : rows;
     return (
-      <table className="w-full border-collapse text-[12px]">
+      <table className={cn("w-full border-collapse text-[12px]", ancha && "table-fixed")}>
         <thead>
           <tr className="border-b border-slate-200">
             {block.columns.map((c) => (
@@ -163,10 +170,23 @@ export function ReviewTable({
                         value={value}
                         onChange={(e) => editCell(row.id, c.key, e.target.value)}
                         aria-label={`${c.label}, fila ${row.id}`}
-                        className="w-full min-w-[80px] rounded border border-transparent bg-transparent px-1 py-0.5 text-slate-800 outline-none hover:border-slate-300 focus:border-indigo-400 focus:bg-white"
+                        className={cn(
+                          "w-full rounded border border-transparent bg-transparent px-1 py-0.5 text-slate-800 outline-none hover:border-slate-300 focus:border-indigo-400 focus:bg-white",
+                          // Con el ancho repartido, un mínimo por celda desbarataría el reparto
+                          !ancha && "min-w-[80px]"
+                        )}
                       />
                     ) : (
-                      <span className={cn("block px-1 py-0.5", row.blocked ? "text-slate-400 line-through" : "text-slate-800")}>{value}</span>
+                      <span
+                        title={ancha ? value : undefined}
+                        className={cn(
+                          "block px-1 py-0.5",
+                          ancha && "truncate whitespace-nowrap",
+                          row.blocked ? "text-slate-400 line-through" : "text-slate-800"
+                        )}
+                      >
+                        {value}
+                      </span>
                     )}
                     {i === 0 && row.warning && <p className="mt-0.5 px-1 text-[11px] leading-snug text-amber-700">{row.warning}</p>}
                   </td>
@@ -219,7 +239,7 @@ export function ReviewTable({
           <Maximize2 className="size-3.5" aria-hidden />
         </button>
       </div>
-      <div className="overflow-x-auto">{table(PREVIEW_ROWS)}</div>
+      <div className="overflow-x-auto">{table(PREVIEW_ROWS, block.columns.length > 4)}</div>
       {rows.length > PREVIEW_ROWS && (
         <button
           type="button"

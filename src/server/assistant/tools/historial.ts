@@ -112,7 +112,7 @@ const ACCION_ASISTENTE: Record<string, string> = {
   crear_maestro: "creó un maestro",
   duplicar_curso: "duplicó el curso",
   fecha_limite: "cambió la fecha límite",
-  grupos: "movió alumnos de grupo",
+  grupos: "cambió un grupo",
   matricular: "matriculó alumnos",
   publicar_curso: "cambió el estado del curso",
   reactivar_alumnos: "reactivó alumnos",
@@ -121,17 +121,42 @@ const ACCION_ASISTENTE: Record<string, string> = {
   restaurar: "restauró matrículas de la papelera",
 };
 
+/**
+ * Herramientas que hacen VARIAS cosas: la que se hizo va en el detalle del
+ * registro (`accion`), no en el nombre de la herramienta. Sin esto, crear o
+ * renombrar un grupo se leería como «movió alumnos de grupo», que no pasó.
+ */
+const ACCION_DETALLE: Record<string, Record<string, string>> = {
+  grupos: {
+    crear: "creó el grupo",
+    mover: "movió alumnos de grupo",
+    renombrar: "renombró el grupo",
+    cerrar: "cerró el grupo",
+    reabrir: "reabrió el grupo",
+    borrar: "eliminó el grupo",
+  },
+};
+
 const PREFIJO = "assistant_";
 
+/** La acción guardada en el detalle del registro, si la hay. */
+function accionDelDetalle(detail: unknown): string {
+  if (typeof detail !== "object" || detail === null) return "";
+  const valor = (detail as Record<string, unknown>).accion;
+  return typeof valor === "string" ? valor : "";
+}
+
 /** «dio de baja alumnos (con el asistente)», «deshizo: matriculó alumnos (con el asistente)». */
-export function queTexto(action: string): string {
+export function queTexto(action: string, detail?: unknown): string {
   const deshacer = action.endsWith("_undo");
   const base = deshacer ? action.slice(0, -"_undo".length) : action;
   const asistente = base.startsWith(PREFIJO);
   const clave = asistente ? base.slice(PREFIJO.length) : base;
-  const etiqueta = asistente
-    ? (ACCION_ASISTENTE[clave] ?? ACCION[clave] ?? auditActionLabel(clave).toLowerCase())
-    : (ACCION[clave] ?? auditActionLabel(clave).toLowerCase());
+  const etiqueta =
+    (asistente ? ACCION_DETALLE[clave]?.[accionDelDetalle(detail)] : undefined) ??
+    (asistente
+      ? (ACCION_ASISTENTE[clave] ?? ACCION[clave] ?? auditActionLabel(clave).toLowerCase())
+      : (ACCION[clave] ?? auditActionLabel(clave).toLowerCase()));
   const texto = deshacer ? `deshizo: ${etiqueta}` : etiqueta;
   return asistente ? `${texto} (con el asistente)` : texto;
 }
@@ -282,6 +307,8 @@ type Fila = {
   action: string;
   entity: string;
   entityId: string | null;
+  /** Lo que guardó `audit(...)`: de ahí sale qué se hizo cuando la herramienta hace varias cosas */
+  detail: unknown;
   createdAt: Date;
   quien: string | null;
 };
@@ -449,6 +476,7 @@ export const historial: AssistantTool = {
         action: auditLog.action,
         entity: auditLog.entity,
         entityId: auditLog.entityId,
+        detail: auditLog.detail,
         createdAt: auditLog.createdAt,
         quien: users.fullName,
       })
@@ -463,7 +491,7 @@ export const historial: AssistantTool = {
     const allRows = filas.map((f) => [
       fmtMoment(f.createdAt),
       f.quien ?? "La plataforma",
-      queTexto(f.action),
+      queTexto(f.action, f.detail),
       sobres.get(`${f.entity}|${f.entityId ?? ""}`) ?? "—",
     ]);
 

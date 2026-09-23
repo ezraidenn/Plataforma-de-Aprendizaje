@@ -181,7 +181,8 @@ export const duplicarCurso: AssistantTool = {
 
     deleteCourse(copia.id);
     registrar(ctx, "assistant_duplicar_curso_undo", param(params, "origen_id"), copia.id);
-    const text = `Se borró la copia **${copia.title}**; el curso original quedó como estaba.`;
+    // Sin negritas: esto sale en un aviso emergente, que enseña el texto tal cual
+    const text = `Se borró la copia «${copia.title}»; el curso original quedó como estaba.`;
     return { forModel: text, blocks: [{ type: "result", text }] };
   },
 };
