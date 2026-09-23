@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, desc, eq, gte, isNotNull, isNull, lt, lte, or, sql, type AnyColumn, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, or, sql, type AnyColumn, type SQL } from "drizzle-orm";
 import { db } from "@/server/db";
 import { ownerCondition, type ViewScope } from "@/server/auth/view-scope";
 import { visibleStudentCountsByOwner } from "@/server/services/student-scope";
@@ -61,24 +61,37 @@ const IDLE_DAYS = 14;
 const DEFAULT_WINDOW_DAYS = 30;
 const MAX_WINDOW_DAYS = 365;
 
-const DATE_FMT = new Intl.DateTimeFormat("es-MX", { day: "numeric", month: "short", year: "numeric" });
-const DATE_TIME_FMT = new Intl.DateTimeFormat("es-MX", {
+// Fechas cortas para que las filas quepan en el panel (440 px): el año solo cuando NO es el año en curso, y la hora solo en «Cuándo».
+const DAY_FMT = new Intl.DateTimeFormat("es-MX", { day: "numeric", month: "short" });
+const DAY_YEAR_FMT = new Intl.DateTimeFormat("es-MX", { day: "numeric", month: "short", year: "numeric" });
+const MOMENT_FMT = new Intl.DateTimeFormat("es-MX", {
+  day: "numeric",
+  month: "short",
+  hour: "numeric",
+  minute: "2-digit",
+});
+const MOMENT_YEAR_FMT = new Intl.DateTimeFormat("es-MX", {
   day: "numeric",
   month: "short",
   year: "numeric",
-  hour: "2-digit",
+  hour: "numeric",
   minute: "2-digit",
 });
 
-/** «22 sept 2026»; con la hora si es de hoy (lo de hoy se lee mejor con hora). */
+function isThisYear(value: Date): boolean {
+  return value.getFullYear() === new Date().getFullYear();
+}
+
+/** Columnas de fecha: «22 sep», o «30 sep 2025» si es de otro año. Nunca lleva hora. */
 function fmtDate(value: Date | null | undefined): string {
   if (!value) return "";
-  const now = new Date();
-  const sameDay =
-    value.getFullYear() === now.getFullYear() &&
-    value.getMonth() === now.getMonth() &&
-    value.getDate() === now.getDate();
-  return (sameDay ? DATE_TIME_FMT : DATE_FMT).format(value);
+  return (isThisYear(value) ? DAY_FMT : DAY_YEAR_FMT).format(value);
+}
+
+/** Columna «Cuándo»: «22 sep, 10:49 p. m.», con el año solo si es de otro año. */
+function fmtMoment(value: Date | null | undefined): string {
+  if (!value) return "";
+  return (isThisYear(value) ? MOMENT_FMT : MOMENT_YEAR_FMT).format(value);
 }
 
 /** Puntaje legible: entero sin decimales, con uno si hace falta. «—» si no hay. */
@@ -238,7 +251,7 @@ export function movimientosQuery(scope: ViewScope, range: DateRange, courseId: s
     })),
   ].sort((a, b) => b.at.getTime() - a.at.getTime());
 
-  const allRows = movimientos.map((m) => [m.student, m.course, m.what, fmtDate(m.at)]);
+  const allRows = movimientos.map((m) => [m.student, m.course, m.what, fmtMoment(m.at)]);
   const donde = courseLabel(scope, courseId);
   const total = movimientos.length;
   const nombres = fewNames(allRows);
@@ -549,15 +562,20 @@ export function certificadosQuery(
  * entró por última vez. Es la vista del administrador, así que no lleva
  * contexto: siempre son todos.
  *
+ * El administrador también es un «profesor general» y puede tener contenido
+ * propio: entra en la tabla si tiene al menos un curso suyo, marcado como
+ * «Nombre (admin)» para que se entienda por qué está. Un administrador sin
+ * cursos no aporta nada a esta tabla y no sale.
+ *
  * «Alumnos» es la suma de la columna, con la MISMA regla que las listas
  * (`visibleStudentCountsByOwner`): un alumno que toma cursos con dos maestros
  * cuenta en los dos, porque a los dos les aparece.
  */
 export function panoramaQuery(): QueryResult {
   const teachers = db
-    .select({ id: users.id, name: users.fullName, last: users.lastLoginAt })
+    .select({ id: users.id, name: users.fullName, last: users.lastLoginAt, role: users.role })
     .from(users)
-    .where(and(eq(users.role, "teacher"), eq(users.active, true)))
+    .where(and(inArray(users.role, ["teacher", "admin"]), eq(users.active, true)))
     .all();
 
   const courseCounts = new Map(
@@ -583,8 +601,10 @@ export function panoramaQuery(): QueryResult {
   const studentCounts = visibleStudentCountsByOwner();
 
   const filas = teachers
+    // El administrador solo entra si tiene cursos propios
+    .filter((t) => t.role === "teacher" || (courseCounts.get(t.id) ?? 0) > 0)
     .map((t) => ({
-      name: t.name,
+      name: t.role === "admin" ? `${t.name} (admin)` : t.name,
       last: t.last,
       cursos: courseCounts.get(t.id) ?? 0,
       alumnos: studentCounts.get(t.id) ?? 0,

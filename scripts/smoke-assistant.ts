@@ -220,7 +220,18 @@ async function clientChecks() {
 }
 
 const P = "zasst";
-const ids = { teacher: nanoid(), admin: nanoid(), s1: nanoid(), s2: nanoid(), s3: nanoid(), s4: nanoid(), course: "" };
+const ids = {
+  teacher: nanoid(),
+  admin: nanoid(),
+  // Dos administradores más, solo para el panorama: uno con curso propio y otro sin nada
+  adminConCurso: nanoid(),
+  adminSinCursos: nanoid(),
+  s1: nanoid(),
+  s2: nanoid(),
+  s3: nanoid(),
+  s4: nanoid(),
+  course: "",
+};
 
 function makeUser(id: string, key: string, name: string, role: "teacher" | "admin" | "student", createdBy: string | null) {
   db.insert(users).values({ id, email: `${P}-${key}@test.local`, passwordHash: "x", fullName: `${P} ${name}`, role, createdBy }).run();
@@ -699,6 +710,10 @@ async function crearCursosChecks() {
  * una tarea entregada, un examen calificado por debajo del mínimo, el curso
  * completado y un certificado que vence en 10 días. Lo borra `cleanup()`.
  */
+/** Fecha fija de otro año: «30 sep 2020» pase cuando pase la prueba. */
+const VIEJO = new Date(2020, 8, 30, 9, 5);
+const VIEJO_TEXTO = "30 sep 2020";
+
 function seedMovimientos() {
   const now = new Date();
   // Ratos distintos del MISMO día (así se comprueba el orden por fecha), sin
@@ -753,6 +768,9 @@ function seedMovimientos() {
       verificationHash: "x",
     })
     .run();
+
+  // Último acceso de otro año: así se comprueba que esa fecha sí lleva el año
+  db.update(users).set({ lastLoginAt: VIEJO }).where(eq(users.id, ids.s1)).run();
 }
 
 async function queryChecks() {
@@ -783,10 +801,25 @@ async function queryChecks() {
   check("Por vencer: dice los días", porVencer.forModel.includes("30"), porVencer.forModel);
   check("Vencidos: no incluye los que no vencen", certificadosQuery(scope, "vencidos", null, 30).rows.every((r) => !r.join(" ").includes("no vence")));
 
+  // Un admin con curso propio entra al panorama; otro sin cursos, no
+  makeUser(ids.adminConCurso, "admin-con-curso", "Admin Con Curso", "admin", null);
+  makeUser(ids.adminSinCursos, "admin-sin-cursos", "Admin Sin Cursos", "admin", null);
+  createCourse({ ownerId: ids.adminConCurso, title: `${P} Curso del admin` });
+
   const pan = panoramaQuery();
   check("Panorama: una fila por maestro", pan.columns[0] === "Maestro" && pan.rows.length >= 1, pan.columns);
   check("Panorama: el maestro de prueba aparece con sus cifras", pan.rows.some((r) => r[0].includes(`${P}`)), pan.rows.slice(0, 3));
   check("Panorama: tiles totales", pan.tiles.length === 4);
+  check(
+    "Panorama: el admin con curso propio aparece marcado «(admin)»",
+    pan.rows.some((r) => r[0] === `${P} Admin Con Curso (admin)` && r[1] === "1"),
+    pan.rows.filter((r) => r[0].includes("Admin"))
+  );
+  check(
+    "Panorama: un admin sin cursos no aparece",
+    !pan.rows.some((r) => r[0].includes("Admin Sin Cursos")),
+    pan.rows.map((r) => r[0])
+  );
 
   // Extras: lo que la prueba sembró se ve tal cual
   check("Movimientos: entrega, examen, aprobado y certificado", mov.tiles.every((t) => Number(t.value) >= 1), mov.tiles);
@@ -807,6 +840,37 @@ async function queryChecks() {
   check("El CSV lleva todas las filas, no solo las 20", certificadosQuery(scope, "emitidos", null, 30).csv.split("\r\n").length === emitidos.total + 1, emitidos.total);
   check("Días fuera de rango: se recorta a 365", certificadosQuery(scope, "por_vencer", null, 9999).forModel.includes("365"));
   check("Días en cero: vuelve a 30", certificadosQuery(scope, "por_vencer", null, 0).forModel.includes("30"));
+
+  // Fechas cortas: «22 sep» (o «30 sep 2025» si es de otro año) y solo «Cuándo» lleva hora
+  const esteAnio = String(new Date().getFullYear());
+  const soloDia = /^\d{1,2} [a-z]+$/i; // «22 sep»
+  const diaConAnio = /^\d{1,2} [a-z]+ \d{4}$/i; // «30 sep 2025»
+  const conHora = /^\d{1,2} [a-z]+, \d{1,2}:\d{2}/i; // «22 sep, 10:49 p. m.»
+  check(
+    "Fechas: «Cuándo» lleva hora corta y, por ser de hoy, va sin el año",
+    mov.rows.length > 0 && mov.rows.every((r) => conHora.test(r[3]) && !r[3].includes(esteAnio)),
+    mov.rows.map((r) => r[3]).slice(0, 4)
+  );
+  check(
+    "Fechas: «Emitido» es de hoy, sin hora y sin el año",
+    emitidos.rows.every((r) => soloDia.test(r[3])),
+    emitidos.rows.map((r) => r[3]).slice(0, 3)
+  );
+  check(
+    "Fechas: «Vence» tampoco lleva hora",
+    emitidos.rows.every((r) => r[4] === "no vence" || soloDia.test(r[4]) || diaConAnio.test(r[4])),
+    emitidos.rows.map((r) => r[4]).slice(0, 3)
+  );
+  check(
+    `Fechas: «Último acceso» de otro año sí lleva el año («${VIEJO_TEXTO}»)`,
+    sinEntrar.rows.some((r) => r[0].includes("Ana") && r[2] === VIEJO_TEXTO),
+    sinEntrar.rows.filter((r) => r[0].includes("Ana"))
+  );
+  check(
+    "Fechas: «Último acceso» del panorama, sin hora",
+    pan.rows.every((r) => r[4] === "nunca" || soloDia.test(r[4]) || diaConAnio.test(r[4])),
+    pan.rows.map((r) => r[4])
+  );
 }
 
 /** Id de la descarga que hay dentro de un bloque `download`. */

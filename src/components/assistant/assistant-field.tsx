@@ -105,8 +105,8 @@ export function AssistantField() {
               <button
                 type="button"
                 onClick={() => setOpen(true)}
-                title="Abrir el asistente de IA"
-                aria-label="Abrir el asistente de IA"
+                title="Abrir el asistente y ver sugerencias"
+                aria-label="Abrir el asistente y ver sugerencias"
                 className="flex size-[18px] shrink-0 items-center justify-center rounded-full text-indigo-600 transition-colors hover:text-indigo-800"
               >
                 <Sparkles className="size-[18px]" aria-hidden />
