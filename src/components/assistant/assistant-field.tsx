@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 import { placeholderFor } from "@/lib/assistant-placeholder";
 import { AI_ACCEPT } from "@/lib/ai-import-files";
 import { AttachmentChip } from "./attachment-chip";
-import { DEFAULT_ATTACHMENT_TEXT, MAX_ATTACHMENTS, useAssistant } from "./assistant-provider";
+import { DEFAULT_ATTACHMENT_TEXT, MAX_ATTACHMENTS, pastedImages, useAssistant } from "./assistant-provider";
 
 /**
  * Campo del asistente en el centro de la barra (solo escritorio): blanco,
@@ -34,8 +34,9 @@ export function AssistantField() {
   } = useAssistant();
   const fileRef = useRef<HTMLInputElement>(null);
   const [closed, setClosed] = useState(false);
-  // Al enviar hay adjunto pero no hace falta escribir nada
-  const canSend = (draft.trim().length > 0 || attachments.length > 0) && !busy && !uploading;
+  // Al enviar hay adjunto pero no hace falta escribir nada. Mientras un archivo
+  // se sube también se puede enviar: el turno espera a que esté adjunto
+  const canSend = (draft.trim().length > 0 || attachments.length > 0 || uploading) && !busy;
   const full = attachments.length >= MAX_ATTACHMENTS;
   const clipLabel = full
     ? `Máximo ${MAX_ATTACHMENTS} archivos por mensaje`
@@ -114,25 +115,30 @@ export function AssistantField() {
                 <Sparkles className="size-[18px]" aria-hidden />
               </button>
             )}
-            {uploading ? (
-              <p className="min-w-0 flex-1 truncate text-[13.5px] text-slate-500" aria-live="polite">
-                Leyendo el archivo…
-              </p>
-            ) : (
-              <input
-                type="text"
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onClick={() => {
-                  if (draft.trim()) setOpen(true);
-                }}
-                placeholder={placeholderFor(pathname)}
-                aria-label="Escribe lo que quieres hacer"
-                disabled={busy}
-                autoComplete="off"
-                className="h-full min-w-0 flex-1 bg-transparent text-[13.5px] text-slate-900 outline-none placeholder:text-slate-400 disabled:opacity-60"
-              />
-            )}
+            {/* El campo no se esconde mientras sube el archivo: el usuario
+                escribe su mensaje y lo envía; el aviso va en el texto de
+                ayuda y en la rueda de la izquierda */}
+            <input
+              type="text"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onClick={() => {
+                if (draft.trim()) setOpen(true);
+              }}
+              onPaste={(e) => {
+                // Ctrl+V con una captura en el portapapeles: se adjunta igual
+                // que si se soltara. Sin imágenes, el pegado normal sigue
+                const files = pastedImages(e.clipboardData);
+                if (files.length === 0) return;
+                e.preventDefault();
+                void attachFiles(files);
+              }}
+              placeholder={uploading ? "Leyendo el archivo…" : placeholderFor(pathname)}
+              aria-label="Escribe lo que quieres hacer"
+              disabled={busy}
+              autoComplete="off"
+              className="h-full min-w-0 flex-1 bg-transparent text-[13.5px] text-slate-900 outline-none placeholder:text-slate-400 disabled:opacity-60"
+            />
             <button
               type="button"
               onClick={() => fileRef.current?.click()}
@@ -176,7 +182,7 @@ export function AssistantField() {
                     key={s}
                     type="button"
                     onClick={() => void send(s)}
-                    disabled={busy || uploading}
+                    disabled={busy}
                     className="rounded-full border border-indigo-200 bg-white px-3 py-1 text-[11.5px] font-semibold text-indigo-900 transition-colors hover:bg-indigo-50 disabled:opacity-50"
                   >
                     {s}

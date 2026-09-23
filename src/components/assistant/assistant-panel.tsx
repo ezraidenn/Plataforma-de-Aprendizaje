@@ -9,7 +9,7 @@ import { AI_ACCEPT } from "@/lib/ai-import-files";
 import { deleteConversationAction, listConversationsAction, suggestionsAction } from "@/server/actions/assistant";
 import { AssistantMessageView, UserBubble } from "./assistant-message";
 import { AttachmentChip } from "./attachment-chip";
-import { DEFAULT_ATTACHMENT_TEXT, MAX_ATTACHMENTS, useAssistant } from "./assistant-provider";
+import { DEFAULT_ATTACHMENT_TEXT, MAX_ATTACHMENTS, pastedImages, useAssistant } from "./assistant-provider";
 
 const WELCOME =
   "Dime qué hacer con tus cursos y alumnos: buscar a alguien, ver cómo va, matricular, abrir una pantalla. Lo sencillo se hace al momento y se puede deshacer; lo que afecta a varios lo revisas antes en una tabla.";
@@ -104,8 +104,10 @@ function Thread() {
   const [platform, setPlatform] = useState<PlatformSuggestion[]>([]);
   const askedRef = useRef(false);
   // Con un archivo adjunto se puede enviar sin escribir nada: en ese caso va una
-  // pregunta corta por defecto, que es lo que se quiere casi siempre
-  const canSend = (draft.trim().length > 0 || attachments.length > 0) && !busy && !uploading;
+  // pregunta corta por defecto, que es lo que se quiere casi siempre. Mientras
+  // un archivo se sube SÍ se puede enviar: el turno queda en cola y espera a
+  // que el adjunto esté listo (antes el mensaje se perdía sin más)
+  const canSend = (draft.trim().length > 0 || attachments.length > 0 || uploading) && !busy;
   const full = attachments.length >= MAX_ATTACHMENTS;
   const clipLabel = full ? `Máximo ${MAX_ATTACHMENTS} archivos por mensaje` : "Adjuntar archivo";
 
@@ -168,7 +170,9 @@ function Thread() {
         {busy && (
           <div className="flex items-center gap-2 text-[12.5px] text-slate-500" aria-live="polite">
             <Loader2 className="size-4 animate-spin text-indigo-600" aria-hidden />
-            Pensando…
+            {/* El mensaje ya está en cola: mientras sube el archivo se dice
+                eso y no «Pensando…», que parecería colgado */}
+            {uploading ? "Leyendo el archivo…" : "Pensando…"}
           </div>
         )}
         <div ref={bottomRef} />
@@ -199,7 +203,7 @@ function Thread() {
                   key={s}
                   type="button"
                   onClick={() => void send(s)}
-                  disabled={busy || uploading}
+                  disabled={busy}
                   className="rounded-full border border-indigo-200 bg-white px-3 py-1 text-[11.5px] font-semibold text-indigo-900 transition-colors hover:bg-indigo-50 disabled:opacity-50"
                 >
                   {s}
@@ -208,7 +212,7 @@ function Thread() {
             </div>
           </div>
         )}
-        {uploading && (
+        {uploading && !busy && (
           <p className="mb-2 flex items-center gap-2 text-[12.5px] text-slate-500" aria-live="polite">
             <Loader2 className="size-4 animate-spin text-indigo-600" aria-hidden />
             Leyendo el archivo…
@@ -240,6 +244,14 @@ function Thread() {
                 e.preventDefault();
                 submit();
               }
+            }}
+            onPaste={(e) => {
+              // Ctrl+V con una captura en el portapapeles: se adjunta como si
+              // se hubiera soltado. Sin imágenes no se toca el pegado normal
+              const files = pastedImages(e.clipboardData);
+              if (files.length === 0) return;
+              e.preventDefault();
+              void attachFiles(files);
             }}
             placeholder="Escribe aquí…"
             aria-label="Mensaje"

@@ -48,6 +48,27 @@ export function aiFileKind(name: string): AiFileKind | null {
 
 export const heicMessage = (name: string) => `La foto «${name}» está en HEIC: guárdala como JPG o PNG.`;
 
+/** Extensión por tipo MIME para lo que llega del portapapeles. */
+const PASTE_EXTS: Record<string, string> = {
+  "image/png": ".png",
+  "image/jpeg": ".jpg",
+  "image/webp": ".webp",
+  "image/gif": ".gif",
+};
+
+const two = (n: number) => String(n).padStart(2, "0");
+
+/**
+ * Nombre para una imagen pegada con Ctrl+V: el navegador la entrega como
+ * «image.png» o sin nombre, y así se distingue una captura de otra en la lista
+ * de adjuntos. La extensión sale del tipo MIME (PNG si no se reconoce).
+ */
+export function nombreDePegado(type: string, now: Date): string {
+  const ext = PASTE_EXTS[type.toLowerCase().split(";")[0].trim()] ?? ".png";
+  const fecha = `${now.getFullYear()}-${two(now.getMonth() + 1)}-${two(now.getDate())}`;
+  return `captura-${fecha}-${two(now.getHours())}${two(now.getMinutes())}${ext}`;
+}
+
 export const scannedTooLongMessage = (name: string, pages: number) =>
   `El PDF escaneado «${name}» tiene ${pages} páginas; el máximo es ${MAX_SCANNED_PAGES}. Divídelo en partes.`;
 

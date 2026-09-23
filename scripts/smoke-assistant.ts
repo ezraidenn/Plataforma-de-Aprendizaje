@@ -102,6 +102,7 @@ import { absolutePathFor, deleteFile, getFileRecord, saveStream } from "../src/s
 import { peopleRows, headerIndex } from "../src/server/assistant/rows-from-attachment";
 import { toCourseDrafts } from "../src/server/services/ai-course-import";
 import { resolveUploadMime } from "../src/lib/upload-types";
+import { aiFileKind, nombreDePegado } from "../src/lib/ai-import-files";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync } from "node:fs";
@@ -159,6 +160,18 @@ function placeholderChecks() {
   check("Dentro de un curso", placeholderFor("/teach/courses/abc123/content") === "Habla con la IA sobre este curso");
   check("Perfil de alumno", placeholderFor("/teach/students/xyz") === "Habla con la IA sobre este alumno");
   check("Otra ruta", placeholderFor("/admin/users") === "Habla con la IA o suelta un archivo");
+}
+
+function pegadoChecks() {
+  console.log("\n— Imagen pegada del portapapeles");
+  const now = new Date(2026, 8, 23, 9, 27);
+  check("PNG: nombre con la fecha y la hora", nombreDePegado("image/png", now) === "captura-2026-09-23-0927.png", nombreDePegado("image/png", now));
+  check("JPEG: extensión .jpg", nombreDePegado("image/jpeg", now) === "captura-2026-09-23-0927.jpg", nombreDePegado("image/jpeg", now));
+  check("WEBP con parámetros: extensión .webp", nombreDePegado("image/webp;charset=binary", now) === "captura-2026-09-23-0927.webp", nombreDePegado("image/webp;charset=binary", now));
+  check("Sin tipo: se guarda como PNG", nombreDePegado("", now) === "captura-2026-09-23-0927.png", nombreDePegado("", now));
+  check("El nombre se admite como imagen", aiFileKind(nombreDePegado("image/gif", now)) === "image");
+  const tarde = new Date(2026, 11, 5, 18, 4);
+  check("Mes, día y hora con dos cifras", nombreDePegado("image/png", tarde) === "captura-2026-12-05-1804.png", nombreDePegado("image/png", tarde));
 }
 
 function dateRangeChecks() {
@@ -4123,6 +4136,7 @@ async function resumenChecks() {
 
 async function main() {
   placeholderChecks();
+  pegadoChecks();
   dateRangeChecks();
   await clientChecks();
   await modeloChatChecks();

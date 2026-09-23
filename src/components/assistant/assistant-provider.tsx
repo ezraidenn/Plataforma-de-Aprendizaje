@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { usePathname, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import type { AssistantMessage } from "@/lib/assistant-blocks";
-import { MAX_AI_FILE_BYTES, aiFileKind, heicMessage } from "@/lib/ai-import-files";
+import { MAX_AI_FILE_BYTES, aiFileKind, heicMessage, nombreDePegado } from "@/lib/ai-import-files";
 import { attachAction, getConversationAction, sendTurnAction } from "@/server/actions/assistant";
 
 /**
@@ -62,6 +62,28 @@ type AssistantApi = AssistantState & {
 const Ctx = createContext<AssistantApi | null>(null);
 const STORAGE_KEY = "assistant:conversation";
 
+/**
+ * Imágenes del portapapeles (Ctrl+V) listas para adjuntar. Una captura llega
+ * como fichero sin nombre útil: se le pone uno con la fecha. Si el portapapeles
+ * trae HTML (copiar de Word o de Excel también deja una imagen), manda el
+ * texto y aquí no se toma nada: es el mismo criterio del editor de contenido.
+ * Lista vacía = el pegado sigue su curso normal.
+ */
+export function pastedImages(data: DataTransfer | null, now = new Date()): File[] {
+  const items = Array.from(data?.items ?? []);
+  if (items.some((i) => i.type === "text/html")) return [];
+  const files: File[] = [];
+  for (const item of items) {
+    if (item.kind !== "file" || !item.type.startsWith("image/")) continue;
+    const file = item.getAsFile();
+    if (!file) continue;
+    // Un archivo copiado del explorador sí trae su nombre: ese se respeta
+    const named = aiFileKind(file.name) === "image" && !/^image\.\w+$/i.test(file.name);
+    files.push(named ? file : new File([file], nombreDePegado(file.type, now), { type: file.type }));
+  }
+  return files;
+}
+
 function remember(id: string | null) {
   try {
     if (id) sessionStorage.setItem(STORAGE_KEY, id);
@@ -98,6 +120,12 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
   // Lo mismo con los adjuntos: `attachFiles` sube uno tras otro y necesita la
   // cuenta al día antes de que React vuelva a pintar
   const attachmentsRef = useRef<PendingAttachment[]>([]);
+  // Subidas en curso: `send` las espera antes de mandar el turno. Sin esto, el
+  // mensaje sale sin el archivo (el usuario escribe y da Enter mientras sube)
+  const pendingRef = useRef(new Set<Promise<unknown>>());
+  // «Subiendo» es cuántas hay, no un sí/no: dos subidas seguidas se pisaban y
+  // la primera en terminar apagaba el aviso de la otra
+  const uploadsRef = useRef(0);
   useEffect(() => {
     conversationRef.current = state.conversationId;
   }, [state.conversationId]);
@@ -107,6 +135,21 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
 
   // Estable: el campo la llama en un efecto al montarse
   const enableFileDrop = useCallback(() => setDropEnabled(true), []);
+
+  /** Enciende o apaga el aviso de «Leyendo el archivo…» contando las subidas. */
+  const countUpload = useCallback((delta: number) => {
+    uploadsRef.current = Math.max(0, uploadsRef.current + delta);
+    const on = uploadsRef.current > 0;
+    setState((s) => (s.uploading === on ? s : { ...s, uploading: on }));
+  }, []);
+
+  /** Apunta una subida para que `send` la espere. */
+  const track = useCallback(<T,>(work: Promise<T>): Promise<T> => {
+    pendingRef.current.add(work);
+    const forget = () => pendingRef.current.delete(work);
+    work.then(forget, forget);
+    return work;
+  }, []);
 
   const setAttachments = useCallback((next: PendingAttachment[], suggestions?: string[]) => {
     attachmentsRef.current = next;
@@ -154,8 +197,21 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
       if (!text || busyRef.current) return;
       busyRef.current = true;
       lastText.current = text;
-      const attachmentIds = attachmentsRef.current.map((a) => a.id);
+      // El mensaje se ve ya en el hilo, en cola: mientras se sube el archivo el
+      // panel dice «Leyendo el archivo…» en vez de «Pensando…»
       setState((s) => ({ ...s, open: true, view: "thread", busy: true, draft: "", pendingText: text }));
+      // Primero se espera a lo que se esté subiendo: mandar el turno sin el
+      // archivo deja a la IA respondiendo sobre algo que nunca vio
+      const pending = [...pendingRef.current];
+      if (pending.length > 0) {
+        const settled = await Promise.allSettled(pending);
+        // Mejor el mensaje sin el archivo que perder el mensaje; el porqué del
+        // fallo ya salió en su propio aviso
+        if (settled.some((r) => r.status === "rejected")) fail("No se pudo adjuntar el archivo; se envía el mensaje sin él.");
+      }
+      // Los adjuntos se recogen DESPUÉS de esperar, y de la ref: el estado
+      // tarda un render en enterarse de lo que acaba de subirse
+      const attachmentIds = attachmentsRef.current.map((a) => a.id);
       let result: Awaited<ReturnType<typeof sendTurnAction>>;
       try {
         result = await sendTurnAction({ conversationId: conversationRef.current, text, route: pathname, attachmentIds });
@@ -211,8 +267,10 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
         fail(`Máximo ${MAX_ATTACHMENTS} archivos por mensaje`);
         return;
       }
-      setState((s) => ({ ...s, uploading: true }));
-      try {
+      countUpload(1);
+      // La subida se apunta en `pendingRef`: si el usuario envía mientras
+      // tanto, el turno espera a que el archivo esté adjunto
+      const work = (async () => {
         const res = await fetch("/api/uploads", {
           method: "POST",
           headers: {
@@ -237,21 +295,30 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
         attachmentsRef.current = [...attachmentsRef.current, { id: result.attachmentId, name: result.name, detail: result.detail }];
         const attachments = attachmentsRef.current;
         setState((s) => ({ ...s, conversationId: result.conversationId, attachments, suggestions: result.suggestions }));
+      })();
+      try {
+        await track(work);
       } catch {
         fail("No se pudo subir el archivo. Revisa tu conexión con el servidor.");
       } finally {
-        setState((s) => ({ ...s, uploading: false }));
+        countUpload(-1);
       }
     },
-    []
+    [countUpload, track]
   );
 
   /** De uno en uno: el servidor lee cada archivo entero para resumirlo. */
   const attachFiles = useCallback(
     async (files: FileList | File[]) => {
-      for (const file of Array.from(files)) await attach(file);
+      // La tanda entera se apunta, no solo cada archivo: entre uno y el
+      // siguiente hay un hueco en el que un Enter se colaría sin adjunto
+      await track(
+        (async () => {
+          for (const file of Array.from(files)) await attach(file);
+        })()
+      );
     },
-    [attach]
+    [attach, track]
   );
 
   // Arrastrar un archivo a cualquier parte de la ventana lo adjunta. Solo si
