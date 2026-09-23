@@ -31,7 +31,8 @@ import {
   users,
 } from "../src/server/db/schema";
 import { createCourse, enrollStudents, setStudentActive, unenrollStudent } from "../src/server/services/courses";
-import { createItem } from "../src/server/services/tree";
+import { createItem, getItem } from "../src/server/services/tree";
+import { listQuestions } from "../src/server/services/exams";
 import { detectFormat } from "../src/lib/excel-formats";
 import { assignEnrollmentsToCohort, createCohort } from "../src/server/services/cohorts";
 import { ownScope, type ViewScope } from "../src/server/auth/view-scope";
@@ -77,7 +78,7 @@ import {
   type AttachmentSummary,
 } from "../src/lib/attachment-summary";
 import { readSheetRows, type SheetData } from "../src/server/services/sheet-colors";
-import { attachToConversation, summarizeAttachment } from "../src/server/services/attachment-intake";
+import { attachToConversation, summarizeAttachment, type StoredAttachment } from "../src/server/services/attachment-intake";
 import { absolutePathFor, deleteFile, getFileRecord, saveStream } from "../src/server/services/storage";
 import { peopleRows, headerIndex } from "../src/server/assistant/rows-from-attachment";
 import { toCourseDrafts } from "../src/server/services/ai-course-import";
@@ -795,6 +796,25 @@ async function hojasDeDescarga(blocks: AssistantBlock[] | undefined): Promise<Sh
   return file ? readSheetRows(file.bytes, file.fileName) : [];
 }
 
+/** Filas de texto → xlsx, como si el usuario hubiera llenado la hoja y la subiera. */
+function xlsxDeFilas(hoja: string, headers: string[], filas: string[][]): Promise<Buffer> {
+  return buildXlsx([
+    { name: hoja, columns: headers.map((title) => ({ title })), rows: filas.map((f) => f.map((text) => ({ text }))) },
+  ]);
+}
+
+/** Sube la hoja como adjunto real de la conversación (archivo en disco incluido). */
+async function adjuntar(conversationId: string, bytes: Buffer, name: string): Promise<StoredAttachment> {
+  const fileId = await saveTestFile(bytes, name, ids.teacher);
+  const { id, summary } = await attachToConversation({ conversationId, fileId, userId: ids.teacher });
+  return { id, fileId, summary };
+}
+
+/** Las celdas de una hoja, ya rellenadas a lo ancho del encabezado. */
+function filasDe(hoja: SheetData | undefined, headers: string[]): string[][] {
+  return (hoja?.rows ?? []).slice(1).map((r) => headers.map((_, i) => r.cells[i] ?? ""));
+}
+
 async function formatoExcelChecks() {
   console.log("\n— Formato de Excel para llenar");
   seedFormatos();
@@ -854,6 +874,104 @@ async function formatoExcelChecks() {
   check("Sin curso: lo pide y manda a buscar_curso", !downloadOf(sinCurso.blocks) && sinCurso.forModel.includes("buscar_curso"), sinCurso.forModel);
   const examenAjeno = await pedir("examen", "", fmt.leccion);
   check("Un id que no es de examen: se niega", !downloadOf(examenAjeno.blocks) && examenAjeno.forModel.includes("examen"), examenAjeno.forModel);
+}
+
+async function aplicarExcelChecks() {
+  console.log("\n— Aplicar un Excel editado");
+  if (!HAS_SOFFICE) {
+    console.log("  (sin LibreOffice: se omite)");
+    return;
+  }
+  const user = { ...teacherUser, id: ids.teacher };
+  const conv = createConversation(ids.teacher, `${P} aplicar`);
+  const anchor = appendMessage(conv.id, "assistant", [], "");
+  const base = { ...ctxFor(user, ownScope(user)), conversationId: conv.id, messageId: anchor.id };
+  const tool = toolByName("aplicar_excel")!;
+
+  const sinAdjunto = await tool.run({ curso_id: "", item_id: "", formato: "" }, base);
+  check("Sin adjunto: lo dice y no propone nada", !sinAdjunto.proposalId && sinAdjunto.forModel.toLowerCase().includes("adjunto"), sinAdjunto.forModel);
+
+  // ── Matrícula: la vuelta completa (se genera, se edita y se aplica) ──
+  const formato = await toolByName("formato_excel")!.run({ tipo: "matricula", curso_id: fmt.curso, item_id: "" }, base);
+  const hojas = await hojasDeDescarga(formato.blocks);
+  const cabecera = hojas[0]?.rows[0]?.cells ?? [];
+  const iAccion = cabecera.indexOf("accion");
+  const filas = filasDe(hojas[0], cabecera);
+  for (const fila of filas) if (fila[0] === `${P}-ana@test.local`) fila[iAccion] = "quitar";
+  const nueva = cabecera.map(() => "");
+  nueva[0] = `${P}-beto@test.local`;
+  nueva[iAccion] = "matricular";
+  filas.push(nueva);
+  const adjM = await adjuntar(conv.id, await xlsxDeFilas("Matrícula", cabecera, filas), `${P}-matricula.xlsx`);
+  const ctxM = { ...base, attachments: [adjM] };
+
+  const propM = await tool.run({ curso_id: fmt.curso, item_id: "", formato: "" }, ctxM);
+  check("Reconoce la matrícula y crea la propuesta", typeof propM.proposalId === "string", propM.forModel);
+  const pM = getProposal(propM.proposalId!)!;
+  check("Solo las filas con acción escrita", pM.rows.length === 2, pM.rows.map((r) => r.cells));
+  const quitar = pM.rows.find((r) => r.cells.correo === `${P}-ana@test.local`);
+  const poner = pM.rows.find((r) => r.cells.correo === `${P}-beto@test.local`);
+  check("La de Ana dice Quitar y trae su nombre", quitar?.cells.accion === "Quitar" && (quitar?.cells.alumno ?? "").includes("Ana"), quitar);
+  check("La de Beto dice Matricular y no está bloqueada", poner?.cells.accion === "Matricular" && !poner?.blocked, poner);
+  check("Las columnas no se editan a mano (manda el archivo)", pM.draft.columns.every((c) => c.editable === false), pM.draft.columns);
+  check("El título dice de qué curso es", pM.draft.title.includes("Formatos"), pM.draft.title);
+  const ajeno = await tool.run({ curso_id: fmt.ajeno, item_id: "", formato: "" }, ctxM);
+  check("Curso que no es tuyo: no propone nada", !ajeno.proposalId && ajeno.forModel.includes("no te pertenece"), ajeno.forModel);
+  const sinCurso = await tool.run({ curso_id: "", item_id: "", formato: "" }, ctxM);
+  check("Sin curso: lo pide y no aplica nada", !sinCurso.proposalId && sinCurso.forModel.includes("buscar_curso"), sinCurso.forModel);
+  const aplM = await applyProposal(propM.proposalId!, pM.rows, ctxM, "");
+  check("El resultado trae las cifras del importador", "text" in aplM && aplM.text.includes("1 alumno") && aplM.text.includes("1 dado"), aplM);
+  const deAna = db.select().from(enrollments).where(and(eq(enrollments.courseId, fmt.curso), eq(enrollments.studentId, ids.s1))).get();
+  const deBeto = db.select().from(enrollments).where(and(eq(enrollments.courseId, fmt.curso), eq(enrollments.studentId, ids.s2))).get();
+  check("Ana queda dada de baja de verdad", deAna?.status === "dropped", deAna?.status);
+  check("Beto queda matriculado de verdad", deBeto?.status === "active", deBeto?.status);
+  check("Auditoría del formato aplicado", db.select().from(auditLog).where(eq(auditLog.action, "assistant_aplicar_excel")).all().length >= 1);
+
+  // ── Lecciones: cambiar un título ──
+  const fl = await toolByName("formato_excel")!.run({ tipo: "lecciones", curso_id: fmt.curso, item_id: "" }, base);
+  const hojasL = await hojasDeDescarga(fl.blocks);
+  const cabL = hojasL[0]?.rows[0]?.cells ?? [];
+  const filasL = filasDe(hojasL[0], cabL);
+  const iTitulo = cabL.indexOf("titulo");
+  for (const fila of filasL) if (fila[0] === fmt.leccion) fila[iTitulo] = `${P} Bienvenida`;
+  const adjL = await adjuntar(conv.id, await xlsxDeFilas("Lecciones", cabL, filasL), `${P}-lecciones.xlsx`);
+  const ctxL = { ...base, attachments: [adjL] };
+  const propL = await tool.run({ curso_id: fmt.curso, item_id: "", formato: "" }, ctxL);
+  const pL = getProposal(propL.proposalId!)!;
+  const cambia = pL.rows.find((r) => !r.blocked);
+  check("Lecciones: solo se aplica la que se editó, y dice qué cambia", pL.rows.filter((r) => !r.blocked).length === 1 && (cambia?.cells.cambio ?? "").includes("título"), pL.rows.map((r) => r.cells));
+  check("Lecciones: las que quedan igual se bloquean como «sin cambios»", pL.rows.filter((r) => r.blocked && r.warning === "Sin cambios").length === 2, pL.rows.map((r) => r.warning));
+  const aplL = await applyProposal(propL.proposalId!, pL.rows, ctxL, "");
+  check("Lecciones: el título cambia de verdad", getItem(fmt.leccion)?.title === `${P} Bienvenida`, getItem(fmt.leccion)?.title);
+  check("Lecciones: el resultado lo dice", "text" in aplL && aplL.text.includes("1 lección"), aplL);
+
+  // ── Examen: una pregunta nueva ──
+  const cabE = ["tipo", "pregunta", "puntos", "opcion_1", "opcion_2", "correctas"];
+  const filaE = ["opcion_unica", `${P} ¿Qué extintor va en fuego eléctrico?`, "2", "Agua", "CO2", "2"];
+  const adjE = await adjuntar(conv.id, await xlsxDeFilas("Preguntas", cabE, [filaE]), `${P}-examen.xlsx`);
+  const ctxE = { ...base, attachments: [adjE] };
+  const sinItem = await tool.run({ curso_id: fmt.curso, item_id: "", formato: "" }, ctxE);
+  check("Examen sin item_id: lo pide y no aplica nada", !sinItem.proposalId && sinItem.forModel.includes("item_id"), sinItem.forModel);
+  const propE = await tool.run({ curso_id: "", item_id: fmt.examen, formato: "" }, ctxE);
+  const pE = getProposal(propE.proposalId!)!;
+  check("Examen: la pregunta sale con su tipo y sus puntos", pE.rows.length === 1 && pE.rows[0].cells.tipo === "Opción única" && pE.rows[0].cells.puntos === "2", pE.rows[0]?.cells);
+  const aplE = await applyProposal(propE.proposalId!, pE.rows, ctxE, "");
+  check("Examen: la pregunta queda en el examen", listQuestions(fmt.examen).length === 1, listQuestions(fmt.examen).map((q) => q.promptMd));
+  check("Examen: el resultado lo dice", "text" in aplE && aplE.text.includes("1 pregunta"), aplE);
+
+  // ── Lo que no es de nadie y lo que ya tiene herramienta ──
+  const adjRaro = await adjuntar(conv.id, await xlsxDeFilas("Hoja", ["cosa", "otra"], [["1", "2"]]), `${P}-raro.xlsx`);
+  const noSe = await tool.run({ curso_id: fmt.curso, item_id: "", formato: "" }, { ...base, attachments: [adjRaro] });
+  check("Formato desconocido: lo dice y ofrece los que entiende", !noSe.proposalId && noSe.forModel.includes("No reconocí") && noSe.forModel.includes("matrícula"), noSe.forModel);
+
+  const lista = await makeColoredXlsx();
+  if (lista) {
+    const adjA = await adjuntar(conv.id, lista, `${P}-lista.xlsx`);
+    const remite = await tool.run({ curso_id: "", item_id: "", formato: "" }, { ...base, attachments: [adjA] });
+    check("Lista de alumnos: manda a alta_alumnos y no duplica trabajo", !remite.proposalId && remite.forModel.includes("alta_alumnos"), remite.forModel);
+    const forzado = await tool.run({ curso_id: "", item_id: "", formato: "cursos" }, { ...base, attachments: [adjA] });
+    check("Lo que pide el usuario manda, pero avisa de la diferencia", forzado.forModel.includes("crear_cursos") && forzado.forModel.includes("parecen de alumnos"), forzado.forModel);
+  }
 }
 
 /**
@@ -2338,6 +2456,7 @@ async function main() {
     await turnoConAdjuntoChecks();
     await crearCursosChecks();
     await formatoExcelChecks();
+    await aplicarExcelChecks();
     await queryChecks();
     await listadoChecks();
     await consultaToolChecks();
