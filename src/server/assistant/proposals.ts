@@ -72,9 +72,13 @@ export async function applyProposal(
     .where(and(eq(aiProposals.id, id), eq(aiProposals.status, "pending")))
     .run().changes;
   if (claimed !== 1) return { error: "Esta revisión ya se aplicó o se canceló." };
+  // Con `recheckOnApply` van todas las filas: las bloqueadas lo estaban por sus
+  // datos y el usuario pudo corregirlas en la tabla, así que la herramienta las
+  // vuelve a revisar. Sin él, una fila bloqueada no se aplica ni mandándola.
+  const toApply = proposal.draft.recheckOnApply ? safe : applicableRows(safe);
   let result: ApplyResult;
   try {
-    result = await tool.apply(applicableRows(safe), proposal.payload, ctx, confirm);
+    result = await tool.apply(toApply, proposal.payload, ctx, confirm);
   } catch (err) {
     // Si la herramienta falla, la propuesta vuelve a estar disponible
     db.update(aiProposals).set({ status: "pending" }).where(eq(aiProposals.id, id)).run();

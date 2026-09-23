@@ -504,6 +504,31 @@ async function altaAlumnosChecks() {
       db.select().from(users).where(eq(users.email, `${P}-ana@test.local`)).all().length === 1
   );
 
+  // Fila con problema de datos: el usuario la corrige en la tabla y sí se aplica
+  const conv5 = createConversation(ids.teacher, `${P} altas5`);
+  const anchor5 = appendMessage(conv5.id, "assistant", [], "");
+  const ctx5 = { ...ctxFor(user, ownScope(user)), conversationId: conv5.id, messageId: anchor5.id };
+  const corregible = await toolByName("alta_alumnos")!.run(
+    { origen: "texto", texto: `Nombre,Correo\n${P} Nueva Cinco,`, hoja: "", filtro_color: "", curso_id: "", grupo: "" },
+    ctx5
+  );
+  const pCorregible = getProposal(corregible.proposalId!)!;
+  check("El alta se vuelve a revisar al aplicar", pCorregible.draft.recheckOnApply === true, pCorregible.draft);
+  check("Falta el correo: bloqueada con su aviso", pCorregible.rows[0].blocked === true && (pCorregible.rows[0].warning ?? "").toLowerCase().includes("correo"), pCorregible.rows[0]);
+  const corregida = await applyProposal(
+    corregible.proposalId!,
+    pCorregible.rows.map((r) => ({ ...r, cells: { ...r.cells, correo: `${P}-nueva5@test.local` } })),
+    ctx5,
+    ""
+  );
+  check(
+    "Corregir el correo en la tabla sí crea la cuenta",
+    "text" in corregida &&
+      corregida.text.includes("1 alumno") &&
+      db.select({ id: users.id }).from(users).where(eq(users.email, `${P}-nueva5@test.local`)).get() !== undefined,
+    corregida
+  );
+
   // Curso ajeno
   const ajeno = await toolByName("alta_alumnos")!.run(
     { origen: "texto", texto: `Nombre,Correo\nX,x@test.local`, hoja: "", filtro_color: "", curso_id: "no-existe", grupo: "" },
@@ -610,6 +635,27 @@ async function bajaAlumnosChecks() {
   check("Carla sigue activa", db.select({ active: users.active }).from(users).where(eq(users.id, ids.s3)).get()?.active === true);
   check("Auditoría de la baja", db.select().from(auditLog).where(eq(auditLog.action, "assistant_baja_alumnos")).get() !== undefined);
   setStudentActive(ids.s1, true); // se restaura para el resto de las pruebas
+
+  // Bloqueo por PERMISO: mandar la fila «corregida» no se la salta
+  const ajena = await toolByName("baja_alumnos")!.run(
+    { modo: "deshabilitar", origen: "texto", texto: `Nombre,Correo\n${P} Carla Ajena,${P}-carla@test.local`, hoja: "", filtro_color: "", alumno_ids: [] },
+    ctx
+  );
+  const pAjena = getProposal(ajena.proposalId!)!;
+  check("La baja no se vuelve a revisar al aplicar", !pAjena.draft.recheckOnApply, pAjena.draft);
+  const forzada = await applyProposal(
+    ajena.proposalId!,
+    pAjena.rows.map((r) => ({ ...r, blocked: false, warning: undefined })),
+    ctx,
+    ""
+  );
+  check(
+    "Fila bloqueada por permiso mandada «corregida»: no se deshabilita",
+    "text" in forzada &&
+      forzada.text.startsWith("0 ") &&
+      db.select({ active: users.active }).from(users).where(eq(users.id, ids.s3)).get()?.active === true,
+    forzada
+  );
 
   // Por ids, en vez de por archivo
   const porIds = await toolByName("baja_alumnos")!.run(
@@ -905,7 +951,11 @@ function attachmentSummaryChecks() {
   check("Sin encabezados conocidos: solo revisar", suggestionsFor({ fileName: "x.pdf", kind: "doc", sheets: [], chars: 100 }).length === 1);
 
   check("Detalle: varias hojas y el total de filas", attachmentDetail(summary) === "2 hojas · 94 filas", attachmentDetail(summary));
-  check("Detalle: una sola hoja", attachmentDetail(cursos) === "4 filas", attachmentDetail(cursos));
+  const unaHoja: AttachmentSummary = { ...summary, sheets: [{ ...summary.sheets[0], rowCount: 8 }] };
+  check("Detalle: una sola hoja lleva su nombre", attachmentDetail(unaHoja) === "«Matutino» · 8 filas", attachmentDetail(unaHoja));
+  check("Detalle: una sola hoja", attachmentDetail(cursos) === "«Hoja1» · 4 filas", attachmentDetail(cursos));
+  const sinNombre: AttachmentSummary = { ...unaHoja, sheets: [{ ...unaHoja.sheets[0], name: "  " }] };
+  check("Detalle: hoja sin nombre, solo las filas", attachmentDetail(sinNombre) === "8 filas", attachmentDetail(sinNombre));
   check("Detalle: documento con sus caracteres", attachmentDetail({ fileName: "manual.pdf", kind: "doc", sheets: [], chars: 12_000 }) === "PDF · 12 000 caracteres", attachmentDetail({ fileName: "manual.pdf", kind: "doc", sheets: [], chars: 12_000 }));
   check("Detalle: imagen", attachmentDetail({ fileName: "foto.jpg", kind: "image", sheets: [], chars: 0 }) === "Imagen");
 

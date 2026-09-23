@@ -25,7 +25,11 @@ export function ReviewTable({ block, onChange }: { block: ProposalBlock; onChang
   const [confirmText, setConfirmText] = useState("");
   const [busy, startTransition] = useTransition();
   const frozen = block.status !== "pending";
+  // El botón cuenta solo lo que hoy se puede aplicar; con `recheckOnApply` las
+  // filas con aviso también se mandan y se vuelven a revisar en el servidor,
+  // así que se avisa aparte en vez de inflar el número
   const count = applicableRows(rows).length;
+  const retryNote = !frozen && !!block.recheckOnApply && rows.some((r) => r.blocked);
   // Lo irreversible pide escribir la palabra tal cual, sin distinguir mayúsculas ni espacios
   const needsConfirm = !frozen && !!block.confirmWord;
   const confirmed = !needsConfirm || confirmText.trim().toLowerCase() === block.confirmWord!.toLowerCase();
@@ -75,6 +79,11 @@ export function ReviewTable({ block, onChange }: { block: ProposalBlock; onChang
 
   const footer = (
     <div className="space-y-2">
+      {retryNote && (
+        <p className="text-[11.5px] leading-snug text-amber-700">
+          Las filas en ámbar se intentarán de nuevo al aplicar, con lo que escribas.
+        </p>
+      )}
       {needsConfirm && (
         <div className="space-y-1.5">
           <p className="text-[12px] text-red-600">

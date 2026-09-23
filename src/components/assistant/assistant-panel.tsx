@@ -89,6 +89,7 @@ function Thread() {
     setDraft,
     send,
     attachments,
+    suggestions,
     uploading,
     attachFiles,
     removeAttachment,
@@ -146,6 +147,26 @@ function Thread() {
             {attachments.map((a) => (
               <AttachmentChip key={a.id} name={a.name} detail={a.detail} onRemove={() => removeAttachment(a.id)} />
             ))}
+          </div>
+        )}
+        {/* Las mismas sugerencias del desplegable del campo: en celular no hay
+            campo, y al adjuntar desde aquí el desplegable no se abre */}
+        {attachments.length > 0 && suggestions.length > 0 && (
+          <div className="mb-2">
+            <p className="text-[11.5px] font-semibold uppercase tracking-[0.06em] text-slate-500">Sugerencias</p>
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {suggestions.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => void send(s)}
+                  disabled={busy || uploading}
+                  className="rounded-full border border-indigo-200 bg-white px-3 py-1 text-[11.5px] font-semibold text-indigo-900 transition-colors hover:bg-indigo-50 disabled:opacity-50"
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
           </div>
         )}
         {uploading && (

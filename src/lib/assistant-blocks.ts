@@ -36,6 +36,8 @@ export type AssistantBlock =
       resultText?: string;
       /** Para lo irreversible: hay que escribir esta palabra para poder aplicar */
       confirmWord?: string;
+      /** Las filas con aviso se vuelven a intentar al aplicar: se pueden corregir en la tabla */
+      recheckOnApply?: boolean;
     }
   /** Archivo que el usuario adjuntó al mensaje (`detail`: «2 hojas · 94 filas») */
   | { type: "attachment"; name: string; detail: string }

@@ -48,6 +48,8 @@ export type ProposalDraft = {
   payload: Record<string, unknown>;
   /** Si está, hay que escribirla tal cual (sin distinguir mayúsculas ni espacios) para aplicar */
   confirmWord?: string;
+  /** Las filas bloqueadas por datos (no por permisos) se vuelven a revisar al aplicar: el usuario puede corregirlas en la tabla */
+  recheckOnApply?: boolean;
 };
 
 export type ApplyResult = { text: string; blocks?: AssistantBlock[] };

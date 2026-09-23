@@ -81,15 +81,18 @@ export function summaryForModel(summary: AttachmentSummary): string {
 const grouped = (n: number) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
 
 /**
- * Una línea para la interfaz: «2 hojas · 94 filas», «84 filas»,
- * «PDF · 12 000 caracteres» o «Imagen».
+ * Una línea para la interfaz: 2 hojas · 94 filas; «Matutino» · 84 filas;
+ * PDF · 12 000 caracteres; Imagen. Con una sola hoja se dice su nombre, que ya
+ * se conoce: así se ve de cuál se está hablando.
  */
 export function attachmentDetail(summary: AttachmentSummary): string {
   if (summary.kind === "image") return "Imagen";
   if (summary.sheets.length > 0) {
     const rows = summary.sheets.reduce((n, s) => n + s.rowCount, 0);
     const filas = `${grouped(rows)} ${rows === 1 ? "fila" : "filas"}`;
-    return summary.sheets.length === 1 ? filas : `${summary.sheets.length} hojas · ${filas}`;
+    if (summary.sheets.length > 1) return `${summary.sheets.length} hojas · ${filas}`;
+    const name = summary.sheets[0].name.trim();
+    return name ? `«${cut(name, 30)}» · ${filas}` : filas;
   }
   const ext = /\.([a-z0-9]{1,8})$/i.exec(summary.fileName)?.[1].toUpperCase();
   const chars = `${grouped(summary.chars)} caracteres`;

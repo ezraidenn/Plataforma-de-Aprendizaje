@@ -116,6 +116,9 @@ export const altaAlumnos: AssistantTool = {
       columns: COLUMNS,
       rows,
       payload: { courseId: course?.id ?? "", courseTitle: course?.title ?? "", grupo },
+      // Lo que bloquea aquí son los datos (falta el correo, está mal escrito,
+      // repetido): si el usuario los corrige en la tabla, se vuelven a intentar
+      recheckOnApply: true,
     });
 
     // La IA solo ve cuántas son: los nombres y correos se quedan en la tabla
@@ -136,13 +139,16 @@ export const altaAlumnos: AssistantTool = {
     if (courseId && !course) return { text: "El curso ya no está disponible; no se dio de alta a nadie." };
 
     const forced = String(payload.grupo ?? "").trim();
-    const people = rows
-      .map((r) => ({
-        fullName: (r.cells.nombre ?? "").trim(),
-        email: (r.cells.correo ?? "").trim().toLowerCase(),
-        group: forced || (r.cells.grupo ?? "").trim(),
-      }))
-      .filter((p) => p.email);
+    // Llegan TODAS las filas (también las que tenían aviso): `importStudents`
+    // revalida cada una con las reglas del CSV, así que lo corregido cuenta
+    const drafts = rows.map((r) => ({
+      fullName: (r.cells.nombre ?? "").trim(),
+      email: (r.cells.correo ?? "").trim().toLowerCase(),
+      group: forced || (r.cells.grupo ?? "").trim(),
+    }));
+    const people = drafts.filter((p) => p.email);
+    // Las que siguen sin correo no llegan al CSV: se cuentan aparte como omitidas
+    const sinCorreo = drafts.length - people.length;
     if (people.length === 0) return { text: "No quedó ninguna fila que dar de alta." };
 
     // El grupo solo existe dentro de un curso; sin curso se ignora
@@ -167,9 +173,12 @@ export const altaAlumnos: AssistantTool = {
       auditAction: "assistant_alta_alumnos",
     });
 
+    // Creadas, matriculadas y omitidas por separado: así se ve qué pasó con las
+    // filas que traían aviso y se corrigieron (o se dejaron mal) en la tabla
+    const omitidas = result.skipped + sinCorreo;
     const parts = [`${result.created} alumno(s) creado(s)`];
     if (course) parts.push(`${result.enrolled} matriculado(s) en ${course.title}`);
-    if (result.skipped > 0) parts.push(`${result.skipped} omitido(s)`);
+    if (omitidas > 0) parts.push(`${omitidas} omitido(s) (falta el nombre o el correo, está mal escrito, repetido o ya tenía cuenta)`);
     let text = `${parts.join(", ")}.`;
     if (result.created > 0) {
       text += " Las contraseñas se generaron automáticamente: si alguien no puede entrar, restablécela desde Estudiantes.";

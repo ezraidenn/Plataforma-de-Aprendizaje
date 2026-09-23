@@ -47,7 +47,7 @@ export type TurnOutput =
 function proposalBlock(proposalId: string): AssistantBlock | null {
   const p = getProposal(proposalId);
   if (!p) return null;
-  return { type: "proposal", proposalId: p.id, title: p.draft.title, applyLabel: p.draft.applyLabel, columns: p.draft.columns, rows: p.rows, status: p.status, confirmWord: p.draft.confirmWord };
+  return { type: "proposal", proposalId: p.id, title: p.draft.title, applyLabel: p.draft.applyLabel, columns: p.draft.columns, rows: p.rows, status: p.status, confirmWord: p.draft.confirmWord, recheckOnApply: p.draft.recheckOnApply };
 }
 
 export async function runTurn(input: TurnInput): Promise<TurnOutput> {
