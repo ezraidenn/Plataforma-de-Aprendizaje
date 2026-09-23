@@ -72,7 +72,7 @@ export function summaryForModel(summary: AttachmentSummary): string {
     }
   }
   if (summary.sheets.length === 0) lines.push(`- Documento de ${summary.chars} caracteres de texto.`);
-  lines.push("Para usarlo, llama a una herramienta con origen «adjunto»: el servidor lee el archivo completo, tú no.");
+  // Cómo usarlo se dice una sola vez en la instrucción del sistema, no por archivo
   const text = lines.join("\n");
   return text.length <= MAX_SUMMARY_CHARS ? text : `${text.slice(0, MAX_SUMMARY_CHARS - 1)}…`;
 }

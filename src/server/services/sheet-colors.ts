@@ -2,6 +2,7 @@ import "server-only";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import zlib from "node:zlib";
 import { soffice } from "./text-extract";
 import { colorFamily, type ColorFamily } from "@/lib/attachment-summary";
 
@@ -51,6 +52,60 @@ function sheetNames(html: string): string[] {
   return names;
 }
 
+/**
+ * Una entrada de un ZIP, sin dependencias: se busca en el directorio central y
+ * se descomprime. xlsx y ods son ZIP; solo se saca un XML pequeño.
+ */
+function zipEntry(zip: Buffer, wanted: string): string | null {
+  const eocd = zip.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  if (eocd < 0 || eocd + 22 > zip.length) return null;
+  const count = zip.readUInt16LE(eocd + 10);
+  let at = zip.readUInt32LE(eocd + 16);
+  for (let i = 0; i < count; i++) {
+    if (at + 46 > zip.length || zip.readUInt32LE(at) !== 0x02014b50) return null;
+    const method = zip.readUInt16LE(at + 10);
+    const compSize = zip.readUInt32LE(at + 20);
+    const nameLen = zip.readUInt16LE(at + 28);
+    const extraLen = zip.readUInt16LE(at + 30);
+    const commentLen = zip.readUInt16LE(at + 32);
+    const offset = zip.readUInt32LE(at + 42);
+    if (zip.toString("utf8", at + 46, at + 46 + nameLen) === wanted) {
+      // El encabezado local repite el nombre y los extras, con otros tamaños
+      const start = offset + 30 + zip.readUInt16LE(offset + 26) + zip.readUInt16LE(offset + 28);
+      const data = zip.subarray(start, start + compSize);
+      return (method === 0 ? data : zlib.inflateRawSync(data)).toString("utf8");
+    }
+    at += 46 + nameLen + extraLen + commentLen;
+  }
+  return null;
+}
+
+/**
+ * Nombres de las hojas leídos del propio archivo. Hace falta porque LibreOffice
+ * solo los escribe en el HTML cuando hay más de una hoja: una lista de una sola
+ * hoja perdía su nombre («Matutino») y la IA veía un «Hoja 1» inventado.
+ * Solo sirve para los formatos que son ZIP (xlsx y ods); lo demás vuelve vacío.
+ */
+function namesFromFile(bytes: Buffer, fileName: string): string[] {
+  try {
+    const ext = path.extname(fileName).toLowerCase();
+    if (ext === ".xlsx" || ext === ".xlsm") {
+      const xml = zipEntry(bytes, "xl/workbook.xml");
+      // Solo dentro de <sheets>: fuera hay otras etiquetas que empiezan igual
+      const block = xml ? /<sheets>([\s\S]*?)<\/sheets>/i.exec(xml) : null;
+      return block ? [...block[1].matchAll(/<sheet\b[^>]*\bname="([^"]*)"/gi)].map((m) => decode(m[1])) : [];
+    }
+    if (ext === ".ods") {
+      const xml = zipEntry(bytes, "content.xml");
+      return xml ? [...xml.matchAll(/<table:table\b[^>]*\btable:name="([^"]*)"/gi)].map((m) => decode(m[1])) : [];
+    }
+    return [];
+  } catch {
+    // Un ZIP raro o partido: se sigue con lo que diga el HTML
+    return [];
+  }
+}
+
 export async function readSheetRows(bytes: Buffer, fileName: string): Promise<SheetData[]> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "lms-hoja-"));
   try {
@@ -63,6 +118,10 @@ export async function readSheetRows(bytes: Buffer, fileName: string): Promise<Sh
 
     const names = sheetNames(html);
     const tables = [...html.matchAll(/<table[\s\S]*?<\/table>/gi)].map((m) => m[0]);
+    // Los del archivo solo se usan si hay uno por tabla: así no se descoloca
+    // ninguna hoja (una oculta puede estar en el archivo y no en el HTML)
+    const fromFile = namesFromFile(bytes, fileName);
+    const real = fromFile.length === tables.length ? fromFile : [];
     return tables.map((table, i) => {
       const rows: SheetRow[] = [];
       for (const tr of table.matchAll(/<tr[\s\S]*?<\/tr>/gi)) {
@@ -79,7 +138,7 @@ export async function readSheetRows(bytes: Buffer, fileName: string): Promise<Sh
         // Filas totalmente vacías: la hoja suele traer muchas al final
         if (cells.some((c) => c !== "")) rows.push({ cells, color });
       }
-      return { name: names[i] || `Hoja ${i + 1}`, rows };
+      return { name: names[i] || real[i] || `Hoja ${i + 1}`, rows };
     });
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
