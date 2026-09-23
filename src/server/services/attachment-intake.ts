@@ -2,7 +2,7 @@ import "server-only";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { db } from "@/server/db";
-import { aiAttachments, aiConversations, files } from "@/server/db/schema";
+import { aiAttachments, aiConversations, aiMessages, files } from "@/server/db/schema";
 import { extractText, formatOf, ScannedPdfError } from "./text-extract";
 import { readSheetRows, type SheetData } from "./sheet-colors";
 import { readFileBytes } from "./storage";
@@ -119,6 +119,68 @@ export function attachmentsOf(conversationId: string, ids?: string[]): StoredAtt
     .orderBy(asc(aiAttachments.createdAt))
     .all();
   return rows.map((r) => ({ id: r.id, fileId: r.fileId, summary: r.summary as AttachmentSummary }));
+}
+
+/**
+ * Los adjuntos que el cliente manda con un turno, ya en la conversación del
+ * turno. Antes, un id de otra conversación se descartaba EN SILENCIO y la IA
+ * contestaba sin el archivo, con la tarjeta ausente y sin ningún aviso. Pasa
+ * cuando la subida y el turno acaban en conversaciones distintas (la primera
+ * subida de una conversación nueva abre la suya). Ahora:
+ *   - de otra conversación del MISMO usuario, viaja con el turno: si esa
+ *     conversación no tiene mensajes (la abrió la subida y nadie la usó), el
+ *     adjunto se muda y la conversación vacía se borra; si ya tiene mensajes,
+ *     se copia (el archivo es el mismo) para no quitárselo a aquella;
+ *   - de otro usuario, o que ya no existe, NUNCA se usa: devuelve null y no
+ *     toca nada, para que el turno lo diga en vez de contestar como si no
+ *     hubiera ningún archivo.
+ * Devuelve los ids que valen en `conversationId`, en el orden pedido.
+ */
+export function claimAttachments(opts: {
+  userId: string;
+  conversationId: string;
+  ids: string[];
+}): string[] | null {
+  const wanted = [...new Set(opts.ids)];
+  if (wanted.length === 0) return [];
+  const rows = db
+    .select({ id: aiAttachments.id, conversationId: aiAttachments.conversationId, fileId: aiAttachments.fileId, summary: aiAttachments.summary })
+    .from(aiAttachments)
+    .innerJoin(aiConversations, eq(aiConversations.id, aiAttachments.conversationId))
+    .where(and(inArray(aiAttachments.id, wanted), eq(aiConversations.userId, opts.userId)))
+    .all();
+  if (rows.length < wanted.length) return null;
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const ids: string[] = [];
+  db.transaction((tx) => {
+    const emptied = new Set<string>();
+    for (const id of wanted) {
+      const row = byId.get(id)!;
+      if (row.conversationId === opts.conversationId) {
+        ids.push(id);
+        continue;
+      }
+      const used = tx.select({ id: aiMessages.id }).from(aiMessages).where(eq(aiMessages.conversationId, row.conversationId)).limit(1).get();
+      if (used) {
+        const copy = nanoid();
+        tx.insert(aiAttachments).values({ id: copy, conversationId: opts.conversationId, fileId: row.fileId, summary: row.summary }).run();
+        ids.push(copy);
+      } else {
+        tx.update(aiAttachments).set({ conversationId: opts.conversationId }).where(eq(aiAttachments.id, id)).run();
+        emptied.add(row.conversationId);
+        ids.push(id);
+      }
+    }
+    // La conversación que abrió la subida se queda sin nada: fuera del historial
+    for (const conversationId of emptied) {
+      const left = tx.select({ id: aiAttachments.id }).from(aiAttachments).where(eq(aiAttachments.conversationId, conversationId)).limit(1).get();
+      const talked = tx.select({ id: aiMessages.id }).from(aiMessages).where(eq(aiMessages.conversationId, conversationId)).limit(1).get();
+      if (!left && !talked) {
+        tx.delete(aiConversations).where(and(eq(aiConversations.id, conversationId), eq(aiConversations.userId, opts.userId))).run();
+      }
+    }
+  });
+  return ids;
 }
 
 /** Bytes del archivo de un adjunto, para procesarlo completo. */

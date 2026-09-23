@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 import { placeholderFor } from "@/lib/assistant-placeholder";
 import { AI_ACCEPT } from "@/lib/ai-import-files";
 import { AttachmentChip } from "./attachment-chip";
-import { DEFAULT_ATTACHMENT_TEXT, MAX_ATTACHMENTS, pastedImages, useAssistant } from "./assistant-provider";
+import { DEFAULT_ATTACHMENT_TEXT, MAX_ATTACHMENTS, avisarSubiendo, pastedImages, useAssistant } from "./assistant-provider";
 
 /**
  * Campo del asistente en el centro de la barra (solo escritorio): blanco,
@@ -35,8 +35,8 @@ export function AssistantField() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [closed, setClosed] = useState(false);
   // Al enviar hay adjunto pero no hace falta escribir nada. Mientras un archivo
-  // se sube también se puede enviar: el turno espera a que esté adjunto
-  const canSend = (draft.trim().length > 0 || attachments.length > 0 || uploading) && !busy;
+  // se sube NO se puede enviar (la IA contestaría sin verlo); lo escrito se queda
+  const canSend = (draft.trim().length > 0 || attachments.length > 0) && !busy && !uploading;
   const full = attachments.length >= MAX_ATTACHMENTS;
   const clipLabel = full
     ? `Máximo ${MAX_ATTACHMENTS} archivos por mensaje`
@@ -71,7 +71,8 @@ export function AssistantField() {
         aria-label="Asistente de IA: escribe o suelta un archivo"
         onSubmit={(e) => {
           e.preventDefault();
-          if (canSend) void send(draft.trim() || DEFAULT_ATTACHMENT_TEXT);
+          if (uploading && !busy) avisarSubiendo();
+          else if (canSend) void send(draft.trim() || DEFAULT_ATTACHMENT_TEXT);
         }}
         className={cn(
           "flex h-[42px] w-full items-center gap-2 rounded-full pl-4 pr-1.5 text-slate-500 shadow-[0_1px_2px_rgb(15_23_42/0.12),0_8px_24px_-8px_rgb(30_27_75/0.45)] transition-shadow focus-within:ring-2 focus-within:ring-white/60",
@@ -115,15 +116,23 @@ export function AssistantField() {
                 <Sparkles className="size-[18px]" aria-hidden />
               </button>
             )}
-            {/* El campo no se esconde mientras sube el archivo: el usuario
-                escribe su mensaje y lo envía; el aviso va en el texto de
-                ayuda y en la rueda de la izquierda */}
+            {/* El campo no se esconde mientras sube el archivo: se puede ir
+                escribiendo el mensaje, pero no enviarlo hasta que termine (el
+                botón de enviar lleva la rueda y Enter solo avisa) */}
             <input
               type="text"
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               onClick={() => {
                 if (draft.trim()) setOpen(true);
+              }}
+              onKeyDown={(e) => {
+                // Con el botón de enviar deshabilitado el navegador ni siquiera
+                // dispara el envío del formulario: el aviso se da aquí
+                if (e.key === "Enter" && uploading && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  avisarSubiendo();
+                }
               }}
               onPaste={(e) => {
                 // Ctrl+V con una captura en el portapapeles: se adjunta igual
@@ -153,12 +162,13 @@ export function AssistantField() {
               type="submit"
               disabled={!canSend}
               aria-label="Enviar al asistente"
+              title={uploading ? "Espera a que termine de subir el archivo" : undefined}
               className={cn(
                 "flex size-8 shrink-0 items-center justify-center rounded-full transition-colors",
                 canSend ? "bg-indigo-600 text-white hover:bg-indigo-700" : "bg-slate-200 text-slate-400"
               )}
             >
-              <ArrowUp className="size-4" aria-hidden />
+              {uploading ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <ArrowUp className="size-4" aria-hidden />}
             </button>
           </>
         )}
@@ -182,7 +192,7 @@ export function AssistantField() {
                     key={s}
                     type="button"
                     onClick={() => void send(s)}
-                    disabled={busy}
+                    disabled={busy || uploading}
                     className="rounded-full border border-indigo-200 bg-white px-3 py-1 text-[11.5px] font-semibold text-indigo-900 transition-colors hover:bg-indigo-50 disabled:opacity-50"
                   >
                     {s}

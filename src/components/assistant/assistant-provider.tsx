@@ -95,6 +95,14 @@ function remember(id: string | null) {
 
 const fail = (text: string) => toast.error(text, { position: "top-center" });
 
+/**
+ * Enter mientras sube el archivo: no se envía, solo se avisa. Con el mismo id
+ * el aviso se reemplaza en vez de apilarse aunque se insista con Enter.
+ */
+export function avisarSubiendo() {
+  toast.info("Espera a que termine de subir el archivo", { id: "asistente-subiendo", position: "top-center", duration: 2500 });
+}
+
 export function AssistantProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -114,41 +122,48 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
   });
   const [dropEnabled, setDropEnabled] = useState(false);
   const lastText = useRef<string | null>(null);
+  // La conversación y los adjuntos viven en refs y el estado es solo su copia
+  // para pintar: quien cambia uno cambia el otro en el mismo paso. Antes un
+  // `useEffect` copiaba el estado a la ref un render tarde, y con un turno y
+  // una subida a la vez el mensaje y el archivo podían acabar en
+  // conversaciones distintas.
   const conversationRef = useRef<string | null>(null);
   // Un turno a la vez: el estado tarda un render en reflejar `busy`, la ref no
   const busyRef = useRef(false);
-  // Lo mismo con los adjuntos: `attachFiles` sube uno tras otro y necesita la
-  // cuenta al día antes de que React vuelva a pintar
+  // `attachFiles` sube uno tras otro y necesita la cuenta al día antes de que
+  // React vuelva a pintar
   const attachmentsRef = useRef<PendingAttachment[]>([]);
-  // Subidas en curso: `send` las espera antes de mandar el turno. Sin esto, el
-  // mensaje sale sin el archivo (el usuario escribe y da Enter mientras sube)
+  // Subidas en curso. La interfaz no deja enviar mientras haya alguna, y
+  // `send` además las espera por si acaso (reintentar, un clic que se cuele)
   const pendingRef = useRef(new Set<Promise<unknown>>());
-  // «Subiendo» es cuántas hay, no un sí/no: dos subidas seguidas se pisaban y
-  // la primera en terminar apagaba el aviso de la otra
-  const uploadsRef = useRef(0);
-  useEffect(() => {
-    conversationRef.current = state.conversationId;
-  }, [state.conversationId]);
-  useEffect(() => {
-    attachmentsRef.current = state.attachments;
-  }, [state.attachments]);
+  // El turno que está en camino: la subida lo espera antes de adjuntar, porque
+  // si es el primero de una conversación nueva es él quien la crea
+  const turnRef = useRef<Promise<unknown> | null>(null);
 
   // Estable: el campo la llama en un efecto al montarse
   const enableFileDrop = useCallback(() => setDropEnabled(true), []);
 
-  /** Enciende o apaga el aviso de «Leyendo el archivo…» contando las subidas. */
-  const countUpload = useCallback((delta: number) => {
-    uploadsRef.current = Math.max(0, uploadsRef.current + delta);
-    const on = uploadsRef.current > 0;
-    setState((s) => (s.uploading === on ? s : { ...s, uploading: on }));
-  }, []);
-
-  /** Apunta una subida para que `send` la espere. */
+  /**
+   * Apunta una subida: `send` la espera y `uploading` (lo que bloquea el botón
+   * de enviar) sigue encendido mientras quede alguna. Es un conjunto, no un
+   * sí/no: dos subidas seguidas se pisaban y la primera apagaba el aviso.
+   */
   const track = useCallback(<T,>(work: Promise<T>): Promise<T> => {
     pendingRef.current.add(work);
-    const forget = () => pendingRef.current.delete(work);
+    setState((s) => (s.uploading ? s : { ...s, uploading: true }));
+    const forget = () => {
+      pendingRef.current.delete(work);
+      const on = pendingRef.current.size > 0;
+      setState((s) => (s.uploading === on ? s : { ...s, uploading: on }));
+    };
     work.then(forget, forget);
     return work;
+  }, []);
+
+  /** Cambia la conversación actual (ref y sesión); el estado lo pone quien llama en su mismo paso. */
+  const setConversation = useCallback((id: string | null) => {
+    conversationRef.current = id;
+    remember(id);
   }, []);
 
   const setAttachments = useCallback((next: PendingAttachment[], suggestions?: string[]) => {
@@ -157,14 +172,17 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const loadConversation = useCallback(
-    async (id: string, open: boolean) => {
+    async (id: string, open: boolean, restoring = false) => {
       const conv = await getConversationAction({ id });
+      // Al recargar, si mientras tanto ya se empezó algo (un archivo, un
+      // mensaje), eso manda: traer la de antes lo dejaría fuera
+      if (restoring && (conversationRef.current || busyRef.current || pendingRef.current.size || attachmentsRef.current.length)) return;
       if (!conv) {
         remember(null);
         return;
       }
       // La abierta desde el historial pasa a ser la actual también tras recargar
-      remember(conv.id);
+      setConversation(conv.id);
       attachmentsRef.current = [];
       setState((s) => ({
         ...s,
@@ -178,14 +196,14 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
         suggestions: [],
       }));
     },
-    []
+    [setConversation]
   );
 
   // La misma conversación sigue tras recargar (con el panel cerrado)
   useEffect(() => {
     try {
       const saved = sessionStorage.getItem(STORAGE_KEY);
-      if (saved) void loadConversation(saved, false);
+      if (saved) void loadConversation(saved, false, true);
     } catch {
       /* sin sessionStorage */
     }
@@ -209,43 +227,52 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
         // fallo ya salió en su propio aviso
         if (settled.some((r) => r.status === "rejected")) fail("No se pudo adjuntar el archivo; se envía el mensaje sin él.");
       }
-      // Los adjuntos se recogen DESPUÉS de esperar, y de la ref: el estado
-      // tarda un render en enterarse de lo que acaba de subirse
+      // Los adjuntos y la conversación se recogen DESPUÉS de esperar, y de las
+      // refs: son la conversación en la que quedó el archivo
       const attachmentIds = attachmentsRef.current.map((a) => a.id);
-      let result: Awaited<ReturnType<typeof sendTurnAction>>;
+      // Mientras el turno va y vuelve, una subida nueva espera a que se sepa la
+      // conversación (si es la primera, la crea este turno)
+      let finish = () => {};
+      turnRef.current = new Promise<void>((resolve) => (finish = resolve));
       try {
-        result = await sendTurnAction({ conversationId: conversationRef.current, text, route: pathname, attachmentIds });
-      } catch {
-        result = { error: "No se pudo hablar con el servidor. Inténtalo de nuevo." };
+        let result: Awaited<ReturnType<typeof sendTurnAction>>;
+        try {
+          result = await sendTurnAction({ conversationId: conversationRef.current, text, route: pathname, attachmentIds });
+        } catch {
+          result = { error: "No se pudo hablar con el servidor. Inténtalo de nuevo." };
+        } finally {
+          busyRef.current = false;
+        }
+        if ("error" in result) {
+          // Los adjuntos se quedan puestos para poder reintentar sin volver a subirlos
+          setState((s) => ({ ...s, busy: false, pendingText: null, draft: text }));
+          toast.error(result.error, { position: "top-center" });
+          if (result.noKey) router.push("/admin/settings");
+          return;
+        }
+        setConversation(result.conversationId);
+        // Solo se quitan los que fueron en este mensaje: si se adjuntó algo
+        // mientras el asistente pensaba, sigue pendiente para el siguiente
+        attachmentsRef.current = attachmentsRef.current.filter((a) => !attachmentIds.includes(a.id));
+        const attachments = attachmentsRef.current;
+        setState((s) => ({
+          ...s,
+          busy: false,
+          pendingText: null,
+          conversationId: result.conversationId,
+          title: s.title || text,
+          messages: [...s.messages, result.userMessage, result.message],
+          attachments,
+          suggestions: attachments.length ? s.suggestions : [],
+        }));
+        const nav = result.message.blocks.find((b) => b.type === "navigate");
+        if (nav && nav.type === "navigate") router.push(nav.href);
       } finally {
-        busyRef.current = false;
+        turnRef.current = null;
+        finish();
       }
-      if ("error" in result) {
-        // Los adjuntos se quedan puestos para poder reintentar sin volver a subirlos
-        setState((s) => ({ ...s, busy: false, pendingText: null, draft: text }));
-        toast.error(result.error, { position: "top-center" });
-        if (result.noKey) router.push("/admin/settings");
-        return;
-      }
-      remember(result.conversationId);
-      // Solo se quitan los que fueron en este mensaje: si se adjuntó algo
-      // mientras el asistente pensaba, sigue pendiente para el siguiente
-      attachmentsRef.current = attachmentsRef.current.filter((a) => !attachmentIds.includes(a.id));
-      const attachments = attachmentsRef.current;
-      setState((s) => ({
-        ...s,
-        busy: false,
-        pendingText: null,
-        conversationId: result.conversationId,
-        title: s.title || text,
-        messages: [...s.messages, result.userMessage, result.message],
-        attachments,
-        suggestions: attachments.length ? s.suggestions : [],
-      }));
-      const nav = result.message.blocks.find((b) => b.type === "navigate");
-      if (nav && nav.type === "navigate") router.push(nav.href);
     },
-    [pathname, router]
+    [pathname, router, setConversation]
   );
 
   /** Sube un archivo y lo adjunta a la conversación (el servidor lo resume). */
@@ -267,9 +294,8 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
         fail(`Máximo ${MAX_ATTACHMENTS} archivos por mensaje`);
         return;
       }
-      countUpload(1);
-      // La subida se apunta en `pendingRef`: si el usuario envía mientras
-      // tanto, el turno espera a que el archivo esté adjunto
+      // La subida se apunta en `pendingRef`: mientras dure no se puede enviar,
+      // y si algo envía de todos modos, el turno espera a que esté adjunto
       const work = (async () => {
         const res = await fetch("/api/uploads", {
           method: "POST",
@@ -285,13 +311,16 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
           fail(data.error ?? "No se pudo subir el archivo. Revisa tu conexión con el servidor.");
           return;
         }
+        // Con un turno en camino se espera a que vuelva: si es el primero de
+        // una conversación nueva, la crea él, y adjuntar ahora abriría otra
+        // distinta (el mensaje quedaba en una y el archivo en la otra)
+        while (turnRef.current) await turnRef.current;
         const result = await attachAction({ conversationId: conversationRef.current, fileId: data.fileId });
         if ("error" in result) {
           fail(result.error);
           return;
         }
-        conversationRef.current = result.conversationId;
-        remember(result.conversationId);
+        setConversation(result.conversationId);
         attachmentsRef.current = [...attachmentsRef.current, { id: result.attachmentId, name: result.name, detail: result.detail }];
         const attachments = attachmentsRef.current;
         setState((s) => ({ ...s, conversationId: result.conversationId, attachments, suggestions: result.suggestions }));
@@ -300,11 +329,9 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
         await track(work);
       } catch {
         fail("No se pudo subir el archivo. Revisa tu conexión con el servidor.");
-      } finally {
-        countUpload(-1);
       }
     },
-    [countUpload, track]
+    [setConversation, track]
   );
 
   /** De uno en uno: el servidor lee cada archivo entero para resumirlo. */
@@ -385,7 +412,7 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
         if (lastText.current) await send(lastText.current);
       },
       newConversation: () => {
-        remember(null);
+        setConversation(null);
         attachmentsRef.current = [];
         setState((s) => ({
           ...s,
@@ -411,7 +438,7 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
       },
       enableFileDrop,
     }),
-    [state, send, loadConversation, attach, attachFiles, setAttachments, enableFileDrop]
+    [state, send, loadConversation, attach, attachFiles, setAttachments, setConversation, enableFileDrop]
   );
 
   return <Ctx.Provider value={api}>{children}</Ctx.Provider>;

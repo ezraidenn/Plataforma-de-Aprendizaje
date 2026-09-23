@@ -9,7 +9,7 @@ import { AI_ACCEPT } from "@/lib/ai-import-files";
 import { deleteConversationAction, listConversationsAction, suggestionsAction } from "@/server/actions/assistant";
 import { AssistantMessageView, UserBubble } from "./assistant-message";
 import { AttachmentChip } from "./attachment-chip";
-import { DEFAULT_ATTACHMENT_TEXT, MAX_ATTACHMENTS, pastedImages, useAssistant } from "./assistant-provider";
+import { DEFAULT_ATTACHMENT_TEXT, MAX_ATTACHMENTS, avisarSubiendo, pastedImages, useAssistant } from "./assistant-provider";
 
 const WELCOME =
   "Dime qué hacer con tus cursos y alumnos: buscar a alguien, ver cómo va, matricular, abrir una pantalla. Lo sencillo se hace al momento y se puede deshacer; lo que afecta a varios lo revisas antes en una tabla.";
@@ -105,9 +105,9 @@ function Thread() {
   const askedRef = useRef(false);
   // Con un archivo adjunto se puede enviar sin escribir nada: en ese caso va una
   // pregunta corta por defecto, que es lo que se quiere casi siempre. Mientras
-  // un archivo se sube SÍ se puede enviar: el turno queda en cola y espera a
-  // que el adjunto esté listo (antes el mensaje se perdía sin más)
-  const canSend = (draft.trim().length > 0 || attachments.length > 0 || uploading) && !busy;
+  // un archivo se sube NO se puede enviar: el mensaje saldría antes que el
+  // archivo y la IA contestaría sin haberlo visto. Lo escrito se conserva.
+  const canSend = (draft.trim().length > 0 || attachments.length > 0) && !busy && !uploading;
   const full = attachments.length >= MAX_ATTACHMENTS;
   const clipLabel = full ? `Máximo ${MAX_ATTACHMENTS} archivos por mensaje` : "Adjuntar archivo";
 
@@ -134,7 +134,8 @@ function Thread() {
   }, [conversationId, messages.length]);
 
   const submit = () => {
-    if (canSend) void send(draft.trim() || DEFAULT_ATTACHMENT_TEXT);
+    if (uploading && !busy) avisarSubiendo();
+    else if (canSend) void send(draft.trim() || DEFAULT_ATTACHMENT_TEXT);
   };
 
   return (
@@ -150,7 +151,7 @@ function Thread() {
                     key={s.text}
                     type="button"
                     onClick={() => void send(s.text)}
-                    disabled={busy}
+                    disabled={busy || uploading}
                     className="flex w-full items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-left text-[12.5px] hover:bg-slate-50 disabled:opacity-50"
                   >
                     {/* Sin recortar: en celular la pregunta no cabe en una línea
@@ -203,7 +204,7 @@ function Thread() {
                   key={s}
                   type="button"
                   onClick={() => void send(s)}
-                  disabled={busy}
+                  disabled={busy || uploading}
                   className="rounded-full border border-indigo-200 bg-white px-3 py-1 text-[11.5px] font-semibold text-indigo-900 transition-colors hover:bg-indigo-50 disabled:opacity-50"
                 >
                   {s}
@@ -268,16 +269,18 @@ function Thread() {
           >
             <Paperclip className="size-4" aria-hidden />
           </button>
+          {/* Mientras sube, bloqueado y con la rueda: se envía cuando el archivo ya esté */}
           <button
             type="submit"
             disabled={!canSend}
             aria-label="Enviar"
+            title={uploading ? "Espera a que termine de subir el archivo" : undefined}
             className={cn(
               "flex size-8 shrink-0 items-center justify-center rounded-full transition-colors",
               canSend ? "bg-indigo-600 text-white hover:bg-indigo-700" : "bg-slate-200 text-slate-400"
             )}
           >
-            <ArrowUp className="size-4" aria-hidden />
+            {uploading ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <ArrowUp className="size-4" aria-hidden />}
           </button>
         </div>
       </form>

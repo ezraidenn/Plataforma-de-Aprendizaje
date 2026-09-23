@@ -15,6 +15,7 @@ import { and, desc, eq, inArray, like, or, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { db } from "../src/server/db";
 import {
+  aiAttachments,
   aiConversations,
   aiExports,
   aiProposals,
@@ -3813,12 +3814,6 @@ async function turnoConAdjuntoChecks() {
   const system2 = (ai2.bodies[0] as { input: { role?: string; content?: string }[] }).input.find((i) => i.role === "system")?.content ?? "";
   check("Sin adjunto no se menciona ningún archivo", !system2.includes("Archivo adjunto"));
 
-  // Adjunto de otra conversación: no se usa
-  const otra = createConversation(ids.teacher, `${P} otra`);
-  const ai3 = scripted([[say("Hola.")]]);
-  const turn3 = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: otra.id, text: "hola", attachmentIds: [attachmentId], ai: { key: "k", model: "m", fetchImpl: ai3.fetchImpl } });
-  const system3 = (ai3.bodies[0] as { input: { role?: string; content?: string }[] }).input.find((i) => i.role === "system")?.content ?? "";
-  check("Un adjunto de otra conversación no se cuela", !system3.includes("prueba.xlsx") && "message" in turn3);
 
   // Conversación nacida de un archivo: el primer texto le pone título
   const desdeArchivo = createConversation(ids.teacher, ATTACHMENT_TITLE);
@@ -3830,6 +3825,72 @@ async function turnoConAdjuntoChecks() {
   const ai5 = scripted([[say("Hola.")]]);
   await runTurn({ user, scope: ownScope(user), route: "/", conversationId: conv.id, text: "otro mensaje", ai: { key: "k", model: "m", fetchImpl: ai5.fetchImpl } });
   check("Un título normal no se toca", getConversation(ids.teacher, conv.id)?.title === `${P} con adjunto`);
+}
+
+/**
+ * El adjunto viaja con el turno aunque la subida lo dejara en OTRA conversación
+ * del mismo usuario (la primera subida de una conversación nueva abre la suya).
+ * Antes el servidor lo descartaba en silencio y la IA contestaba sin el archivo.
+ * De otro usuario, nunca: el turno falla con un aviso claro y no toca nada.
+ */
+async function adjuntoDeOtraConversacionChecks() {
+  console.log("\n— Adjunto que quedó en otra conversación");
+  const user = { ...teacherUser, id: ids.teacher };
+  const png = await fotoPng();
+  const systemOf = (bodies: unknown[]) =>
+    (bodies[0] as { input?: { role?: string; content?: string }[] } | undefined)?.input?.find((i) => i.role === "system")?.content ?? "";
+  const adjuntosDe = (conversationId: string) =>
+    db.select({ id: aiAttachments.id }).from(aiAttachments).where(eq(aiAttachments.conversationId, conversationId)).all().map((a) => a.id);
+  const tarjetaEn = (conversationId: string, name: string) =>
+    getConversation(ids.teacher, conversationId)?.messages[0]?.blocks.some((b) => b.type === "attachment" && b.name === name) ?? false;
+
+  // 1) La subida abrió «Archivo adjunto» y el turno fue a una conversación ya empezada
+  const empezada = createConversation(ids.teacher, `${P} empezada`);
+  appendMessage(empezada.id, "user", [{ type: "text", text: "hola" }], "hola");
+  const huerfana = createConversation(ids.teacher, ATTACHMENT_TITLE);
+  const suelto = await adjuntar(huerfana.id, png, `${P}-suelta.png`, "image/png");
+  const ai1 = scripted([[say("Veo la foto.")]]);
+  const t1 = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: empezada.id, text: "describe la foto", attachmentIds: [suelto.id], summarize: false, ai: { key: "k", model: "m", fetchImpl: ai1.fetchImpl } });
+  check("Adjunto en otra conversación del mismo usuario: la IA lo recibe", "message" in t1 && systemOf(ai1.bodies).includes(`Archivo adjunto: ${P}-suelta.png`), systemOf(ai1.bodies).slice(-300));
+  const msgs1 = getConversation(ids.teacher, empezada.id)?.messages ?? [];
+  check("…y el mensaje del usuario muestra la tarjeta del archivo", msgs1.at(-2)?.blocks.some((b) => b.type === "attachment" && b.name === `${P}-suelta.png`) === true, msgs1.at(-2)?.blocks);
+  check("…el adjunto se muda a la conversación del turno", adjuntosDe(empezada.id).includes(suelto.id));
+  check("…y la conversación vacía que abrió la subida desaparece del historial", getConversation(ids.teacher, huerfana.id) === null);
+
+  // 2) Conversación nueva (sin id): el turno crea la suya y el archivo va con él
+  const huerfana2 = createConversation(ids.teacher, ATTACHMENT_TITLE);
+  const suelto2 = await adjuntar(huerfana2.id, png, `${P}-nueva.png`, "image/png");
+  const ai2 = scripted([[say("Veo la foto.")]]);
+  const t2 = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: null, text: `${P} qué hay en la foto`, attachmentIds: [suelto2.id], summarize: false, ai: { key: "k", model: "m", fetchImpl: ai2.fetchImpl } });
+  check("Conversación nueva: el adjunto de la subida viaja con el primer turno", "message" in t2 && systemOf(ai2.bodies).includes(`${P}-nueva.png`) && tarjetaEn(t2.conversationId, `${P}-nueva.png`), systemOf(ai2.bodies).slice(-300));
+
+  // 3) Ya se usó en otra conversación con mensajes: se copia y aquella lo conserva
+  const conMensajes = createConversation(ids.teacher, `${P} con mensajes`);
+  const usado = await adjuntar(conMensajes.id, png, `${P}-usada.png`, "image/png");
+  appendMessage(conMensajes.id, "user", [{ type: "text", text: "mira" }], "mira");
+  const destino = createConversation(ids.teacher, `${P} destino`);
+  const ai3 = scripted([[say("Veo la foto.")]]);
+  const t3 = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: destino.id, text: "y ahora esta", attachmentIds: [usado.id], summarize: false, ai: { key: "k", model: "m", fetchImpl: ai3.fetchImpl } });
+  check("Adjunto de una conversación con mensajes: viaja con el turno", "message" in t3 && systemOf(ai3.bodies).includes(`${P}-usada.png`));
+  check("…como copia: la otra conversación conserva el suyo", adjuntosDe(conMensajes.id).includes(usado.id) && adjuntosDe(destino.id).length === 1 && !adjuntosDe(destino.id).includes(usado.id));
+
+  // 4) De otro usuario: nunca. El turno avisa y no guarda nada
+  const ajena = createConversation(ids.admin, `${P} ajena`);
+  const ajenoFile = await saveTestFile(png, `${P}-ajena.png`, ids.admin, "image/png");
+  const ajeno = await attachToConversation({ conversationId: ajena.id, fileId: ajenoFile, userId: ids.admin });
+  const antes = getConversation(ids.teacher, destino.id)?.messages.length ?? 0;
+  const ai4 = scripted([[say("Hola.")]]);
+  const t4 = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: destino.id, text: "usa este", attachmentIds: [ajeno.id], summarize: false, ai: { key: "k", model: "m", fetchImpl: ai4.fetchImpl } });
+  check("Adjunto de otro usuario: el turno falla con un aviso claro", "error" in t4 && t4.error.includes("adjunto"), t4);
+  check("…sin llamar a la IA ni guardar el mensaje", ai4.calls() === 0 && (getConversation(ids.teacher, destino.id)?.messages.length ?? 0) === antes);
+  check("…y el adjunto ajeno sigue donde estaba", adjuntosDe(ajena.id).includes(ajeno.id) && !adjuntosDe(destino.id).includes(ajeno.id));
+  const convsAntes = db.select({ id: aiConversations.id }).from(aiConversations).where(eq(aiConversations.userId, ids.teacher)).all().length;
+  const t5 = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: null, text: `${P} usa este`, attachmentIds: [ajeno.id], summarize: false, ai: { key: "k", model: "m", fetchImpl: ai4.fetchImpl } });
+  const convsDespues = db.select({ id: aiConversations.id }).from(aiConversations).where(eq(aiConversations.userId, ids.teacher)).all().length;
+  check("…y en conversación nueva no deja una conversación vacía", "error" in t5 && convsDespues === convsAntes, { convsAntes, convsDespues });
+  // Un id que no existe: tampoco se contesta como si no hubiera archivo
+  const t6 = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: destino.id, text: "usa este", attachmentIds: ["no-existe"], summarize: false, ai: { key: "k", model: "m", fetchImpl: ai4.fetchImpl } });
+  check("Adjunto que ya no existe: aviso claro, no respuesta sin archivo", "error" in t6 && ai4.calls() === 0);
 }
 
 function attachmentSummaryChecks() {
@@ -4314,6 +4375,7 @@ async function main() {
     await agentChecks();
     await resumenChecks();
     await turnoConAdjuntoChecks();
+    await adjuntoDeOtraConversacionChecks();
     await crearCursosChecks();
     await formatoExcelChecks();
     await aplicarExcelChecks();

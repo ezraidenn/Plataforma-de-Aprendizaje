@@ -6,13 +6,14 @@ import {
   ATTACHMENT_TITLE,
   appendMessage,
   createConversation,
+  deleteConversation,
   getConversation,
   getSummary,
   recentModelText,
   renameConversation,
   updateMessage,
 } from "@/server/services/ai-conversations";
-import { attachmentsOf } from "@/server/services/attachment-intake";
+import { attachmentsOf, claimAttachments } from "@/server/services/attachment-intake";
 import { attachmentDetail } from "@/lib/attachment-summary";
 import { conversationTitle, type AssistantBlock, type AssistantMessage } from "@/lib/assistant-blocks";
 import { getProposal } from "./proposal-store";
@@ -37,7 +38,7 @@ export type TurnInput = {
   route: string;
   conversationId: string | null;
   text: string;
-  /** Adjuntos de este mensaje (ids de `ai_attachments` de esta conversación) */
+  /** Adjuntos de este mensaje (ids de `ai_attachments` del usuario; ver `claimAttachments`) */
   attachmentIds?: string[];
   /**
    * Resumir lo viejo al terminar (por defecto sí). Solo las pruebas que
@@ -66,14 +67,24 @@ export async function runTurn(input: TurnInput): Promise<TurnOutput> {
   let conversationId = input.conversationId;
   const existing = conversationId ? getConversation(input.user.id, conversationId) : null;
   if (conversationId && !existing) conversationId = null;
+  const created = !conversationId;
   if (!conversationId) conversationId = createConversation(input.user.id, text).id;
   // La conversación que nació de un archivo no tiene título propio: se lo da el primer mensaje
   else if (existing && existing.title === ATTACHMENT_TITLE && existing.messages.length === 0) {
     renameConversation(conversationId, conversationTitle(text));
   }
 
-  // Un id de otra conversación no se cuela: `attachmentsOf` filtra por conversación
-  const attachments = input.attachmentIds?.length ? attachmentsOf(conversationId, input.attachmentIds) : [];
+  // Los adjuntos viajan con el turno aunque la subida los dejara en otra
+  // conversación del mismo usuario; uno ajeno o que ya no existe no se usa, y
+  // se dice: contestar como si no hubiera archivo es justo lo que no debe pasar
+  const claimed = input.attachmentIds?.length
+    ? claimAttachments({ userId: input.user.id, conversationId, ids: input.attachmentIds })
+    : [];
+  if (claimed === null) {
+    if (created) deleteConversation(input.user.id, conversationId);
+    return { error: "Uno de los archivos adjuntos ya no está disponible. Quítalo y vuelve a adjuntarlo." };
+  }
+  const attachments = claimed.length ? attachmentsOf(conversationId, claimed) : [];
 
   // Historial corto ANTES de guardar el mensaje nuevo (para no duplicarlo).
   // Lo anterior al resumen no se repite en crudo: ya va comprimido en él.
