@@ -35,6 +35,8 @@ import type { SessionUser } from "../src/server/auth/sessions";
 import { toolsForRole, toolByName, toolDefsForRole } from "../src/server/assistant/registry";
 import { certificadosQuery, movimientosQuery, panoramaQuery, pendientesQuery } from "../src/server/assistant/queries";
 import { runTurn } from "../src/server/assistant/agent";
+import { platformSuggestions } from "../src/server/assistant/suggestions";
+import { rateLimitHit } from "../src/server/assistant/rate-limit";
 import { systemPrompt } from "../src/server/assistant/prompt";
 import type { ToolCtx } from "../src/server/assistant/tool-types";
 import {
@@ -916,6 +918,148 @@ async function descargaToolChecks() {
   check("descargar_certificados sin id: pide uno", !sinNada.blocks && sinNada.forModel.includes("id"), sinNada.forModel);
 }
 
+function suggestionChecks() {
+  console.log("\n— Sugerencias del panel");
+  const user = { ...teacherUser, id: ids.teacher };
+  const mias = platformSuggestions(user, ownScope(user));
+  check("Nunca más de 3", mias.length <= 3, mias);
+  check("Todas con cifra mayor que cero", mias.every((s) => /^[1-9]\d* \S/.test(s.detail)), mias);
+  check("Todas son preguntas", mias.every((s) => s.text.startsWith("¿") && s.text.endsWith("?")), mias);
+  const cert = mias.find((s) => s.text === "¿A quién le vence el certificado este mes?");
+  check("Está la de certificados por vencer (el de la prueba vence en 10 días)", !!cert && cert.detail.includes("certificado"), mias);
+  check("La de certificados va primero", mias[0]?.text === cert?.text, mias);
+  check(
+    "Las herramientas que contestan esas preguntas existen",
+    ["certificados", "pendientes", "buscar_curso", "resumen_curso"].every((n) => toolByName(n) !== null)
+  );
+  const otro = { ...teacherUser, id: ids.admin };
+  const ajenas = platformSuggestions(otro, ownScope(otro));
+  check(
+    "Otro maestro: cifras distintas (o ninguna sugerencia)",
+    ajenas.length === 0 || ajenas.some((s) => !mias.some((m) => m.text === s.text && m.detail === s.detail)),
+    ajenas
+  );
+}
+
+async function detallesChecks() {
+  console.log("\n— Caducidad al abrir, búsqueda y ritmo");
+  const user = { ...teacherUser, id: ids.teacher };
+  const conv = createConversation(ids.teacher, `${P} detalles`);
+  const anchor = appendMessage(conv.id, "assistant", [], "");
+  const ctx = { ...ctxFor(user, ownScope(user)), conversationId: conv.id, messageId: anchor.id };
+
+  // Al abrir una conversación, una propuesta vencida no debe verse pendiente
+  const prop = await toolByName("matricular")!.run({ alumno_ids: [ids.s1, ids.s2], curso_id: ids.course }, ctx);
+  const propuesta = prop.proposalId!;
+  const msg = appendMessage(
+    conv.id,
+    "assistant",
+    [{ type: "proposal", proposalId: propuesta, title: "t", applyLabel: "Aplicar", columns: [], rows: [], status: "pending" }],
+    ""
+  );
+  const bloqueDe = () => getConversation(ids.teacher, conv.id)!.messages.find((m) => m.id === msg.id)!.blocks[0];
+  db.update(aiProposals).set({ expiresAt: new Date(Date.now() - 1000) }).where(eq(aiProposals.id, propuesta)).run();
+  const antes = bloqueDe();
+  check("Vencida pero sin barrer: todavía se ve pendiente", antes.type === "proposal" && antes.status === "pending", antes);
+  expireProposals();
+  const despues = bloqueDe();
+  check("Tras expireProposals(), al leerla se ve caducada", despues.type === "proposal" && despues.status === "expired", despues);
+
+  // Buscar en el historial: % y _ son texto, no comodines
+  const conPorciento = createConversation(ids.teacher, `${P} 100% aprobado`);
+  createConversation(ids.teacher, `${P} plan_a`);
+  createConversation(ids.teacher, `${P} planXa`);
+  const todas = listConversations(ids.teacher).length;
+  const porciento = listConversations(ids.teacher, "100%");
+  check("«100%» encuentra «100% aprobado»", porciento.some((c) => c.id === conPorciento.id), porciento);
+  const soloSigno = listConversations(ids.teacher, "%");
+  check("Buscar «%» a secas no devuelve todas", soloSigno.length < todas && soloSigno.every((c) => c.title.includes("%")), [soloSigno.length, todas]);
+  const guionBajo = listConversations(ids.teacher, "plan_a");
+  check("El guion bajo tampoco es comodín", guionBajo.length === 1 && guionBajo[0].title.endsWith("plan_a"), guionBajo);
+
+  // Ritmo: 20 turnos cada 5 minutos por usuario, en memoria del proceso
+  const quien = `${P}-ritmo`;
+  const ahora = Date.now();
+  check("Los primeros 20 turnos pasan", Array.from({ length: 20 }, () => rateLimitHit(quien, ahora)).every((frenado) => frenado === false));
+  check("El 21 se frena", rateLimitHit(quien, ahora) === true);
+  check("Otro usuario no paga el plato", rateLimitHit(`${quien}-otro`, ahora) === false);
+  check("Pasados 5 minutos vuelve a pasar", rateLimitHit(quien, ahora + 5 * 60_000) === false);
+}
+
+async function reactivarAlumnosChecks() {
+  console.log("\n— Reactivar alumnos");
+  const user = { ...teacherUser, id: ids.teacher };
+  const conv = createConversation(ids.teacher, `${P} reactivar`);
+  const anchor = appendMessage(conv.id, "assistant", [], "");
+  const ctx = { ...ctxFor(user, ownScope(user)), conversationId: conv.id, messageId: anchor.id };
+  const activo = (id: string) => db.select({ active: users.active }).from(users).where(eq(users.id, id)).get()?.active;
+  const params = (alumnoIds: string[]) => ({ origen: "ids", alumno_ids: alumnoIds, texto: "", hoja: "", filtro_color: "" });
+
+  // Un solo alumno: se hace al momento y se puede deshacer
+  setStudentActive(ids.s4, false);
+  const una = await toolByName("reactivar_alumnos")!.run(params([ids.s4]), ctx);
+  check("Un alumno: se aplica al momento, sin propuesta", !una.proposalId && activo(ids.s4) === true, una.forModel);
+  check("Un alumno: trae deshacer", una.undo?.tool === "reactivar_alumnos" && una.undo?.params.alumno_id === ids.s4, una.undo);
+  check("Un alumno: bloque de resultado con «Deshacer»", (una.blocks ?? []).some((b) => b.type === "result" && b.undoable === true), una.blocks);
+  check(
+    "Auditoría de la reactivación",
+    db.select().from(auditLog).where(and(eq(auditLog.action, "assistant_reactivar_alumnos"), eq(auditLog.entityId, ids.s4))).get() !== undefined
+  );
+
+  await toolByName("reactivar_alumnos")!.undo!(una.undo!.params, ctx);
+  check("Deshacer vuelve a deshabilitarla", activo(ids.s4) === false);
+  check(
+    "Deshacer deja auditoría",
+    db.select().from(auditLog).where(and(eq(auditLog.action, "assistant_reactivar_alumnos_undo"), eq(auditLog.entityId, ids.s4))).get() !== undefined
+  );
+  const dosVeces = await errorOf(async () => toolByName("reactivar_alumnos")!.undo!(una.undo!.params, ctx));
+  check("Deshacer dos veces: error claro", dosVeces.startsWith("No se pudo deshacer"), dosVeces);
+
+  // Varios: tabla para revisar, con sus avisos
+  setStudentActive(ids.s3, false);
+  const varios = await toolByName("reactivar_alumnos")!.run(params([ids.s4, ids.s1, ids.s3]), ctx);
+  const propuesta = getProposal(varios.proposalId!)!;
+  const fila = (id: string) => propuesta.rows.find((r) => r.id === id);
+  check("Varios: propuesta con tres filas", propuesta.rows.length === 3, propuesta.rows);
+  check("Dora (deshabilitada): se puede", fila(ids.s4)?.blocked !== true, fila(ids.s4));
+  check("Ana (activa): bloqueada «Ya estaba activo»", fila(ids.s1)?.blocked === true && fila(ids.s1)?.warning === "Ya estaba activo", fila(ids.s1));
+  check(
+    "Carla (de otro maestro): bloqueada «No es uno de tus alumnos»",
+    fila(ids.s3)?.blocked === true && fila(ids.s3)?.warning === "No es uno de tus alumnos",
+    fila(ids.s3)
+  );
+  check("Columnas nombre y correo no editables", propuesta.draft.columns.every((c) => c.editable === false));
+  check("La IA no recibe correos", !varios.forModel.includes("@test.local"), varios.forModel);
+
+  const aplicada = await applyProposal(varios.proposalId!, propuesta.rows, ctx, "");
+  check(
+    "Aplicar reactiva solo a Dora, y Carla sigue deshabilitada",
+    "text" in aplicada && aplicada.text.startsWith("1 alumno(s) reactivado(s)") && activo(ids.s4) === true && activo(ids.s3) === false,
+    aplicada
+  );
+
+  // Lista pegada: se resuelve por correo, como en baja_alumnos
+  setStudentActive(ids.s4, false);
+  const porTexto = await toolByName("reactivar_alumnos")!.run(
+    {
+      origen: "texto",
+      alumno_ids: [],
+      texto: `Nombre,Correo\n${P} Dora Sola,${P}-dora@test.local\n${P} Ana López,${P}-ana@test.local`,
+      hoja: "",
+      filtro_color: "",
+    },
+    ctx
+  );
+  const pTexto = getProposal(porTexto.proposalId!)!;
+  check("Por texto: Dora se puede y Ana ya estaba activa", pTexto.rows.length === 2 && pTexto.rows.some((r) => r.id === ids.s4 && !r.blocked), pTexto.rows);
+  cancelProposal(porTexto.proposalId!, ids.teacher);
+
+  // Se devuelve todo como estaba para las demás secciones
+  setStudentActive(ids.s4, true);
+  setStudentActive(ids.s3, true);
+  check("Los alumnos quedan como estaban (activos)", activo(ids.s4) === true && activo(ids.s3) === true && activo(ids.s1) === true);
+}
+
 async function bajaAlumnosChecks() {
   console.log("\n— Baja de alumnos");
   const user = { ...teacherUser, id: ids.teacher };
@@ -1461,7 +1605,10 @@ async function main() {
     await queryChecks();
     await consultaToolChecks();
     await descargaToolChecks();
+    suggestionChecks();
+    await detallesChecks();
     // Al final: borrar a Dora dejaría sin alumno a las demás secciones
+    await reactivarAlumnosChecks();
     await bajaAlumnosChecks();
   } finally {
     await cleanup();

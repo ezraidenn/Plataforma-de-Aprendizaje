@@ -9,6 +9,7 @@ import { resumenCurso } from "./tools/resumen-curso";
 import { matricular, desmatricular } from "./tools/matricular";
 import { altaAlumnos } from "./tools/alta-alumnos";
 import { bajaAlumnos } from "./tools/baja-alumnos";
+import { reactivarAlumnos } from "./tools/reactivar-alumnos";
 import { crearCursos } from "./tools/crear-cursos";
 import { movimientos } from "./tools/movimientos";
 import { pendientes } from "./tools/pendientes";
@@ -27,6 +28,7 @@ const ALL: AssistantTool[] = [
   desmatricular,
   altaAlumnos,
   bajaAlumnos,
+  reactivarAlumnos,
   crearCursos,
   movimientos,
   pendientes,
