@@ -796,3 +796,22 @@ export const aiAttachments = sqliteTable(
   },
   (t) => [index("ai_attachments_conversation_idx").on(t.conversationId, t.createdAt)]
 );
+
+export const aiExports = sqliteTable(
+  "ai_exports",
+  {
+    id: text("id").primaryKey(),
+    conversationId: text("conversation_id")
+      .notNull()
+      .references(() => aiConversations.id, { onDelete: "cascade" }),
+    /** Nombre con el que se descarga: «movimientos-2026-09-23.csv» */
+    fileName: text("file_name").notNull(),
+    /** El CSV completo; se borra al caducar */
+    content: text("content").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (t) => [index("ai_exports_expires_idx").on(t.expiresAt)]
+);

@@ -11,7 +11,7 @@ import { requestWithTools, type ChatItem, type ToolDef } from "../src/server/ser
 import { and, eq, inArray, like } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { db } from "../src/server/db";
-import { aiConversations, aiProposals, auditLog, courses as coursesTable, enrollments, files, users } from "../src/server/db/schema";
+import { aiConversations, aiExports, aiProposals, auditLog, courses as coursesTable, enrollments, files, users } from "../src/server/db/schema";
 import { createCourse, enrollStudents, setStudentActive, unenrollStudent } from "../src/server/services/courses";
 import { ownScope, type ViewScope } from "../src/server/auth/view-scope";
 import type { SessionUser } from "../src/server/auth/sessions";
@@ -31,6 +31,7 @@ import {
   recentModelText,
 } from "../src/server/services/ai-conversations";
 import { applyProposal, cancelProposal, createProposal, expireProposals, getProposal } from "../src/server/assistant/proposals";
+import { createExport, purgeExports, readExport } from "../src/server/assistant/exports";
 import {
   MAX_SUMMARY_CHARS,
   attachmentDetail,
@@ -316,6 +317,25 @@ async function conversationChecks() {
   const recent = recentModelText(conv.id, 3);
   check("recentModelText: últimos 3 → 2 con texto, en orden", recent.map((m) => `${m.role}:${m.text}`).join("|") === "assistant:¿En qué te ayudo?|user:otra", recent);
   check("Borrar: desaparece", deleteConversation(ids.teacher, conv.id) && getConversation(ids.teacher, conv.id) === null);
+}
+
+async function exportChecks() {
+  console.log("\n— Descargas guardadas");
+  const conv = createConversation(ids.teacher, `${P} descargas`);
+  const id = createExport(conv.id, "movimientos.csv", "nombre,correo\nAna,ana@x.com\n");
+  const mine = readExport(ids.teacher, id);
+  check("El dueño la lee", mine?.fileName === "movimientos.csv" && mine.content.includes("Ana"));
+  check("Otro usuario no", readExport(ids.admin, id) === null);
+  check("Id inventado: null", readExport(ids.teacher, "no-existe") === null);
+  db.update(aiExports).set({ expiresAt: new Date(Date.now() - 1000) }).where(eq(aiExports.id, id)).run();
+  check("Caducada: no se lee", readExport(ids.teacher, id) === null);
+  check("Purga: se borra", purgeExports() >= 1 && db.select().from(aiExports).where(eq(aiExports.id, id)).get() === undefined);
+  check("Al borrar la conversación se va la descarga", (() => {
+    const c2 = createConversation(ids.teacher, `${P} descargas 2`);
+    const e2 = createExport(c2.id, "x.csv", "a,b\n");
+    deleteConversation(ids.teacher, c2.id);
+    return db.select().from(aiExports).where(eq(aiExports.id, e2)).get() === undefined;
+  })());
 }
 
 async function proposalChecks() {
@@ -1144,6 +1164,7 @@ async function main() {
     await catalogChecks();
     await readToolChecks();
     await conversationChecks();
+    await exportChecks();
     await proposalChecks();
     await confirmWordChecks();
     await altaAlumnosChecks();
