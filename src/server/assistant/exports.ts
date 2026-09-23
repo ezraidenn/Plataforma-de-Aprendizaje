@@ -12,6 +12,14 @@ import { aiConversations, aiExports } from "@/server/db/schema";
 
 export const EXPORT_TTL_MS = 24 * 60 * 60 * 1000;
 
+/** «movimientos-2026-09-22.csv»: el nombre con el que se descarga (fecha local). */
+export function exportFileName(base: string): string {
+  const d = new Date();
+  const mes = String(d.getMonth() + 1).padStart(2, "0");
+  const dia = String(d.getDate()).padStart(2, "0");
+  return `${base}-${d.getFullYear()}-${mes}-${dia}.csv`;
+}
+
 export function createExport(conversationId: string, fileName: string, content: string): string {
   purgeExports();
   const id = nanoid();

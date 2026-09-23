@@ -24,6 +24,8 @@ export type AssistantBlock =
   | { type: "tiles"; tiles: { label: string; value: string }[] }
   | { type: "table"; columns: string[]; rows: string[][]; more?: number }
   | { type: "links"; links: { label: string; href: string; icon: LinkIcon }[] }
+  /** Archivo que el asistente deja listo (CSV de una consulta, ZIP de certificados); `detail`: «120 filas · caduca en 24 horas» */
+  | { type: "download"; label: string; href: string; detail?: string }
   | { type: "result"; text: string; undoable?: boolean; undone?: boolean }
   | {
       type: "proposal";

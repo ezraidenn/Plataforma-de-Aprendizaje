@@ -210,6 +210,21 @@ function Block({ block, message, conversationId }: { block: AssistantBlock; mess
           })}
         </div>
       );
+    case "download":
+      // Enlace de verdad (no <Link>): lo sirve una ruta de API, no una pantalla
+      return (
+        <a
+          href={block.href}
+          download
+          className="flex w-fit max-w-full items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 hover:border-indigo-200 hover:bg-indigo-50"
+        >
+          <Download className="size-4 shrink-0 text-indigo-600" aria-hidden />
+          <span className="min-w-0">
+            <span className="block text-[12px] font-semibold text-slate-900">{block.label}</span>
+            {block.detail ? <span className="block text-[11px] text-slate-500">{block.detail}</span> : null}
+          </span>
+        </a>
+      );
     case "result":
       return <ResultCard block={block} message={message} conversationId={conversationId} />;
     case "proposal":

@@ -8,6 +8,7 @@
  */
 import { placeholderFor } from "../src/lib/assistant-placeholder";
 import { dateRange } from "../src/lib/assistant-dates";
+import type { AssistantBlock } from "../src/lib/assistant-blocks";
 import { requestWithTools, type ChatItem, type ToolDef } from "../src/server/services/ai-client";
 import { and, eq, inArray, like } from "drizzle-orm";
 import { nanoid } from "nanoid";
@@ -535,7 +536,12 @@ async function altaAlumnosChecks() {
   const creados = db.select({ id: users.id, createdBy: users.createdBy }).from(users).where(like(users.email, `${P}-nueva%`)).all();
   check("Quedan a nombre del maestro", creados.length === 2 && creados.every((u) => u.createdBy === ids.teacher), creados);
   check("Auditoría del alta", db.select().from(auditLog).where(eq(auditLog.action, "assistant_alta_alumnos")).get() !== undefined);
-  check("Dice dónde ver las contraseñas", "text" in applied && applied.text.toLowerCase().includes("contraseñ"), applied);
+  check("Dice que las contraseñas están en la descarga", "text" in applied && applied.text.toLowerCase().includes("contraseñ") && applied.text.toLowerCase().includes("descarga"), applied);
+  const altaDl = "blocks" in applied ? downloadOf(applied.blocks) : undefined;
+  check("Las contraseñas salen en un bloque de descarga", altaDl?.label === "Descargar las contraseñas" && (altaDl.detail ?? "").includes("24 horas"), altaDl);
+  const altaCsv = readExport(ids.teacher, altaDl ? (altaDl.href.split("/").pop() ?? "") : "");
+  check("La descarga trae la columna de contraseña", (altaCsv?.content ?? "").includes("contrasena"), altaCsv?.content.split("\r\n")[0]);
+  check("…y una línea por cada cuenta creada", (altaCsv?.content ?? "").split("\r\n").length >= 3, altaCsv?.content.split("\r\n").length);
 
   // Con curso: alta + matrícula en el mismo paso
   const conv2 = createConversation(ids.teacher, `${P} altas2`);
@@ -796,6 +802,118 @@ async function queryChecks() {
   check("El CSV lleva todas las filas, no solo las 20", certificadosQuery(scope, "emitidos", null, 30).csv.split("\r\n").length === emitidos.total + 1, emitidos.total);
   check("Días fuera de rango: se recorta a 365", certificadosQuery(scope, "por_vencer", null, 9999).forModel.includes("365"));
   check("Días en cero: vuelve a 30", certificadosQuery(scope, "por_vencer", null, 0).forModel.includes("30"));
+}
+
+/** Id de la descarga que hay dentro de un bloque `download`. */
+function exportIdOf(blocks: AssistantBlock[] | undefined): string {
+  const block = (blocks ?? []).find((b) => b.type === "download");
+  return block?.type === "download" ? (block.href.split("/").pop() ?? "") : "";
+}
+
+function downloadOf(blocks: AssistantBlock[] | undefined): Extract<AssistantBlock, { type: "download" }> | undefined {
+  const block = (blocks ?? []).find((b) => b.type === "download");
+  return block?.type === "download" ? block : undefined;
+}
+
+/** Las herramientas de consulta: usan lo que sembró `queryChecks`. */
+async function consultaToolChecks() {
+  console.log("\n— Herramientas de consulta");
+  const user = { ...teacherUser, id: ids.teacher };
+  const conv = createConversation(ids.teacher, `${P} consultas`);
+  const ctx = { ...ctxFor(user, ownScope(user)), conversationId: conv.id };
+  const admin: SessionUser = { id: ids.admin, email: "", fullName: `${P} Admin`, role: "admin" };
+  const convAdmin = createConversation(ids.admin, `${P} consultas admin`);
+  const adminCtx = { ...ctxFor(admin, { kind: "all" }), conversationId: convAdmin.id };
+
+  check(
+    "panorama: solo del administrador",
+    !toolsForRole("teacher").some((t) => t.name === "panorama") && toolsForRole("admin").some((t) => t.name === "panorama")
+  );
+  check(
+    "Las consultas están en el catálogo del maestro",
+    ["movimientos", "pendientes", "certificados"].every((n) => toolsForRole("teacher").some((t) => t.name === n))
+  );
+
+  const mov = await toolByName("movimientos")!.run({ desde: "hoy", hasta: "", curso_id: "" }, ctx);
+  check("movimientos hoy: tiles y tabla", (mov.blocks ?? []).some((b) => b.type === "tiles") && (mov.blocks ?? []).some((b) => b.type === "table"), mov.blocks?.map((b) => b.type));
+  check("movimientos: el periodo va en el texto de la IA", mov.forModel.includes("hoy"), mov.forModel);
+  const movDl = downloadOf(mov.blocks);
+  check(
+    "movimientos: deja la descarga del CSV",
+    movDl?.label === "Descargar CSV" && movDl.href.startsWith("/api/assistant/export/") && (movDl.detail ?? "").includes("caduca en 24 horas"),
+    movDl
+  );
+  const movId = exportIdOf(mov.blocks);
+  const guardada = readExport(ids.teacher, movId);
+  check("La descarga la abre su dueño", guardada !== null && guardada.content.includes("Alumno"), guardada?.fileName);
+  check("Nombre con la fecha del día", /^movimientos-\d{4}-\d{2}-\d{2}\.csv$/.test(guardada?.fileName ?? ""), guardada?.fileName);
+  check("Otro usuario no la abre", readExport(ids.admin, movId) === null);
+  check("El id de la descarga viaja a la IA", mov.forModel.includes(movId), mov.forModel);
+
+  const ajeno = await toolByName("movimientos")!.run({ desde: "hoy", hasta: "", curso_id: "no-existe" }, ctx);
+  check("movimientos con un curso ajeno: lo dice y no enseña nada", !ajeno.blocks && ajeno.forModel.toLowerCase().includes("curso"), ajeno.forModel);
+
+  const raro = await toolByName("pendientes")!.run({ tipo: "lo-que-sea", curso_id: "" }, ctx);
+  check("pendientes con un tipo desconocido: no revienta", (raro.blocks ?? []).some((b) => b.type === "tiles") && raro.forModel.length > 0, raro.forModel);
+  const sinEntregar = await toolByName("pendientes")!.run({ tipo: "sin_entregar", curso_id: ids.course }, ctx);
+  check("pendientes de un curso propio: sí responde", (sinEntregar.blocks ?? []).some((b) => b.type === "tiles"), sinEntregar.forModel);
+
+  const dias = await toolByName("certificados")!.run({ estado: "por_vencer", curso_id: "", dias: "abc" }, ctx);
+  check("certificados: «abc» días valen 30", dias.forModel.includes("30"), dias.forModel);
+  const dias60 = await toolByName("certificados")!.run({ estado: "por_vencer", curso_id: "", dias: "60" }, ctx);
+  check("certificados: un número sí se usa", dias60.forModel.includes("60"), dias60.forModel);
+
+  const panPropio = await toolByName("panorama")!.run({ periodo: "" }, { ...ctxFor(admin, ownScope(admin)), conversationId: convAdmin.id });
+  check(
+    "panorama fuera de «General — todos»: pide cambiar el contexto y no consulta",
+    panPropio.forModel.includes("General") && (panPropio.blocks ?? []).every((b) => b.type === "links"),
+    panPropio
+  );
+  const pan = await toolByName("panorama")!.run({ periodo: "" }, adminCtx);
+  check("panorama en «General — todos»: tiles, tabla y descarga", (pan.blocks ?? []).some((b) => b.type === "tiles") && (pan.blocks ?? []).some((b) => b.type === "table") && !!downloadOf(pan.blocks), pan.blocks?.map((b) => b.type));
+  check("La descarga del panorama es del administrador", readExport(ids.admin, exportIdOf(pan.blocks)) !== null);
+
+  const todas = [mov, ajeno, raro, sinEntregar, dias, dias60, panPropio, pan];
+  check("A la IA le llegan menos de 500 caracteres", todas.every((r) => r.forModel.length < 500), todas.map((r) => r.forModel.length));
+}
+
+/** Las herramientas de descarga y la ruta que sirve el CSV. */
+async function descargaToolChecks() {
+  console.log("\n— Descargar certificados y CSV");
+  const user = { ...teacherUser, id: ids.teacher };
+  const conv = createConversation(ids.teacher, `${P} descargar`);
+  const ctx = { ...ctxFor(user, ownScope(user)), conversationId: conv.id };
+
+  // La ruta que sirve el CSV no se puede llamar desde aquí: importarla arrastra
+  // `next/navigation` (no carga fuera de Next) y su `GET` lee las cookies de la
+  // petición, que aquí no existen. Lo que decide quién lo abre es `readExport`
+  // (dueño y caducidad), probado arriba y otra vez con un id de verdad más
+  // abajo; lo único que queda por comprobar es que el archivo esté donde apunta
+  // el enlace.
+  check("La ruta del CSV existe donde apuntan los enlaces", existsSync("src/app/api/assistant/export/[exportId]/route.ts"));
+
+  const csvId = createExport(conv.id, "movimientos-2026-09-22.csv", "﻿Alumno\r\nAna\r\n");
+  const ok = await toolByName("descargar_csv")!.run({ descarga_id: csvId }, ctx);
+  const okDl = downloadOf(ok.blocks);
+  check("descargar_csv con un id bueno: devuelve el bloque", okDl?.href === `/api/assistant/export/${csvId}` && okDl.label === "Descargar CSV", okDl);
+  const malo = await toolByName("descargar_csv")!.run({ descarga_id: "no-existe" }, ctx);
+  check("descargar_csv con un id inventado: lo dice y no ofrece nada", !malo.blocks && malo.forModel.includes("ya no está disponible"), malo.forModel);
+  const deOtro = await toolByName("descargar_csv")!.run({ descarga_id: csvId }, { ...ctxFor({ ...teacherUser, id: ids.admin }, ownScope({ id: ids.admin, role: "teacher" })), conversationId: conv.id });
+  check("descargar_csv de otro usuario: tampoco", !deOtro.blocks, deOtro.forModel);
+
+  const mio = await toolByName("descargar_certificados")!.run({ alumno_id: ids.s1, curso_id: "" }, ctx);
+  const mioDl = downloadOf(mio.blocks);
+  check("descargar_certificados de un alumno propio: ZIP del alumno", mioDl?.href === `/api/certificates/zip?studentId=${ids.s1}` && mioDl.label === "Descargar certificados", mioDl);
+  check("…y dice de quién son", (mioDl?.detail ?? "").includes("Ana"), mioDl?.detail);
+  const alumnoAjeno = await toolByName("descargar_certificados")!.run({ alumno_id: ids.s3, curso_id: "" }, ctx);
+  check("descargar_certificados de un alumno ajeno: se niega", !alumnoAjeno.blocks && alumnoAjeno.forModel.toLowerCase().includes("alumno"), alumnoAjeno.forModel);
+
+  const curso = await toolByName("descargar_certificados")!.run({ alumno_id: "", curso_id: ids.course }, ctx);
+  check("descargar_certificados de un curso propio: ZIP del curso", downloadOf(curso.blocks)?.href === `/api/certificates/zip?courseId=${ids.course}`, curso.blocks);
+  const cursoAjeno = await toolByName("descargar_certificados")!.run({ alumno_id: "", curso_id: "no-existe" }, ctx);
+  check("descargar_certificados de un curso ajeno: se niega", !cursoAjeno.blocks && cursoAjeno.forModel.toLowerCase().includes("curso"), cursoAjeno.forModel);
+  const sinNada = await toolByName("descargar_certificados")!.run({ alumno_id: "", curso_id: "" }, ctx);
+  check("descargar_certificados sin id: pide uno", !sinNada.blocks && sinNada.forModel.includes("id"), sinNada.forModel);
 }
 
 async function bajaAlumnosChecks() {
@@ -1341,6 +1459,8 @@ async function main() {
     await turnoConAdjuntoChecks();
     await crearCursosChecks();
     await queryChecks();
+    await consultaToolChecks();
+    await descargaToolChecks();
     // Al final: borrar a Dora dejaría sin alumno a las demás secciones
     await bajaAlumnosChecks();
   } finally {

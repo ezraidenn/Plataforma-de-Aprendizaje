@@ -8,6 +8,7 @@ import { studentDraftProblem } from "@/lib/student-draft";
 import { attachmentBytes } from "@/server/services/attachment-intake";
 import { getAiKey, getAiSettings } from "@/server/services/ai-settings";
 import { peopleRows, type PersonRow, type RowsResult } from "../rows-from-attachment";
+import { createExport, exportFileName } from "../exports";
 import { createProposal } from "../proposal-store";
 import { schema, str, strEnum, param, type AssistantTool, type ToolCtx } from "../tool-types";
 import type { AssistantBlock, ProposalRow } from "@/lib/assistant-blocks";
@@ -180,17 +181,28 @@ export const altaAlumnos: AssistantTool = {
     if (course) parts.push(`${result.enrolled} matriculado(s) en ${course.title}`);
     if (omitidas > 0) parts.push(`${omitidas} omitido(s) (falta el nombre o el correo, está mal escrito, repetido o ya tenía cuenta)`);
     let text = `${parts.join(", ")}.`;
-    if (result.created > 0) {
-      text += " Las contraseñas se generaron automáticamente: si alguien no puede entrar, restablécela desde Estudiantes.";
+
+    const blocks: AssistantBlock[] = [];
+    // Las contraseñas se generan una sola vez y no se vuelven a ver: van en una
+    // descarga de la conversación, que caduca a las 24 horas
+    if (result.created > 0 && result.resultCsv) {
+      const exportId = createExport(ctx.conversationId, exportFileName("altas"), result.resultCsv);
+      text += " Las contraseñas se generaron automáticamente y están en la descarga de aquí abajo: guárdala, no se vuelven a mostrar.";
+      blocks.push({
+        type: "download",
+        label: "Descargar las contraseñas",
+        href: `/api/assistant/export/${exportId}`,
+        detail: "Caduca en 24 horas",
+      });
     }
 
-    const links: AssistantBlock = {
+    blocks.push({
       type: "links",
       links: [
         { label: "Ver estudiantes", href: "/teach/students", icon: "user" },
         ...(course ? [{ label: `Ver ${course.title}`, href: `/teach/courses/${course.id}/students`, icon: "course" as const }] : []),
       ],
-    };
-    return { text, blocks: [links] };
+    });
+    return { text, blocks };
   },
 };
