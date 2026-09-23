@@ -31,6 +31,8 @@ import {
   users,
 } from "../src/server/db/schema";
 import { createCourse, enrollStudents, setStudentActive, unenrollStudent } from "../src/server/services/courses";
+import { createItem } from "../src/server/services/tree";
+import { detectFormat } from "../src/lib/excel-formats";
 import { assignEnrollmentsToCohort, createCohort } from "../src/server/services/cohorts";
 import { ownScope, type ViewScope } from "../src/server/auth/view-scope";
 import type { SessionUser } from "../src/server/auth/sessions";
@@ -74,7 +76,7 @@ import {
   summaryForModel,
   type AttachmentSummary,
 } from "../src/lib/attachment-summary";
-import { readSheetRows } from "../src/server/services/sheet-colors";
+import { readSheetRows, type SheetData } from "../src/server/services/sheet-colors";
 import { attachToConversation, summarizeAttachment } from "../src/server/services/attachment-intake";
 import { absolutePathFor, deleteFile, getFileRecord, saveStream } from "../src/server/services/storage";
 import { peopleRows, headerIndex } from "../src/server/assistant/rows-from-attachment";
@@ -751,6 +753,107 @@ async function crearCursosChecks() {
     "…y existe en la base",
     db.select().from(coursesTable).where(like(coursesTable.title, `${P} Espacios%`)).all().length === 1
   );
+}
+
+// ─── Formatos de Excel (generar y aceptar de vuelta) ─────────────────────────
+
+/** Puro: lo único que distingue un formato de otro son sus encabezados. */
+function excelFormatChecks() {
+  console.log("\n— Reconocer el formato por los encabezados");
+  check("Lecciones", detectFormat(["id", "carpeta", "tipo", "titulo", "requerido", "secuencia", "visible", "segundos_minimos"]) === "lecciones");
+  check("Lecciones: basta id, titulo y una propiedad", detectFormat(["id", "titulo", "visible"]) === "lecciones");
+  check("Matrícula", detectFormat(["correo", "nombre", "progreso", "estado", "accion"]) === "matricula");
+  check("Examen", detectFormat(["tipo", "pregunta", "puntos", "opcion_1", "correctas"]) === "examen");
+  check("Alumnos", detectFormat(["nombre", "correo", "contrasena", "grupo"]) === "alumnos");
+  check("Cursos", detectFormat(["titulo", "descripcion", "vigencia"]) === "cursos");
+  check("Mayúsculas, acentos y espacios", detectFormat(["Correo electrónico", "Nombre completo", "ACCIÓN"]) === "matricula");
+  check("Otro orden y con alias", detectFormat(["E-mail", "Alumno"]) === "alumnos");
+  check("Examen con alias", detectFormat(["Tipo", "Enunciado", "Pts"]) === "examen");
+  check("Lecciones con acentos", detectFormat(["ID", "Título", "Segundos mínimos"]) === "lecciones");
+  check("Con «accion» manda la matrícula, no los alumnos", detectFormat(["nombre", "correo", "accion"]) === "matricula");
+  check("Cursos no se confunde con lecciones (trae id)", detectFormat(["id", "titulo", "descripcion"]) === null);
+  check("Encabezados que no son de ningún formato", detectFormat(["cosa", "otra", "mas"]) === null);
+  check("Sin encabezados", detectFormat([]) === null);
+}
+
+/** Curso aparte con lecciones y un examen: es lo que se exporta y se devuelve editado. */
+const fmt = { curso: "", ajeno: "", leccion: "", video: "", examen: "" };
+
+function seedFormatos() {
+  fmt.curso = createCourse({ ownerId: ids.teacher, title: `${P} Formatos` }).id;
+  fmt.leccion = createItem({ courseId: fmt.curso, parentId: null, kind: "text", title: `${P} Introducción` }).id;
+  fmt.video = createItem({ courseId: fmt.curso, parentId: null, kind: "video", title: `${P} Video` }).id;
+  fmt.examen = createItem({ courseId: fmt.curso, parentId: null, kind: "exam", title: `${P} Evaluación` }).id;
+  // De otro maestro: el formato no debe salir
+  fmt.ajeno = createCourse({ ownerId: ids.admin, title: `${P} Ajeno` }).id;
+  enrollStudents(fmt.curso, [ids.s1], ids.teacher);
+}
+
+/** Las hojas del Excel que una herramienta dejó en su bloque de descarga. */
+async function hojasDeDescarga(blocks: AssistantBlock[] | undefined): Promise<SheetData[]> {
+  const file = await readExportBytes(ids.teacher, exportIdOf(blocks));
+  return file ? readSheetRows(file.bytes, file.fileName) : [];
+}
+
+async function formatoExcelChecks() {
+  console.log("\n— Formato de Excel para llenar");
+  seedFormatos();
+  if (!HAS_SOFFICE) {
+    console.log("  (sin LibreOffice: se omite)");
+    return;
+  }
+  const user = { ...teacherUser, id: ids.teacher };
+  const conv = createConversation(ids.teacher, `${P} formatos`);
+  const anchor = appendMessage(conv.id, "assistant", [], "");
+  const ctx = { ...ctxFor(user, ownScope(user)), conversationId: conv.id, messageId: anchor.id };
+  const pedir = (tipo: string, curso_id = "", item_id = "") =>
+    toolByName("formato_excel")!.run({ tipo, curso_id, item_id }, ctx);
+
+  const alumnos = await pedir("alumnos");
+  check("Alumnos: deja la descarga del formato", downloadOf(alumnos.blocks)?.label === "Descargar el formato", alumnos.blocks);
+  check("…y le dice qué hacer con él", (alumnos.blocks ?? []).some((b) => b.type === "text" && b.text.includes("suéltalo")), alumnos.blocks);
+  check("La IA solo ve la línea corta con el id de la descarga", alumnos.forModel.length < 200 && alumnos.forModel.includes("Descarga:"), alumnos.forModel);
+  const hojasA = await hojasDeDescarga(alumnos.blocks);
+  check("Alumnos: los encabezados que la plataforma sabe leer", (hojasA[0]?.rows[0]?.cells ?? []).join("|") === "nombre|correo|contrasena|grupo", hojasA[0]?.rows[0]?.cells);
+  check("Alumnos: una sola fila de ejemplo", hojasA[0]?.rows.length === 2 && (hojasA[0]?.rows[1]?.cells[1] ?? "").includes("@"), hojasA[0]?.rows[1]?.cells);
+  check("Alumnos: hoja de notas con una línea por columna", (hojasA[1]?.name ?? "").includes("Notas") && (hojasA[1]?.rows.length ?? 0) >= 5, hojasA.map((h) => h.name));
+
+  const cursos = await pedir("cursos");
+  const hojasC = await hojasDeDescarga(cursos.blocks);
+  check("Cursos: encabezados y ejemplo", (hojasC[0]?.rows[0]?.cells ?? []).join("|") === "titulo|descripcion|vigencia" && hojasC[0]?.rows.length === 2, hojasC[0]?.rows.map((r) => r.cells));
+  check("Cursos: las notas explican la vigencia", (hojasC[1]?.rows ?? []).some((r) => r.cells[0].includes("sin vencimiento")), hojasC[1]?.rows.map((r) => r.cells[0]));
+
+  const matricula = await pedir("matricula", fmt.curso);
+  const hojasM = await hojasDeDescarga(matricula.blocks);
+  const filasM = hojasM[0]?.rows ?? [];
+  check("Matrícula: los encabezados del export de siempre", (filasM[0]?.cells ?? []).join("|") === "correo|nombre|progreso|estado|accion", filasM[0]?.cells);
+  check("Matrícula: sale con quien está matriculado hoy", filasM.length === 2 && filasM[1].cells[0] === `${P}-ana@test.local`, filasM[1]?.cells);
+  check("Matrícula: la columna que se edita viene vacía", (filasM[1]?.cells[4] ?? "") === "", filasM[1]?.cells);
+  check("Matrícula: las notas dicen qué se escribe", (hojasM[1]?.rows ?? []).some((r) => r.cells[0].includes("matricular o quitar")), hojasM[1]?.rows.map((r) => r.cells[0]));
+
+  const lecciones = await pedir("lecciones", fmt.curso);
+  const hojasL = await hojasDeDescarga(lecciones.blocks);
+  const filasL = hojasL[0]?.rows ?? [];
+  check("Lecciones: los encabezados del export de siempre", (filasL[0]?.cells ?? []).join("|") === "id|carpeta|tipo|titulo|requerido|secuencia|visible|segundos_minimos", filasL[0]?.cells);
+  check("Lecciones: una fila por lección, con su id", filasL.length === 4 && filasL.some((r) => r.cells[0] === fmt.leccion && r.cells[3] === `${P} Introducción`), filasL.map((r) => r.cells.slice(0, 4)));
+  check("Lecciones: las notas avisan de no tocar el id", (hojasL[1]?.rows ?? []).some((r) => r.cells[0].includes("«id»")), hojasL[1]?.rows.map((r) => r.cells[0]));
+
+  const examen = await pedir("examen");
+  const hojasE = await hojasDeDescarga(examen.blocks);
+  const filasE = hojasE[0]?.rows ?? [];
+  check("Examen sin id: la plantilla en blanco", (filasE[0]?.cells ?? []).slice(0, 3).join("|") === "tipo|pregunta|puntos", filasE[0]?.cells);
+  check("Examen: un ejemplo de cada tipo", filasE.length === 8, filasE.length);
+  check("Examen: las notas explican los tipos y los pares", (hojasE[1]?.rows ?? []).some((r) => r.cells[0].includes("verdadero_falso")) && (hojasE[1]?.rows ?? []).some((r) => r.cells[0].includes("izquierda=derecha")), hojasE[1]?.rows.map((r) => r.cells[0]));
+
+  const conPreguntas = await pedir("examen", "", fmt.examen);
+  check("Examen vacío por id: sigue siendo la plantilla y lo dice en las notas", (await hojasDeDescarga(conPreguntas.blocks))[1]?.rows[0]?.cells[0]?.includes("todavía no tiene preguntas") === true, conPreguntas.forModel);
+
+  const ajeno = await pedir("matricula", fmt.ajeno);
+  check("Curso que no es tuyo: no genera nada", !downloadOf(ajeno.blocks) && ajeno.forModel.includes("no te pertenece"), ajeno.forModel);
+  const sinCurso = await pedir("lecciones");
+  check("Sin curso: lo pide y manda a buscar_curso", !downloadOf(sinCurso.blocks) && sinCurso.forModel.includes("buscar_curso"), sinCurso.forModel);
+  const examenAjeno = await pedir("examen", "", fmt.leccion);
+  check("Un id que no es de examen: se niega", !downloadOf(examenAjeno.blocks) && examenAjeno.forModel.includes("examen"), examenAjeno.forModel);
 }
 
 /**
@@ -2216,6 +2319,7 @@ async function main() {
   await clientChecks();
   await modeloChatChecks();
   attachmentSummaryChecks();
+  excelFormatChecks();
   await sheetColorChecks();
   await xlsxChecks();
   await intakeChecks();
@@ -2233,6 +2337,7 @@ async function main() {
     await resumenChecks();
     await turnoConAdjuntoChecks();
     await crearCursosChecks();
+    await formatoExcelChecks();
     await queryChecks();
     await listadoChecks();
     await consultaToolChecks();

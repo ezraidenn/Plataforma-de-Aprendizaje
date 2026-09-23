@@ -1,4 +1,5 @@
 import "server-only";
+import { normalizeHeader } from "@/lib/excel-formats";
 
 /**
  * Núcleo CSV compartido por todas las operaciones masivas.
@@ -61,14 +62,10 @@ export type ParsedCsv = {
   sep: "," | ";";
 };
 
-export function normalizeHeader(h: string): string {
-  return h
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_|_$/g, "");
-}
+// La regla de normalizar encabezados vive en `@/lib/excel-formats`, que también
+// reconoce por ellos qué formato es un archivo: tiene que ser la MISMA o un
+// archivo reconocido no se podría leer aquí.
+export { normalizeHeader };
 
 export function parseCsv(text: string, opts: { maxRows: number }): ParsedCsv {
   const clean = text.replace(/^﻿/, "");
