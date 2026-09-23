@@ -7,7 +7,7 @@ import {
   interpretStudentsChunkWithRetry,
   interpretStudentsVisionWithRetry,
 } from "@/server/services/ai-student-import";
-import { interpretCoursesChunkWithRetry } from "@/server/services/ai-course-import";
+import { interpretCoursesChunkWithRetry, interpretCoursesVisionWithRetry } from "@/server/services/ai-course-import";
 import { normalizeStudentEmail, normalizeStudentName } from "@/lib/student-draft";
 import { MAX_AI_FILE_BYTES, MAX_SCANNED_PAGES, aiFileKind, extOf, scannedTooLongMessage } from "@/lib/ai-import-files";
 import type { ColorFamily } from "@/lib/attachment-summary";
@@ -141,6 +141,15 @@ export async function courseRows(source: Source, opts: CourseRowsOpts): Promise<
   return readRows(source, opts, {
     indexOf: courseHeaderIndex,
     fromCells: courseFrom,
+    // Una foto o un PDF escaneado de la lista de cursos: la lee la IA, igual
+    // que con los alumnos (antes se rechazaba y la IA decía «no pude extraer»)
+    async viaVision(parts) {
+      if (!opts.ai) throw new Error(NEEDS_AI_VISION);
+      const drafts = await interpretCoursesVisionWithRetry(parts, opts.ai);
+      return drafts
+        .slice(0, MAX_PEOPLE_ROWS)
+        .map((d) => ({ title: d.title, description: d.description, validity: d.validityMonths === null ? "" : String(d.validityMonths) }));
+    },
     async viaAi(text) {
       if (!opts.ai) throw new Error(NEEDS_AI);
       const rows: CourseRow[] = [];

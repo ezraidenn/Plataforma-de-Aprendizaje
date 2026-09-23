@@ -4245,8 +4245,22 @@ async function fotoChecks() {
   const pesada = await peopleRows({ bytes: grande, fileName: "enorme.png" }, { ai: { key: "k", model: "m", fetchImpl: vacia } }).catch((e: Error) => e.message);
   check("Foto de más de 10 MB: no se manda a la IA", typeof pesada === "string" && pesada.includes("10 MB"), pesada);
 
-  const cursos = await courseRows({ bytes: png, fileName: "lista.png" }, { ai: { key: "k", model: "m", fetchImpl: vacia } }).catch((e: Error) => e.message);
-  check("Foto para una lista de cursos: pide un archivo con texto", typeof cursos === "string" && cursos.includes("Excel"), cursos);
+  // Una foto de una lista de cursos también se lee con la IA (antes se
+  // rechazaba y el asistente contestaba «no pude extraer los cursos»)
+  const listaCursos = {
+    courses: [
+      { title: "Trabajos en  altura", description: "NOM-009", validity_months: 12 },
+      { title: "Montacargas", description: "", validity_months: 0 },
+    ],
+  };
+  const cursos = await courseRows(
+    { bytes: png, fileName: "cursos.png" },
+    { ai: { key: "k", model: "m", fetchImpl: fakeOutput([say(JSON.stringify(listaCursos))]) } }
+  );
+  check("Foto de una lista de cursos: la IA los transcribe", cursos.rows.length === 2 && cursos.rows[0].title === "Trabajos en altura", cursos.rows);
+  check("Foto de cursos: conserva la vigencia", cursos.rows[0].validity === "12" && cursos.rows[1].validity === "", cursos.rows);
+  const cursosSinIa = await courseRows({ bytes: png, fileName: "cursos.png" }, {}).catch((e: Error) => e.message);
+  check("Foto de cursos sin clave de IA: mensaje claro", typeof cursosSinIa === "string" && cursosSinIa.includes("hace falta la IA"), cursosSinIa);
 }
 
 async function modeloChatChecks() {

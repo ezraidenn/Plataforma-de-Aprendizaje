@@ -1,6 +1,6 @@
 import "server-only";
 import { nanoid } from "nanoid";
-import { obj, requestStructured, withRetry, type AiOpts } from "./ai-client";
+import { obj, requestStructured, visionMessage, withRetry, type AiOpts, type VisionPart } from "./ai-client";
 
 /**
  * Lectura con IA de una lista de cursos (Excel, CSV, Word o PDF): de cada
@@ -80,4 +80,19 @@ export async function interpretCoursesChunk(chunk: string, opts: AiOpts): Promis
 
 export async function interpretCoursesChunkWithRetry(chunk: string, opts: AiOpts): Promise<CourseDraft[]> {
   return withRetry(() => interpretCoursesChunk(chunk, opts));
+}
+
+/** Fotos de la lista (juntas, en orden) o un PDF escaneado → cursos. */
+export async function interpretCoursesVision(parts: VisionPart[], opts: AiOpts): Promise<CourseDraft[]> {
+  const images = parts.filter((p) => p.kind === "image").length;
+  const intro = parts.some((p) => p.kind === "pdf")
+    ? "Transcribe la lista de cursos de este PDF escaneado."
+    : images === 1
+      ? "Transcribe la lista de cursos de esta imagen."
+      : `Transcribe la lista de cursos de estas ${images} imágenes, en orden.`;
+  return requestCourses(visionMessage(intro, parts), opts, 240_000);
+}
+
+export async function interpretCoursesVisionWithRetry(parts: VisionPart[], opts: AiOpts): Promise<CourseDraft[]> {
+  return withRetry(() => interpretCoursesVision(parts, opts));
 }
