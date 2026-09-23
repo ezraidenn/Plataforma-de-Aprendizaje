@@ -58,3 +58,25 @@ export function formatRelative(date: Date | number | null | undefined): string {
   const months = Math.floor(days / 30);
   return months === 1 ? "hace 1 mes" : `hace ${months} meses`;
 }
+
+/** 14 → "14" · 14.5 → "14.5" (puntos de examen o de tarea). */
+export function formatPoints(n: number): string {
+  return Number.isInteger(n) ? String(n) : String(Math.round(n * 10) / 10);
+}
+
+/**
+ * Qué decirle al maestro después de guardar. Al corregir una nota ya puesta el
+ * número importa más que el verbo: «Corregida de 7 a 9». Si la nota no se movió
+ * se dice también, para que no parezca que no se guardó.
+ */
+export function gradeSavedMessage(
+  result: { regraded: boolean; scoreBefore: number | null; scoreAfter: number | null },
+  fallback: string
+): string {
+  if (!result.regraded) return fallback;
+  const { scoreBefore, scoreAfter } = result;
+  if (scoreBefore !== null && scoreAfter !== null && scoreBefore !== scoreAfter) {
+    return `Corregida de ${formatPoints(scoreBefore)} a ${formatPoints(scoreAfter)}`;
+  }
+  return "Corrección guardada · la nota no cambió";
+}

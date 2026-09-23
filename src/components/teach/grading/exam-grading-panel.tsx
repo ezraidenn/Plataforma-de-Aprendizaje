@@ -13,16 +13,22 @@ import {
   gradeExamAnswersAction,
   type ExamGradingDetail,
 } from "@/server/actions/teacher-grading";
-import { formatRelative } from "@/components/teach/format";
+import { formatRelative, gradeSavedMessage } from "@/components/teach/format";
 
 type GradeState = { points: string; feedback: string };
 
+/** Qué se está haciendo: calificar por primera vez o corregir una nota puesta. */
+export type GradingMode = "grade" | "regrade";
+
 export function ExamGradingPanel({
   detail,
+  mode = "grade",
   onDone,
 }: {
   detail: ExamGradingDetail;
-  onDone: (message: string) => void;
+  /** «regrade» al abrir desde Calificadas: el botón guarda la corrección. */
+  mode?: GradingMode;
+  onDone: (outcome: { message: string; warning?: string }) => void;
 }) {
   const [grades, setGrades] = useState<Record<string, GradeState>>(() =>
     Object.fromEntries(
@@ -78,7 +84,13 @@ export function ExamGradingPanel({
         toast.error(result.error);
         return;
       }
-      onDone(result.finalized ? "Calificación publicada" : "Calificación guardada");
+      onDone({
+        message: gradeSavedMessage(
+          result,
+          result.finalized ? "Calificación publicada" : "Calificación guardada"
+        ),
+        warning: result.warning,
+      });
     });
   }
 
@@ -239,8 +251,8 @@ export function ExamGradingPanel({
           className="h-11 bg-cta px-6 text-cta-foreground hover:bg-cta/90"
         >
           {saving ? <Loader2 className="animate-spin" aria-hidden /> : null}
-          {saving ? "Guardando…" : "Guardar y siguiente"}
-          {!saving && <ArrowRight aria-hidden />}
+          {saving ? "Guardando…" : mode === "regrade" ? "Guardar corrección" : "Guardar y siguiente"}
+          {!saving && mode === "grade" && <ArrowRight aria-hidden />}
         </Button>
       </div>
     </div>

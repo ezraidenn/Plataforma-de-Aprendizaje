@@ -37,14 +37,18 @@ import {
   gradeSubmissionAction,
   type SubmissionGradingDetail,
 } from "@/server/actions/teacher-grading";
-import { formatDateTime, formatRelative } from "@/components/teach/format";
+import { formatDateTime, formatRelative, gradeSavedMessage } from "@/components/teach/format";
+import type { GradingMode } from "./exam-grading-panel";
 
 export function AssignmentGradingPanel({
   detail,
+  mode = "grade",
   onDone,
 }: {
   detail: SubmissionGradingDetail;
-  onDone: (message: string) => void;
+  /** «regrade» al abrir desde Calificadas: el botón guarda la corrección. */
+  mode?: GradingMode;
+  onDone: (outcome: { message: string; warning?: string }) => void;
 }) {
   const [score, setScore] = useState(detail.score === null ? "" : String(detail.score));
   const [feedback, setFeedback] = useState(detail.feedbackMd ?? "");
@@ -70,7 +74,10 @@ export function AssignmentGradingPanel({
         toast.error(result.error);
         return;
       }
-      onDone("Calificación publicada");
+      onDone({
+        message: gradeSavedMessage(result, "Calificación publicada"),
+        warning: result.warning,
+      });
     });
   }
 
@@ -86,7 +93,7 @@ export function AssignmentGradingPanel({
         toast.error(result.error);
         return;
       }
-      onDone("Entrega devuelta para corrección");
+      onDone({ message: "Entrega devuelta para corrección" });
     });
   }
 
@@ -276,8 +283,8 @@ export function AssignmentGradingPanel({
           className="h-11 bg-cta px-6 text-cta-foreground hover:bg-cta/90"
         >
           {saving ? <Loader2 className="animate-spin" aria-hidden /> : null}
-          {saving ? "Guardando…" : "Calificar y siguiente"}
-          {!saving && <ArrowRight aria-hidden />}
+          {saving ? "Guardando…" : mode === "regrade" ? "Guardar corrección" : "Calificar y siguiente"}
+          {!saving && mode === "grade" && <ArrowRight aria-hidden />}
         </Button>
       </div>
     </div>

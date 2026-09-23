@@ -12,6 +12,7 @@ import {
 // ─── Drill-down por alumno (Sheet lateral de /teach/reports) ─────────────────
 
 export type StudentDetailAttempt = {
+  attemptId: string;
   attemptNumber: number;
   status: "in_progress" | "submitted" | "graded";
   finalScore: number | null;
@@ -20,6 +21,7 @@ export type StudentDetailAttempt = {
 };
 
 export type StudentDetailSubmission = {
+  submissionId: string;
   status: "submitted" | "graded" | "returned";
   score: number | null;
   isLate: boolean;

@@ -2,10 +2,14 @@ import type { Metadata } from "next";
 import { requireTeacher } from "@/server/auth/guards";
 import { getViewScope } from "@/server/auth/view-scope-cookie";
 import { ownScope } from "@/server/auth/view-scope";
-import { gradingQueue } from "@/server/services/grading";
+import { gradedRecently, gradingQueue } from "@/server/services/grading";
 import { listTeacherCourses } from "@/server/services/courses";
 import { titleWithOwner, VIEW_OWN } from "@/lib/view-context";
-import { GradingView, type QueueEntry } from "@/components/teach/grading/grading-view";
+import {
+  GradingView,
+  type OpenTarget,
+  type QueueEntry,
+} from "@/components/teach/grading/grading-view";
 import { SwitchContextButton } from "@/components/teach/switch-context-button";
 
 export const metadata: Metadata = { title: "Por calificar" };
@@ -13,11 +17,17 @@ export const metadata: Metadata = { title: "Por calificar" };
 export default async function GradingPage({
   searchParams,
 }: {
-  searchParams: Promise<{ attempt?: string; submission?: string }>;
+  searchParams: Promise<{
+    attempt?: string;
+    submission?: string;
+    abrir?: string;
+    tipo?: string;
+    curso?: string;
+  }>;
 }) {
   const user = await requireTeacher();
   const scope = await getViewScope(user);
-  const { attempt, submission } = await searchParams;
+  const { attempt, submission, abrir, tipo, curso } = await searchParams;
   const showOwner = scope.kind === "all";
   const scoped = listTeacherCourses(scope);
   // En «General», cada curso lleva a su dueño: «NOM-035 · Maestro A»
@@ -59,9 +69,31 @@ export default async function GradingPage({
     title: withOwner(course.id, course.title),
   }));
 
+  // «Corregir» desde donde se ve la nota: ?abrir=<id>&tipo=exam|assignment
+  // (y, si se sabe, &curso= para encontrarla aunque sea vieja). Si resulta que
+  // todavía está pendiente, se abre en la cola de siempre.
+  const openKind = tipo === "exam" || tipo === "assignment" ? tipo : null;
+  const openPending =
+    abrir && openKind ? entries.find((e) => e.kind === openKind && e.key === abrir) : undefined;
+  let initialOpen: OpenTarget | null = null;
+  if (abrir && openKind && !openPending) {
+    const row = gradedRecently(scope, { limit: 200, courseId: curso }).find(
+      (e) => e.kind === openKind && (e.kind === "exam" ? e.attemptId : e.submissionId) === abrir
+    );
+    if (row) {
+      initialOpen = {
+        key: abrir,
+        kind: openKind,
+        gradedByName: row.gradedByName ?? null,
+        gradedAtMs: row.gradedAt?.getTime() ?? null,
+      };
+    }
+  }
+
   // Deep-link desde notificaciones: ?attempt= o ?submission= preseleccionan
-  const initialSelectedKey =
-    attempt && entries.some((e) => e.kind === "exam" && e.key === attempt)
+  const initialSelectedKey = openPending
+    ? openPending.key
+    : attempt && entries.some((e) => e.kind === "exam" && e.key === attempt)
       ? attempt
       : submission && entries.some((e) => e.kind === "assignment" && e.key === submission)
         ? submission
@@ -89,7 +121,12 @@ export default async function GradingPage({
           <SwitchContextButton value={VIEW_OWN}>Ver en Mi contenido</SwitchContextButton>
         </p>
       )}
-      <GradingView entries={entries} courses={courses} initialSelectedKey={initialSelectedKey} />
+      <GradingView
+        entries={entries}
+        courses={courses}
+        initialSelectedKey={initialSelectedKey}
+        initialOpen={initialOpen}
+      />
     </>
   );
 }

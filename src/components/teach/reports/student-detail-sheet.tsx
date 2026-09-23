@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Clock, TriangleAlert } from "lucide-react";
+import Link from "next/link";
+import { Clock, Pencil, TriangleAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,7 +14,12 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { formatDate, formatDateTime, formatDuration } from "@/components/teach/format";
+import {
+  formatDate,
+  formatDateTime,
+  formatDuration,
+  formatPoints,
+} from "@/components/teach/format";
 import {
   studentDetailAction,
   type StudentDetailItem,
@@ -41,9 +47,32 @@ const SUBMISSION_STATUS: Record<string, { label: string; className: string }> = 
   returned: { label: "Devuelta", className: "bg-warning/10 text-warning" },
 };
 
-/** 14 → "14" · 14.5 → "14.5" (puntos de examen/tarea). */
-function formatPoints(n: number): string {
-  return Number.isInteger(n) ? String(n) : n.toFixed(1);
+/**
+ * Enlace a la cola de calificación con esta nota ya abierta, para corregirla.
+ * Es el único sitio donde el maestro ve la nota de un examen o de una tarea,
+ * así que es de aquí de donde tiene que poder ir a cambiarla.
+ */
+function CorregirLink({
+  courseId,
+  kind,
+  id,
+  label,
+}: {
+  courseId: string;
+  kind: "exam" | "assignment";
+  id: string;
+  label: string;
+}) {
+  return (
+    <Link
+      href={`/teach/grading?abrir=${encodeURIComponent(id)}&tipo=${kind}&curso=${encodeURIComponent(courseId)}`}
+      className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium text-section-strong transition-colors hover:bg-section-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      aria-label={label}
+    >
+      <Pencil className="size-3" aria-hidden />
+      Corregir
+    </Link>
+  );
 }
 
 /** Panel lateral de drill-down por alumno (DISENO-UX §2.11). */
@@ -156,6 +185,7 @@ function DetailBody({
         {state.items.map((item) => (
           <DetailItemRow
             key={item.itemId}
+            courseId={courseId}
             item={item}
             focused={item.itemId === focusItemId}
             ref={item.itemId === focusItemId ? focusRef : undefined}
@@ -167,10 +197,12 @@ function DetailBody({
 }
 
 function DetailItemRow({
+  courseId,
   item,
   focused,
   ref,
 }: {
+  courseId: string;
   item: StudentDetailItem;
   focused: boolean;
   ref?: React.Ref<HTMLLIElement>;
@@ -222,9 +254,15 @@ function DetailItemRow({
             )}
           </div>
 
-          {item.kind === "exam" && <AttemptList attempts={item.attempts ?? []} />}
+          {item.kind === "exam" && (
+            <AttemptList courseId={courseId} title={item.title} attempts={item.attempts ?? []} />
+          )}
           {item.kind === "assignment" && (
-            <SubmissionInfo submission={item.submission ?? null} />
+            <SubmissionInfo
+              courseId={courseId}
+              title={item.title}
+              submission={item.submission ?? null}
+            />
           )}
         </div>
       </div>
@@ -233,8 +271,12 @@ function DetailItemRow({
 }
 
 function AttemptList({
+  courseId,
+  title,
   attempts,
 }: {
+  courseId: string;
+  title: string;
   attempts: NonNullable<StudentDetailItem["attempts"]>;
 }) {
   if (attempts.length === 0) {
@@ -257,12 +299,22 @@ function AttemptList({
               {attempt.submittedAt !== null &&
                 ` · ${formatDateTime(new Date(attempt.submittedAt))}`}
             </span>
-            <span className="font-medium tabular-nums">
-              {attempt.finalScore !== null && attempt.maxScore !== null
-                ? `${formatPoints(attempt.finalScore)}/${formatPoints(attempt.maxScore)} pts${
-                    percent !== null ? ` (${percent}%)` : ""
-                  }`
-                : "—"}
+            <span className="flex shrink-0 items-center gap-1">
+              <span className="font-medium tabular-nums">
+                {attempt.finalScore !== null && attempt.maxScore !== null
+                  ? `${formatPoints(attempt.finalScore)}/${formatPoints(attempt.maxScore)} pts${
+                      percent !== null ? ` (${percent}%)` : ""
+                    }`
+                  : "—"}
+              </span>
+              {attempt.status === "graded" && (
+                <CorregirLink
+                  courseId={courseId}
+                  kind="exam"
+                  id={attempt.attemptId}
+                  label={`Corregir la calificación del intento ${attempt.attemptNumber} de ${title}`}
+                />
+              )}
             </span>
           </li>
         );
@@ -272,8 +324,12 @@ function AttemptList({
 }
 
 function SubmissionInfo({
+  courseId,
+  title,
   submission,
 }: {
+  courseId: string;
+  title: string;
   submission: NonNullable<StudentDetailItem["submission"]> | null;
 }) {
   if (!submission) {
@@ -302,6 +358,14 @@ function SubmissionInfo({
       <span className="text-muted-foreground">
         Enviada: {formatDateTime(new Date(submission.submittedAt))}
       </span>
+      {submission.status === "graded" && (
+        <CorregirLink
+          courseId={courseId}
+          kind="assignment"
+          id={submission.submissionId}
+          label={`Corregir la calificación de ${title}`}
+        />
+      )}
     </div>
   );
 }

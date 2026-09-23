@@ -235,6 +235,8 @@ export function studentDetail(courseId: string, studentId: string) {
 
     if (item.kind === "exam") {
       const attempts = listAttempts(item.id, studentId, enrollment.id).map((a) => ({
+        // El id va incluido para poder abrir el intento en la cola y corregirlo
+        attemptId: a.id,
         attemptNumber: a.attemptNumber,
         status: a.status,
         finalScore: a.finalScore,
@@ -259,6 +261,7 @@ export function studentDetail(courseId: string, studentId: string) {
         ...base,
         submission: submission
           ? {
+              submissionId: submission.id,
               status: submission.status,
               score: submission.score,
               isLate: submission.isLate,
