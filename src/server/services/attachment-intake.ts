@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { db } from "@/server/db";
 import { aiAttachments, aiConversations, files } from "@/server/db/schema";
@@ -102,7 +102,10 @@ export async function attachToConversation(opts: {
 
 export type StoredAttachment = { id: string; fileId: string | null; summary: AttachmentSummary };
 
-/** Adjuntos de la conversación (todos, o los que se pidan por id). */
+/**
+ * Adjuntos de la conversación (todos, o los que se pidan por id), del más
+ * viejo al más nuevo: quien pida el último tiene que poder fiarse del orden.
+ */
 export function attachmentsOf(conversationId: string, ids?: string[]): StoredAttachment[] {
   const rows = db
     .select({ id: aiAttachments.id, fileId: aiAttachments.fileId, summary: aiAttachments.summary })
@@ -112,6 +115,7 @@ export function attachmentsOf(conversationId: string, ids?: string[]): StoredAtt
         ? and(eq(aiAttachments.conversationId, conversationId), inArray(aiAttachments.id, ids))
         : eq(aiAttachments.conversationId, conversationId)
     )
+    .orderBy(asc(aiAttachments.createdAt))
     .all();
   return rows.map((r) => ({ id: r.id, fileId: r.fileId, summary: r.summary as AttachmentSummary }));
 }

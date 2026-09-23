@@ -31,6 +31,9 @@ import { schema, str, strEnum, param, type AssistantTool, type ToolCtx } from ".
  * leer el archivo (salvo que sea enorme) y se revalida con las MISMAS reglas
  * de la pantalla de operaciones masivas.
  *
+ * El archivo puede venir de un mensaje anterior: el examen se pregunta antes
+ * («¿reemplazar o agregar?») y la respuesta del usuario ya no lleva adjunto.
+ *
  * El examen tiene los dos modos de la pantalla de importar (reemplazar o
  * agregar) y no se adivina ninguno: sin `modo` no se crea propuesta y se pide
  * preguntárselo al usuario.
@@ -216,6 +219,23 @@ async function sheetsOf(adjunto: StoredAttachment): Promise<SheetData[]> {
   return readSheetRows(bytes, fileName);
 }
 
+/**
+ * El archivo que se aplica: el de este mensaje o, si no trae ninguno, el
+ * último de la conversación.
+ *
+ * Hace falta para las vueltas de dos mensajes: con un examen esta herramienta
+ * devuelve la pregunta («¿reemplazar o agregar?») y el usuario contesta en el
+ * mensaje siguiente, que ya no lleva adjunto —nadie vuelve a subir el mismo
+ * archivo para contestar «reemplazar»—. Lo que se usó se dice en el texto,
+ * y como siempre no se toca nada hasta que el usuario aplica la tabla.
+ */
+function archivoDe(ctx: ToolCtx): { adjunto: StoredAttachment; deAntes: boolean } | null {
+  const deEsteMensaje = ctx.attachments.at(-1);
+  if (deEsteMensaje) return { adjunto: deEsteMensaje, deAntes: false };
+  const anterior = attachmentsOf(ctx.conversationId).at(-1);
+  return anterior ? { adjunto: anterior, deAntes: true } : null;
+}
+
 export const aplicarExcel: AssistantTool = {
   name: "aplicar_excel",
   description:
@@ -235,8 +255,13 @@ export const aplicarExcel: AssistantTool = {
   roles: ["admin", "teacher"],
   risk: "review",
   async run(params, ctx) {
-    const adjunto = ctx.attachments.at(-1);
-    if (!adjunto) return { forModel: "No hay ningún archivo adjunto en este mensaje. Pide al usuario que lo adjunte." };
+    const archivo = archivoDe(ctx);
+    if (!archivo) {
+      return { forModel: "No hay ningún archivo adjunto en este mensaje ni antes en esta conversación. Pide al usuario que lo adjunte." };
+    }
+    const { adjunto } = archivo;
+    // Si se rescató de antes, la IA lo dice: el usuario tiene que saber qué archivo se aplicó
+    const deAntes = archivo.deAntes ? ` (se usó el archivo de antes en esta conversación: ${adjunto.summary.fileName})` : "";
 
     let sheets: SheetData[];
     try {
@@ -245,7 +270,7 @@ export const aplicarExcel: AssistantTool = {
       return { forModel: err instanceof Error ? err.message : "No pude leer el archivo adjunto." };
     }
     if (sheets.length === 0) {
-      return { forModel: "No pude leer ese archivo como hoja de cálculo; tiene que ser un Excel o un CSV." };
+      return { forModel: `No pude leer ese archivo como hoja de cálculo; tiene que ser un Excel o un CSV.${deAntes}` };
     }
 
     const pedido = param(params, "formato");
@@ -254,7 +279,7 @@ export const aplicarExcel: AssistantTool = {
     if (!hoja) {
       const encabezados = (sheets[0]?.rows[0]?.cells ?? []).filter(Boolean).slice(0, 8).join(", ");
       return {
-        forModel: `No reconocí el formato de ese archivo${encabezados ? ` (sus encabezados son: ${encabezados})` : ""}. Los que entiendo son ${QUE_ENTIENDO}. Ofrécele el formato correcto con formato_excel.`,
+        forModel: `No reconocí el formato de ese archivo${encabezados ? ` (sus encabezados son: ${encabezados})` : ""}. Los que entiendo son ${QUE_ENTIENDO}. Ofrécele el formato correcto con formato_excel.${deAntes}`,
       };
     }
 
@@ -262,9 +287,9 @@ export const aplicarExcel: AssistantTool = {
     // encabezados, la IA se entera para poder avisarlo
     const formato = forzado || hoja.formato;
     const discrepa =
-      forzado && hoja.formato !== forzado
+      (forzado && hoja.formato !== forzado
         ? ` Ojo: los encabezados parecen de ${FORMAT_LABELS[hoja.formato]}, pero se pidió ${FORMAT_LABELS[forzado]}.`
-        : "";
+        : "") + deAntes;
 
     if (formato === "alumnos") {
       return { forModel: `Ese archivo es una lista de alumnos, no lo aplico yo: llama a alta_alumnos con origen "adjunto" (y curso_id si además se matriculan).${discrepa}` };

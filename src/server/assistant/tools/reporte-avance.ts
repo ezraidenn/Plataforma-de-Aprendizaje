@@ -215,9 +215,9 @@ export const reporteAvance: AssistantTool = {
     const completados = rows.filter((r) => r.courseCompleted).length;
     const enRiesgo = rows.filter((r) => r.atRisk).length;
     const medio = Math.round(rows.reduce((acc, r) => acc + r.coursePercent, 0) / rows.length);
-    // `courseMatrix` devuelve como mucho una página de 100 filas (lo mismo que
-    // se lleva el CSV de la pantalla): con más alumnos, el archivo trae los
-    // primeros y tanto el resumen como el texto lo dicen
+    // Se piden todas las filas, igual que el CSV de la pantalla de Reportes.
+    // `courseMatrix` tiene un tope de 100 000 para que un curso descomunal no
+    // se lleve la memoria; si alguna vez recortara, el resumen y el texto lo dicen
     const recortado = rows.length < total;
 
     const blocks: AssistantBlock[] = [

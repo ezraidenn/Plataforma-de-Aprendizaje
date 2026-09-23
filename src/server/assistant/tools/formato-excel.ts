@@ -202,17 +202,17 @@ function plantillaExamen(examen: { id: string; title: string } | null): Plantill
           : "Las filas grises son un ejemplo de cada tipo: bórralas o escribe encima.",
         ...NOTAS_EXAMEN,
       ],
-      pista: "Escribe tus preguntas y suéltalo aquí otra vez, diciéndome a qué examen van: las agrego al final.",
+      pista: "Escribe tus preguntas y suéltalo aquí otra vez, diciéndome a qué examen van: te pregunto si reemplazo las que tenga o las agrego al final.",
     };
   }
   return {
     hoja: "Preguntas",
     csv: actual,
     notas: [
-      "Ojo: al devolverme este archivo las preguntas se AGREGAN al final del examen, no reemplazan a las que ya tiene. Si quieres reemplazarlas, hazlo desde el examen (Importar CSV → Reemplazar).",
+      "Al devolverme este archivo te pregunto qué hacer: REEMPLAZAR las preguntas que tiene el examen por las de aquí, o AGREGARLAS al final. Si solo corriges estas, lo tuyo es reemplazar: agregarlas las dejaría duplicadas.",
       ...NOTAS_EXAMEN,
     ],
-    pista: `Edita o agrega preguntas de ${examen!.title} y suéltalo aquí otra vez: las agrego al final del examen.`,
+    pista: `Edita o agrega preguntas de ${examen!.title} y suéltalo aquí otra vez: te pregunto si reemplazo las que tiene o las agrego al final.`,
   };
 }
 
