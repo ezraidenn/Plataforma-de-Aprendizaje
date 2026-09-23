@@ -37,7 +37,9 @@ export function AssistantField() {
   // Al enviar hay adjunto pero no hace falta escribir nada
   const canSend = (draft.trim().length > 0 || attachments.length > 0) && !busy && !uploading;
   const full = attachments.length >= MAX_ATTACHMENTS;
-  const clipLabel = full ? `Máximo ${MAX_ATTACHMENTS} archivos por mensaje` : "Adjuntar archivo";
+  const clipLabel = full
+    ? `Máximo ${MAX_ATTACHMENTS} archivos por mensaje`
+    : "Adjuntar archivo al asistente";
   const showPopover = attachments.length > 0 && !open && !closed && !dragging;
 
   // Este campo solo existe para quien puede usar el asistente: desde aquí se
@@ -65,7 +67,7 @@ export function AssistantField() {
     <div className="relative hidden w-full max-w-[560px] md:block">
       <form
         role="search"
-        aria-label="Asistente de IA"
+        aria-label="Asistente de IA: escribe o suelta un archivo"
         onSubmit={(e) => {
           e.preventDefault();
           if (canSend) void send(draft.trim() || DEFAULT_ATTACHMENT_TEXT);
@@ -144,7 +146,7 @@ export function AssistantField() {
             <button
               type="submit"
               disabled={!canSend}
-              aria-label="Enviar"
+              aria-label="Enviar al asistente"
               className={cn(
                 "flex size-8 shrink-0 items-center justify-center rounded-full transition-colors",
                 canSend ? "bg-indigo-600 text-white hover:bg-indigo-700" : "bg-slate-200 text-slate-400"
