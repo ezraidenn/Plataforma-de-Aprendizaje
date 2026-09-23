@@ -313,6 +313,31 @@ function sinEntrar(scope: ViewScope, courseId: string | null): QueryResult {
   });
 }
 
+/**
+ * Solo la cifra de «sin entrar», para las sugerencias del panel: alumnos
+ * DISTINTOS (uno matriculado en dos cursos cuenta una vez), sin armar filas
+ * ni CSV. `pendientesQuery` cuenta matrículas y prepara una descarga que ahí
+ * nadie usa.
+ */
+export function sinEntrarCount(scope: ViewScope): number {
+  const limit = new Date(Date.now() - IDLE_DAYS * DAY_MS);
+  return (
+    db
+      .select({ n: sql<number>`count(distinct ${enrollments.studentId})` })
+      .from(enrollments)
+      .innerJoin(courses, eq(enrollments.courseId, courses.id))
+      .innerJoin(users, eq(enrollments.studentId, users.id))
+      .where(
+        and(
+          eq(enrollments.status, "active"),
+          or(isNull(users.lastLoginAt), lt(users.lastLoginAt, limit)),
+          ...courseFilters(scope, null)
+        )
+      )
+      .get()?.n ?? 0
+  );
+}
+
 /** Pares alumno/tarea sin entrega, con la matrícula activa. */
 function sinEntregar(scope: ViewScope, courseId: string | null): QueryResult {
   const rows = db

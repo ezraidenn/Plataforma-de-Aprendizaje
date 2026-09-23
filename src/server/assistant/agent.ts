@@ -7,6 +7,7 @@ import {
   appendMessage,
   createConversation,
   getConversation,
+  getSummary,
   recentModelText,
   renameConversation,
   updateMessage,
@@ -17,6 +18,7 @@ import { conversationTitle, type AssistantBlock, type AssistantMessage } from "@
 import { getProposal } from "./proposal-store";
 import { toolByName, toolDefsForRole } from "./registry";
 import { systemPrompt } from "./prompt";
+import { maybeSummarize } from "./summarize";
 import { cleanParams, type ToolCtx, type ToolResult } from "./tool-types";
 
 /**
@@ -37,6 +39,11 @@ export type TurnInput = {
   text: string;
   /** Adjuntos de este mensaje (ids de `ai_attachments` de esta conversación) */
   attachmentIds?: string[];
+  /**
+   * Resumir lo viejo al terminar (por defecto sí). Solo las pruebas que
+   * cuentan llamadas a la IA lo apagan: el resumen hace la suya.
+   */
+  summarize?: boolean;
   ai: AiOpts;
 };
 
@@ -68,8 +75,10 @@ export async function runTurn(input: TurnInput): Promise<TurnOutput> {
   // Un id de otra conversación no se cuela: `attachmentsOf` filtra por conversación
   const attachments = input.attachmentIds?.length ? attachmentsOf(conversationId, input.attachmentIds) : [];
 
-  // Historial corto ANTES de guardar el mensaje nuevo (para no duplicarlo)
-  const history = recentModelText(conversationId, HISTORY_MESSAGES);
+  // Historial corto ANTES de guardar el mensaje nuevo (para no duplicarlo).
+  // Lo anterior al resumen no se repite en crudo: ya va comprimido en él.
+  const { summary, summaryUpto } = getSummary(conversationId);
+  const history = recentModelText(conversationId, HISTORY_MESSAGES, summaryUpto);
   const userBlocks: AssistantBlock[] = [
     { type: "text", text },
     ...attachments.map((a) => ({ type: "attachment" as const, name: a.summary.fileName, detail: attachmentDetail(a.summary) })),
@@ -91,6 +100,7 @@ export async function runTurn(input: TurnInput): Promise<TurnOutput> {
 
   const items: ChatItem[] = [
     { role: "system", content: systemPrompt({ user: input.user, scope: input.scope, route: input.route, attachments }) },
+    ...(summary ? [{ role: "system", content: `Resumen de lo anterior: ${summary}` } as ChatItem] : []),
     ...history.map((m) => ({ role: m.role, content: m.text }) as ChatItem),
     { role: "user", content: text },
   ];
@@ -162,7 +172,18 @@ export async function runTurn(input: TurnInput): Promise<TurnOutput> {
 
   if (finalText) blocks.push({ type: "text", text: finalText });
   if (blocks.length === 0) blocks.push({ type: "error", text: "No obtuve una respuesta. Intenta de nuevo.", retryable: true });
-  return { conversationId, userMessage, message: finish(reply, blocks, finalText, usedTools, undo) };
+  const message = finish(reply, blocks, finalText, usedTools, undo);
+
+  /**
+   * Con el mensaje ya guardado, se resume lo viejo si toca. Se ESPERA en vez
+   * de dejarlo suelto en segundo plano: una promesa suelta en una acción de
+   * servidor puede quedarse a medias cuando la petición termina, y dos turnos
+   * seguidos escribirían el mismo `summary` pisándose. Cuesta una llamada
+   * barata una vez cada 10 mensajes, no en cada turno. Si el turno acabó en
+   * error no se resume: la API acaba de fallar.
+   */
+  if (input.summarize !== false) await maybeSummarize(conversationId, input.ai);
+  return { conversationId, userMessage, message };
 }
 
 /** Rellena el mensaje del asistente y lo devuelve tal como quedó. */

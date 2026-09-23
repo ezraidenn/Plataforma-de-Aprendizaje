@@ -4,7 +4,7 @@ import type { ViewScope } from "@/server/auth/view-scope";
 import { renewalCounts } from "@/server/services/renewals";
 import { gradingQueue } from "@/server/services/grading";
 import { listTeacherCourses } from "@/server/services/courses";
-import { pendientesQuery } from "./queries";
+import { sinEntrarCount } from "./queries";
 
 /**
  * Lo que vale la pena atender hoy, en forma de pregunta. El panel las pinta
@@ -37,7 +37,7 @@ export function platformSuggestions(user: SessionUser, scope: ViewScope): Sugges
   const candidates: (() => Suggestion | null)[] = [
     () => make("¿A quién le vence el certificado este mes?", renewalCounts(scope).expiring, "certificado", "certificados"),
     () => make("¿Qué tengo por calificar?", gradingQueue(scope).length, "pendiente", "pendientes"),
-    () => make("¿Quién no ha entrado todavía?", pendientesQuery(scope, "sin_entrar", null).total, "alumno", "alumnos"),
+    () => make("¿Quién no ha entrado todavía?", sinEntrarCount(scope), "alumno", "alumnos"),
     () =>
       make(
         "¿Qué cursos no tienen diploma?",

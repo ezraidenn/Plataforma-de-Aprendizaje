@@ -33,8 +33,9 @@ import { createCourse, enrollStudents, setStudentActive, unenrollStudent } from 
 import { ownScope, type ViewScope } from "../src/server/auth/view-scope";
 import type { SessionUser } from "../src/server/auth/sessions";
 import { toolsForRole, toolByName, toolDefsForRole } from "../src/server/assistant/registry";
-import { certificadosQuery, movimientosQuery, panoramaQuery, pendientesQuery } from "../src/server/assistant/queries";
+import { certificadosQuery, movimientosQuery, panoramaQuery, pendientesQuery, sinEntrarCount } from "../src/server/assistant/queries";
 import { runTurn } from "../src/server/assistant/agent";
+import { maybeSummarize } from "../src/server/assistant/summarize";
 import { chatModelOf, getAiSettings, saveAiSettings } from "../src/server/services/ai-settings";
 import { platformSuggestions } from "../src/server/assistant/suggestions";
 import { rateLimitHit } from "../src/server/assistant/rate-limit";
@@ -46,6 +47,7 @@ import {
   createConversation,
   deleteConversation,
   getConversation,
+  getSummary,
   listConversations,
   messageUndo,
   patchProposalBlock,
@@ -940,6 +942,16 @@ function suggestionChecks() {
     ajenas.length === 0 || ajenas.some((s) => !mias.some((m) => m.text === s.text && m.detail === s.detail)),
     ajenas
   );
+
+  // «¿Quién no ha entrado todavía?» cuenta alumnos, no matrículas
+  const cuenta = () => [sinEntrarCount(ownScope(user)), pendientesQuery(ownScope(user), "sin_entrar", null).total] as const;
+  const [alumnosAntes, matriculasAntes] = cuenta();
+  check("Ana ya cuenta como alumno sin entrar", alumnosAntes >= 1, alumnosAntes);
+  const segundo = createCourse({ ownerId: ids.teacher, title: `${P} Segundo curso` }).id;
+  enrollStudents(segundo, [ids.s1], ids.teacher);
+  const [alumnosDespues, matriculasDespues] = cuenta();
+  check("Un alumno matriculado en dos cursos del maestro cuenta una vez", alumnosDespues === alumnosAntes, [alumnosAntes, alumnosDespues]);
+  check("…y la cuenta por matrículas sí sube (lo que se hacía antes)", matriculasDespues === matriculasAntes + 1, [matriculasAntes, matriculasDespues]);
 }
 
 async function detallesChecks() {
@@ -1191,7 +1203,7 @@ async function agentChecks() {
     [call("c2", "ficha_alumno", { alumno_id: ids.s1 })],
     [say("Ana lleva un curso en progreso.")],
   ]);
-  const turn = await runTurn({ user, scope: ownScope(user), route: "/teach/students", conversationId: null, text: `${P} ¿cómo va Ana?`, ai: { key: "k", model: "m", fetchImpl: ai.fetchImpl } });
+  const turn = await runTurn({ user, scope: ownScope(user), route: "/teach/students", conversationId: null, text: `${P} ¿cómo va Ana?`, summarize: false, ai: { key: "k", model: "m", fetchImpl: ai.fetchImpl } });
   check("Crea la conversación y devuelve el mensaje", "conversationId" in turn && turn.message.role === "assistant");
   if (!("conversationId" in turn)) return;
   check("Tres vueltas a la IA", ai.calls() === 3);
@@ -1205,21 +1217,21 @@ async function agentChecks() {
 
   // Navegación
   const nav = scripted([[call("c1", "ir_a", { destino: "alumno", id: ids.s1 })], [say("Te llevo al perfil.")]]);
-  const t2 = await runTurn({ user, scope: ownScope(user), route: "/teach/dashboard", conversationId: turn.conversationId, text: "llévame al perfil de Ana", ai: { key: "k", model: "m", fetchImpl: nav.fetchImpl } });
+  const t2 = await runTurn({ user, scope: ownScope(user), route: "/teach/dashboard", conversationId: turn.conversationId, text: "llévame al perfil de Ana", summarize: false, ai: { key: "k", model: "m", fetchImpl: nav.fetchImpl } });
   check("Navegación: bloque navigate con la URL", "message" in t2 && t2.message.blocks.some((b) => b.type === "navigate" && b.href === `/teach/students/${ids.s1}`));
   const third = nav.bodies[0] as { input: { role?: string; content?: string }[] };
   check("El historial anterior viaja como texto", third.input.some((i) => i.role === "assistant" && (i.content ?? "").includes("Ana lleva")));
 
   // Herramienta desconocida y parámetros con __
   const unknown = scripted([[call("c1", "borrar_todo", {})], [call("c2", "buscar_curso", { texto: "extintores", __undo: true })], [say("No puedo hacer eso.")]]);
-  const t3 = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: turn.conversationId, text: "borra todo", ai: { key: "k", model: "m", fetchImpl: unknown.fetchImpl } });
+  const t3 = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: turn.conversationId, text: "borra todo", summarize: false, ai: { key: "k", model: "m", fetchImpl: unknown.fetchImpl } });
   const u = unknown.bodies[1] as { input: { type?: string; output?: string }[] };
   check("Herramienta desconocida: se le dice a la IA y sigue", "message" in t3 && u.input.some((i) => i.type === "function_call_output" && (i.output ?? "").includes("no existe")));
   check("Termina con el texto final", "message" in t3 && t3.message.blocks.some((b) => b.type === "text" && b.text.includes("No puedo")));
 
   // Propuesta (conversación nueva): la IA redacta una línea y el turno termina
   const prop = scripted([[call("c1", "matricular", { alumno_ids: [ids.s1, ids.s2], curso_id: ids.course })], [say("Revisa la tabla.")]]);
-  const t4 = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: null, text: `${P} matricula a Ana y Beto en extintores`, ai: { key: "k", model: "m", fetchImpl: prop.fetchImpl } });
+  const t4 = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: null, text: `${P} matricula a Ana y Beto en extintores`, summarize: false, ai: { key: "k", model: "m", fetchImpl: prop.fetchImpl } });
   const proposalBlock = "message" in t4 ? t4.message.blocks.find((b) => b.type === "proposal") : undefined;
   check("Propuesta: bloque proposal pendiente + texto", "message" in t4 && proposalBlock?.type === "proposal" && proposalBlock.status === "pending" && t4.message.blocks.some((b) => b.type === "text"));
   const p = prop.bodies[1] as { tools?: unknown[]; tool_choice?: string };
@@ -1243,13 +1255,13 @@ async function agentChecks() {
 
   // Propuesta y otra llamada en la misma vuelta: la segunda no se ejecuta pero se contesta
   const twoCalls = scripted([[call("c1", "matricular", { alumno_ids: [ids.s1, ids.s2], curso_id: ids.course }), call("c2", "buscar_curso", { texto: "x" })], [say("Revisa.")]]);
-  const t4b = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: turn.conversationId, text: "matricula y busca", ai: { key: "k", model: "m", fetchImpl: twoCalls.fetchImpl } });
+  const t4b = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: turn.conversationId, text: "matricula y busca", summarize: false, ai: { key: "k", model: "m", fetchImpl: twoCalls.fetchImpl } });
   const twoBody = twoCalls.bodies[1] as { input: { type?: string; call_id?: string; output?: string }[] };
   check("Tras la propuesta, la llamada siguiente se contesta como no ejecutada", "message" in t4b && twoBody.input.some((i) => i.type === "function_call_output" && i.call_id === "c2" && (i.output ?? "").includes("no ejecutada")) && !t4b.message.blocks.some((b) => b.type === "text" && b.text.includes("x")));
 
   // Matrícula instantánea: el mensaje guarda el undo
   const inst = scripted([[call("c1", "matricular", { alumno_ids: [ids.s2], curso_id: ids.course })], [say("Listo.")]]);
-  const t5 = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: turn.conversationId, text: "matricula a Beto", ai: { key: "k", model: "m", fetchImpl: inst.fetchImpl } });
+  const t5 = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: turn.conversationId, text: "matricula a Beto", summarize: false, ai: { key: "k", model: "m", fetchImpl: inst.fetchImpl } });
   check("Instantánea: bloque result deshacible", "message" in t5 && t5.message.blocks.some((b) => b.type === "result" && b.undoable));
   check("…y el undo queda guardado en el mensaje", "message" in t5 && messageUndo(ids.teacher, turn.conversationId, t5.message.id)?.undo.tool === "matricular");
 
@@ -1259,7 +1271,7 @@ async function agentChecks() {
   // Una sola acción instantánea por turno: tras matricular, la IA ya no recibe herramientas
   unenrollStudent(ids.course, ids.s2, ids.teacher);
   const twice = scripted([[call("c1", "matricular", { alumno_ids: [ids.s2], curso_id: ids.course })], [call("c2", "matricular", { alumno_ids: [ids.s4], curso_id: ids.course })], [say("Listo.")]]);
-  const t5c = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: turn.conversationId, text: "matricula a Beto y luego a Dora", ai: { key: "k", model: "m", fetchImpl: twice.fetchImpl } });
+  const t5c = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: turn.conversationId, text: "matricula a Beto y luego a Dora", summarize: false, ai: { key: "k", model: "m", fetchImpl: twice.fetchImpl } });
   const twiceSecond = twice.bodies[1] as { tool_choice?: string; tools?: unknown };
   check("Tras la instantánea, la vuelta siguiente va sin herramientas", twiceSecond.tool_choice === "none" && twiceSecond.tools === undefined);
   check("Solo una matrícula nueva (Beto sí, Dora no)", activeFor(ids.s2) === 1 && activeFor(ids.s4) === 0);
@@ -1269,7 +1281,7 @@ async function agentChecks() {
   // Dos instantáneas en la misma vuelta: la segunda se contesta como no ejecutada
   unenrollStudent(ids.course, ids.s2, ids.teacher);
   const sameRound = scripted([[call("c1", "matricular", { alumno_ids: [ids.s2], curso_id: ids.course }), call("c2", "matricular", { alumno_ids: [ids.s4], curso_id: ids.course })], [say("Listo.")]]);
-  const t5d = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: turn.conversationId, text: "matricula a Beto y a Dora", ai: { key: "k", model: "m", fetchImpl: sameRound.fetchImpl } });
+  const t5d = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: turn.conversationId, text: "matricula a Beto y a Dora", summarize: false, ai: { key: "k", model: "m", fetchImpl: sameRound.fetchImpl } });
   const sameBody = sameRound.bodies[1] as { input: { type?: string; call_id?: string; output?: string }[] };
   check("Misma vuelta: la segunda llamada se contesta «no ejecutada: ya se hizo una acción»", "message" in t5d && sameBody.input.some((i) => i.type === "function_call_output" && i.call_id === "c2" && (i.output ?? "").includes("ya se hizo una acción")));
   check("…y Dora sigue sin matrícula", activeFor(ids.s2) === 1 && activeFor(ids.s4) === 0);
@@ -1282,36 +1294,36 @@ async function agentChecks() {
     if (n === 1) return new Response(JSON.stringify({ output: [call("c1", "matricular", { alumno_ids: [ids.s2], curso_id: ids.course })] }), { status: 200 });
     return new Response("{}", { status: 500 });
   }) as typeof fetch;
-  const t5b = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: turn.conversationId, text: "matricula a Beto otra vez", ai: { key: "k", model: "m", fetchImpl: thenFail } });
+  const t5b = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: turn.conversationId, text: "matricula a Beto otra vez", summarize: false, ai: { key: "k", model: "m", fetchImpl: thenFail } });
   check("Instantánea + fallo de API: result deshacible y error reintentable", "message" in t5b && t5b.message.blocks.some((b) => b.type === "result" && b.undoable) && t5b.message.blocks.some((b) => b.type === "error" && b.retryable));
   check("…y el undo se guarda aunque falle la API", "message" in t5b && messageUndo(ids.teacher, turn.conversationId, t5b.message.id)?.undo.tool === "matricular");
   check("…y el historial recuerda la herramienta usada", recentModelText(turn.conversationId, 1)[0]?.text.includes("[usó: matricular]"));
 
   // Tope de vueltas
   const loop = scripted([[call("c1", "buscar_curso", { texto: "x" })]]);
-  const t6 = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: turn.conversationId, text: "bucle", ai: { key: "k", model: "m", fetchImpl: loop.fetchImpl } });
+  const t6 = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: turn.conversationId, text: "bucle", summarize: false, ai: { key: "k", model: "m", fetchImpl: loop.fetchImpl } });
   const lastBody = loop.bodies[loop.bodies.length - 1] as { tool_choice?: string; input: { role?: string; content?: string }[] };
   check("Tope de 6 vueltas: 7 llamadas y termina", "message" in t6 && loop.calls() === 7 && t6.message.blocks.length > 0);
   check("Última vuelta: sin herramientas y aviso como system", lastBody.tool_choice === "none" && lastBody.input.some((i) => i.role === "system" && (i.content ?? "").includes("Ya no puedes")));
 
   // Argumentos que no son objeto: no revienta y responde a la IA
   const badArgs = scripted([[call("c1", "buscar_curso", "\"texto\"")], [say("Necesito el nombre del curso.")]]);
-  const t6b = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: turn.conversationId, text: "busca", ai: { key: "k", model: "m", fetchImpl: badArgs.fetchImpl } });
+  const t6b = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: turn.conversationId, text: "busca", summarize: false, ai: { key: "k", model: "m", fetchImpl: badArgs.fetchImpl } });
   const badBody = badArgs.bodies[1] as { input: { type?: string; call_id?: string }[] };
   check("Args no objeto: se contesta la llamada y termina con texto", "message" in t6b && badBody.input.some((i) => i.type === "function_call_output" && i.call_id === "c1") && t6b.message.blocks.some((b) => b.type === "text"));
 
   // Rol no admitido: ni toca la base
   const student: SessionUser = { id: ids.s1, email: "", fullName: "Ana", role: "student" };
-  const denied = await runTurn({ user: student, scope: ownScope(student), route: "/", conversationId: null, text: `${P} hola`, ai: { key: "k", model: "m", fetchImpl: loop.fetchImpl } });
+  const denied = await runTurn({ user: student, scope: ownScope(student), route: "/", conversationId: null, text: `${P} hola`, summarize: false, ai: { key: "k", model: "m", fetchImpl: loop.fetchImpl } });
   check("Alumno: error sin crear conversación", "error" in denied && denied.error.includes("solo para maestros") && listConversations(ids.s1).length === 0 && loop.calls() === 7);
 
   // Error de la API
   const failing = (async () => new Response("{}", { status: 500 })) as typeof fetch;
-  const t7 = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: turn.conversationId, text: "hola", ai: { key: "k", model: "m", fetchImpl: failing } });
+  const t7 = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: turn.conversationId, text: "hola", summarize: false, ai: { key: "k", model: "m", fetchImpl: failing } });
   check("Fallo de OpenAI: bloque de error reintentable", "message" in t7 && t7.message.blocks.some((b) => b.type === "error" && b.retryable));
 
   // Texto vacío
-  check("Texto vacío: error", "error" in (await runTurn({ user, scope: ownScope(user), route: "/", conversationId: null, text: "  ", ai: { key: "k", model: "m", fetchImpl: failing } })));
+  check("Texto vacío: error", "error" in (await runTurn({ user, scope: ownScope(user), route: "/", conversationId: null, text: "  ", summarize: false, ai: { key: "k", model: "m", fetchImpl: failing } })));
 }
 
 async function turnoConAdjuntoChecks() {
@@ -1622,6 +1634,76 @@ async function modeloChatChecks() {
   }
 }
 
+/** Mensajes de relleno para llegar al tope de resumen sin llamar a la IA. */
+function seedMensajes(conversationId: string, cuantos: number, texto: string) {
+  for (let i = 0; i < cuantos; i++) {
+    appendMessage(conversationId, i % 2 === 0 ? "user" : "assistant", [], `${texto} ${i}`);
+  }
+}
+
+async function resumenChecks() {
+  console.log("\n— Resumen de la conversación");
+  const user = { ...teacherUser, id: ids.teacher };
+  const ai = (fetchImpl: typeof fetch) => ({ key: "k", model: "m", fetchImpl });
+
+  // Menos de 10 mensajes nuevos: ni se llama a la IA
+  const corta = createConversation(ids.teacher, `${P} resumen corto`);
+  seedMensajes(corta.id, 8, "charla");
+  const nadie = scripted([[say("no debería llamarse")]]);
+  const sinResumir = await maybeSummarize(corta.id, ai(nadie.fetchImpl));
+  check("Con menos de 10 mensajes nuevos no se llama a la IA", sinResumir === false && nadie.calls() === 0, nadie.calls());
+  check("…y la conversación sigue sin resumen", getSummary(corta.id).summary === null && getSummary(corta.id).total === 8);
+
+  // 12 mensajes: resume y deja summaryUpto en 12
+  const larga = createConversation(ids.teacher, `${P} resumen largo`);
+  seedMensajes(larga.id, 12, "mensaje viejo");
+  const resumidor = scripted([[say(JSON.stringify({ resumen: "Se matriculó a Ana en Extintores." }))]]);
+  const hecho = await maybeSummarize(larga.id, ai(resumidor.fetchImpl));
+  const guardado = getSummary(larga.id);
+  check("Con 12 mensajes resume y guarda hasta el 12", hecho === true && guardado.summary === "Se matriculó a Ana en Extintores." && guardado.summaryUpto === 12, guardado);
+  const pedido = resumidor.bodies[0] as { input: { role?: string; content?: string }[] };
+  check("La instrucción pide menos de 600 caracteres y no inventar", (pedido.input[0].content ?? "").includes("600 caracteres") && (pedido.input[0].content ?? "").includes("No inventes"), pedido.input[0].content);
+  check("Le manda los mensajes a resumir", (pedido.input[1].content ?? "").includes("mensaje viejo 0"));
+
+  // Justo después no vuelve a resumir: no hay 10 nuevos
+  const otraVez = scripted([[say("tampoco")]]);
+  check("Recién resumida no se vuelve a llamar", (await maybeSummarize(larga.id, ai(otraVez.fetchImpl))) === false && otraVez.calls() === 0);
+
+  // El turno siguiente manda el resumen y NO los mensajes ya resumidos
+  const post = scripted([[say("Listo.")]]);
+  const t = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: larga.id, text: "¿y ahora qué?", summarize: false, ai: ai(post.fetchImpl) });
+  const input = (post.bodies[0] as { input: { role?: string; content?: string }[] }).input;
+  check("El turno siguiente sale bien", "message" in t, t);
+  check("…y manda el resumen de lo anterior", input.some((i) => (i.content ?? "").includes("Resumen de lo anterior: Se matriculó a Ana")), input);
+  check("…y no repite los mensajes ya resumidos", !input.some((i) => (i.content ?? "").includes("mensaje viejo")), input);
+
+  // Un turno que pasa del tope resume al terminar, en la misma llamada
+  const alVuelo = createConversation(ids.teacher, `${P} resumen al vuelo`);
+  seedMensajes(alVuelo.id, 11, "paso");
+  const dos = scripted([[say("Hecho.")], [say(JSON.stringify({ resumen: "Repaso de lo hecho." }))]]);
+  const t2 = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: alVuelo.id, text: "cierra", ai: ai(dos.fetchImpl) });
+  const alVueloSummary = getSummary(alVuelo.id);
+  check("Al terminar el turno se resume (2 llamadas: turno y resumen)", "message" in t2 && dos.calls() === 2, dos.calls());
+  check("…y el resumen cubre los 13 mensajes", alVueloSummary.summary === "Repaso de lo hecho." && alVueloSummary.summaryUpto === 13, alVueloSummary);
+
+  // Si la IA del resumen falla, el turno sale bien y el resumen queda igual
+  const falla = createConversation(ids.teacher, `${P} resumen que falla`);
+  seedMensajes(falla.id, 11, "hola");
+  let n = 0;
+  const turnoOkResumenMal = (async () => {
+    n++;
+    return n === 1
+      ? new Response(JSON.stringify({ output: [say("Todo bien.")] }), { status: 200, headers: { "Content-Type": "application/json" } })
+      : new Response("{}", { status: 500 });
+  }) as typeof fetch;
+  console.log("  (se espera un error de resumen en el registro)");
+  const t3 = await runTurn({ user, scope: ownScope(user), route: "/", conversationId: falla.id, text: "sigue", ai: ai(turnoOkResumenMal) });
+  const tras = getSummary(falla.id);
+  check("El resumen se intentó (2 llamadas)", n === 2, n);
+  check("Aunque falle, el turno responde igual", "message" in t3 && t3.message.blocks.some((b) => b.type === "text" && b.text.includes("Todo bien")), t3);
+  check("…y el resumen queda como estaba", tras.summary === null && tras.summaryUpto === 0, tras);
+}
+
 async function main() {
   placeholderChecks();
   dateRangeChecks();
@@ -1641,6 +1723,7 @@ async function main() {
     await confirmWordChecks();
     await altaAlumnosChecks();
     await agentChecks();
+    await resumenChecks();
     await turnoConAdjuntoChecks();
     await crearCursosChecks();
     await queryChecks();

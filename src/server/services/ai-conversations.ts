@@ -118,17 +118,57 @@ export function updateMessage(messageId: string, blocks: AssistantBlock[], model
   });
 }
 
-/** Historial corto para la IA: últimos `limit` mensajes como texto. */
-export function recentModelText(conversationId: string, limit: number): { role: "user" | "assistant"; text: string }[] {
+/** Cuántos mensajes lleva la conversación (los resumidos incluidos). */
+function countMessages(conversationId: string): number {
+  return (
+    db
+      .select({ n: sql<number>`count(*)` })
+      .from(aiMessages)
+      .where(eq(aiMessages.conversationId, conversationId))
+      .get()?.n ?? 0
+  );
+}
+
+/**
+ * Historial corto para la IA: últimos `limit` mensajes como texto.
+ *
+ * `since` son los mensajes que ya cubre el resumen de la conversación: se
+ * saltan para no mandarlos dos veces (una en el resumen y otra en crudo). Se
+ * filtra aquí y no en el agente porque el salto es un OFFSET de la misma
+ * consulta: traerlos para tirarlos sería trabajo de más.
+ */
+export function recentModelText(
+  conversationId: string,
+  limit: number,
+  since = 0
+): { role: "user" | "assistant"; text: string }[] {
+  const total = countMessages(conversationId);
+  // De los no resumidos, los últimos `limit`
+  const offset = Math.max(since, total - limit);
   return db
     .select({ role: aiMessages.role, text: aiMessages.modelText })
     .from(aiMessages)
     .where(eq(aiMessages.conversationId, conversationId))
-    .orderBy(desc(aiMessages.createdAt), desc(aiMessages.id))
+    .orderBy(aiMessages.createdAt, aiMessages.id)
     .limit(limit)
+    .offset(offset)
     .all()
-    .reverse()
     .filter((m) => m.text.trim() !== "");
+}
+
+/** Resumen de lo viejo: qué dice, hasta qué mensaje cubre y cuántos hay. */
+export function getSummary(conversationId: string): { summary: string | null; summaryUpto: number; total: number } {
+  const row = db
+    .select({ summary: aiConversations.summary, summaryUpto: aiConversations.summaryUpto })
+    .from(aiConversations)
+    .where(eq(aiConversations.id, conversationId))
+    .get();
+  return { summary: row?.summary ?? null, summaryUpto: row?.summaryUpto ?? 0, total: countMessages(conversationId) };
+}
+
+/** Guarda el resumen y hasta qué mensaje cubre. No toca `updatedAt`: resumir no es actividad. */
+export function saveSummary(conversationId: string, summary: string, upto: number): void {
+  db.update(aiConversations).set({ summary, summaryUpto: upto }).where(eq(aiConversations.id, conversationId)).run();
 }
 
 /** Mensaje con lo necesario para deshacer. */
