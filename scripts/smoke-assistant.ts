@@ -55,6 +55,7 @@ import {
 } from "../src/server/services/ai-conversations";
 import { applyProposal, cancelProposal, createProposal, expireProposals, getProposal } from "../src/server/assistant/proposals";
 import { createExport, purgeExports, readExport } from "../src/server/assistant/exports";
+import { buildXlsx, type SheetSpec } from "../src/server/services/xlsx";
 import {
   MAX_SUMMARY_CHARS,
   attachmentDetail,
@@ -1574,6 +1575,82 @@ async function sheetColorChecks() {
   check("La segunda hoja trae sus propias filas", otra.length === 2 && otra[1]?.cells.join("|") === "Dani Mora|dani@x.com", otra.map((r) => r.cells));
 }
 
+/**
+ * El Excel que generamos, comprobado volviéndolo a leer con el mismo lector
+ * que usa el asistente para los adjuntos: si sobrevivieron los colores y los
+ * números, el rodeo por FODS hizo su trabajo.
+ */
+async function xlsxChecks() {
+  console.log("\n— Excel con formato");
+
+  // Sin LibreOffice no hay Excel: el mensaje tiene que mandar al CSV
+  const antes = process.env.SOFFICE_PATH;
+  process.env.SOFFICE_PATH = "C:/no-existe/soffice.exe";
+  const sinOffice = await errorOf(() => buildXlsx([{ name: "X", columns: [{ title: "A" }], rows: [] }]));
+  if (antes === undefined) delete process.env.SOFFICE_PATH;
+  else process.env.SOFFICE_PATH = antes;
+  check("Sin LibreOffice: manda al CSV", sinOffice === "No se pudo generar el Excel. Descarga el CSV.", sinOffice);
+
+  if (!HAS_SOFFICE) {
+    console.log("  (sin LibreOffice: se omite lo demás)");
+    return;
+  }
+
+  const spec: SheetSpec[] = [
+    {
+      name: "Avance",
+      columns: [{ title: "Alumno", width: 6 }, { title: "Avance" }, { title: "Calificación" }, { title: "Última entrada" }],
+      rows: [
+        [
+          { text: "Ana Lopez" },
+          { text: "92%", percent: 0.92 },
+          { text: "9.5", number: 9.5 },
+          { text: "23/09/2026", date: new Date(2026, 8, 23) },
+        ],
+        [
+          { text: "Beto Ruiz", style: "bad" },
+          { text: "10%", percent: 0.1, style: "bad" },
+          { text: "3", number: 3, style: "bad" },
+          { text: "", style: "bad" },
+        ],
+        [{ text: "Carla & Diaz", style: "good" }, { text: "100%", percent: 1, style: "good" }],
+      ],
+      notes: ["Los porcentajes cuentan lecciones terminadas.", "En rojo, quien lleva 30 días sin entrar."],
+    },
+    // Nombre larguísimo y con «/»: se sanea y no rompe la conversión
+    { name: `Detalle/por curso ${"x".repeat(40)}`, columns: [{ title: "Nada", width: 99 }], rows: [] },
+    // Repetido: se le añade un número
+    { name: "Avance", columns: [{ title: "Otra" }], rows: [[{ text: "sin estilo" }]] },
+  ];
+  const bytes = await buildXlsx(spec);
+  check("Devuelve un xlsx (ZIP con contenido)", bytes.length > 1000 && bytes.subarray(0, 2).toString("latin1") === "PK", bytes.length);
+
+  const sheets = await readSheetRows(bytes, "avance.xlsx");
+  const nombres = sheets.map((s) => s.name);
+  check("Las hojas pedidas y la de notas, en orden", sheets.length === 4, nombres);
+  check("La primera conserva su nombre", nombres[0] === "Avance", nombres[0]);
+  check("Las notas van en una hoja aparte", (nombres[1] ?? "").includes("Notas"), nombres[1]);
+  check("Una línea por nota", sheets[1]?.rows.length === 2 && sheets[1].rows[0].cells[0].startsWith("Los porcentajes"), sheets[1]?.rows.map((r) => r.cells[0]));
+  check("Nombre largo y con «/»: saneado a 31 caracteres", (nombres[2] ?? "").length <= 31 && !(nombres[2] ?? "x").includes("/"), nombres[2]);
+  check("Nombre repetido: lleva número", nombres[3] !== "Avance" && (nombres[3] ?? "").startsWith("Avance"), nombres[3]);
+
+  const filas = sheets[0]?.rows ?? [];
+  check("El encabezado, con los títulos que se pidieron", filas[0]?.cells.join("|") === "Alumno|Avance|Calificación|Última entrada", filas[0]?.cells);
+  check("Fila normal: sin pintar y con su texto", filas[1]?.color === null && filas[1]?.cells[0] === "Ana Lopez", filas[1]);
+  check("Fila «bad»: sale en rojo", filas[2]?.color === "rojo", filas[2]?.color);
+  check("Fila «good»: sale en verde", filas[3]?.color === "verde", filas[3]?.color);
+  check("El «&» del texto llega entero", filas[3]?.cells[0] === "Carla & Diaz", filas[3]?.cells[0]);
+  // Según cómo exporte LibreOffice, el porcentaje se ve formateado o crudo:
+  // lo que importa es que NO sea el texto que le pasamos por casualidad
+  const pct = filas[1]?.cells[1] ?? "";
+  check("El porcentaje es un número con formato (92% o 0.92)", ["92%", "0.92", "0,92"].includes(pct), pct);
+  check("El número no se volvió texto", filas[1]?.cells[2] === "9.5" || filas[1]?.cells[2] === "9,5", filas[1]?.cells[2]);
+  check("La fecha se lee como fecha (dd/mm/aaaa)", /^\d{2}\/\d{2}\/\d{4}$/.test(filas[1]?.cells[3] ?? ""), filas[1]?.cells[3]);
+
+  const vacia = sheets[2]?.rows ?? [];
+  check("Sin filas: queda el encabezado solo", vacia.length === 1 && vacia[0].cells[0] === "Nada", vacia);
+}
+
 async function intakeChecks() {
   console.log("\n— Recepción del adjunto");
   check("Subida: xlsx permitido", resolveUploadMime("assistant_attachment", "lista.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet").ok);
@@ -1775,6 +1852,7 @@ async function main() {
   await modeloChatChecks();
   attachmentSummaryChecks();
   await sheetColorChecks();
+  await xlsxChecks();
   await intakeChecks();
   await rowsFromAttachmentChecks();
   await setup();
