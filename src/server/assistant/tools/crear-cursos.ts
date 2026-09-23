@@ -128,6 +128,9 @@ export const crearCursos: AssistantTool = {
       columns: COLUMNS,
       rows,
       payload: {},
+      // Los avisos son de datos (título vacío o repetido): si el usuario los
+      // corrige en la tabla, `apply` los revalida y el curso sí se crea
+      recheckOnApply: true,
     });
 
     // La IA solo ve cuántos son: los títulos se quedan en la tabla

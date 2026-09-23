@@ -594,6 +594,20 @@ async function crearCursosChecks() {
   const repetido = await toolByName("crear_cursos")!.run({ origen: "texto", texto: `Titulo,Descripcion\n${P} Alturas,otra vez`, hoja: "" }, ctx);
   const pRep = getProposal(repetido.proposalId!)!;
   check("Título que ya existe: bloqueado", pRep.rows[0].blocked === true && (pRep.rows[0].warning ?? "").toLowerCase().includes("ya"), pRep.rows[0]);
+
+  // Corregir en la tabla una fila con aviso sí sirve: se revalida al aplicar
+  check("Las filas con aviso se vuelven a revisar", getProposal(repetido.proposalId!)?.draft.recheckOnApply === true);
+  const corregida = await applyProposal(
+    repetido.proposalId!,
+    pRep.rows.map((r) => ({ ...r, cells: { ...r.cells, titulo: `${P} Espacios Confinados` } })),
+    ctx,
+    ""
+  );
+  check("Con el título corregido, el curso se crea", "text" in corregida && corregida.text.includes("1"), corregida);
+  check(
+    "…y existe en la base",
+    db.select().from(coursesTable).where(like(coursesTable.title, `${P} Espacios%`)).all().length === 1
+  );
 }
 
 async function bajaAlumnosChecks() {
