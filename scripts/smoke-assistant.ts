@@ -1062,6 +1062,94 @@ async function aplicarExcelChecks() {
 }
 
 /**
+ * La API simulada para las herramientas, que no admiten `fetchImpl`: se cambia
+ * `fetch` mientras corre `fn` y se devuelve al terminar pase lo que pase. No
+ * sale ni un byte a la red (la respuesta se arma aquí mismo).
+ */
+async function conIaSimulada<T>(impl: typeof fetch, fn: () => Promise<T>): Promise<T> {
+  const antes = globalThis.fetch;
+  globalThis.fetch = impl;
+  try {
+    return await fn();
+  } finally {
+    globalThis.fetch = antes;
+  }
+}
+
+/** Foto de una lista de alumnos adjunta al asistente: la lee la IA, no se rechaza. */
+async function adjuntoDeFotoChecks() {
+  console.log("\n— Foto de una lista como adjunto");
+  const user = { ...teacherUser, id: ids.teacher };
+  const conv = createConversation(ids.teacher, `${P} foto`);
+  const anchor = appendMessage(conv.id, "assistant", [], "");
+  const base = { ...ctxFor(user, ownScope(user)), conversationId: conv.id, messageId: anchor.id };
+
+  const adj = await adjuntar(conv.id, await fotoPng(), `${P}-lista.png`, "image/png");
+  check("El adjunto de una foto se resume como imagen", adj.summary.kind === "image" && adj.summary.sheets.length === 0, adj.summary);
+  check("…y en la conversación se ve como «Imagen»", attachmentDetail(adj.summary) === "Imagen", attachmentDetail(adj.summary));
+  check("…con sus sugerencias de siempre", suggestionsFor(adj.summary).includes("Da de alta a estos alumnos"), suggestionsFor(adj.summary));
+  const ctxFoto = { ...base, attachments: [adj] };
+
+  // aplicar_excel ya no dice «no es una hoja de cálculo legible»: remite
+  const remite = await toolByName("aplicar_excel")!.run({ curso_id: "", item_id: "", formato: "", modo: "" }, ctxFoto);
+  check(
+    "aplicar_excel con una foto: manda a alta_alumnos y no dice que no se puede leer",
+    !remite.proposalId && remite.forModel.includes("alta_alumnos") && !remite.forModel.includes("No pude leer"),
+    remite.forModel
+  );
+
+  const leer = toolByName("leer_archivo")!;
+  check("leer_archivo está en el catálogo de los dos roles", leer.roles.includes("teacher") && leer.roles.includes("admin") && leer.risk === "read");
+  const convVacia = createConversation(ids.teacher, `${P} sin archivo`);
+  const sinAdjunto = await leer.run({ pregunta: "" }, { ...base, conversationId: convVacia.id });
+  check("leer_archivo sin adjunto: lo dice", sinAdjunto.forModel.toLowerCase().includes("adjunto"), sinAdjunto.forModel);
+
+  const hoja = await makeColoredXlsx();
+  if (hoja) {
+    const adjHoja = await adjuntar(conv.id, hoja, `${P}-hoja.xlsx`);
+    const deHoja = await leer.run({ pregunta: "" }, { ...base, attachments: [adjHoja] });
+    check(
+      "leer_archivo describe las columnas de una hoja (sin gastar IA)",
+      deHoja.forModel.includes("Nombre") && deHoja.forModel.includes("Correo") && deHoja.forModel.includes("Turno A"),
+      deHoja.forModel
+    );
+  }
+
+  // Lo que necesita la clave de la IA (las herramientas la leen de la base)
+  if (!getAiSettings().configured) {
+    console.log("  (sin clave de IA configurada: se omite lo que la usa)");
+    return;
+  }
+
+  const personas = fakeOutput([
+    say(
+      JSON.stringify({
+        students: [
+          { fullName: `${P} Foto Uno`, email: `${P}-foto1@test.local`, group: "", issues: [] },
+          { fullName: `${P} Foto Dos`, email: `${P}-foto2@test.local`, group: "", issues: [] },
+        ],
+      })
+    ),
+  ]);
+  const alta = await conIaSimulada(personas, () =>
+    Promise.resolve(toolByName("alta_alumnos")!.run({ origen: "adjunto", texto: "", hoja: "", filtro_color: "", curso_id: "", grupo: "" }, ctxFoto))
+  );
+  check("alta_alumnos lee la foto y crea la propuesta", typeof alta.proposalId === "string", alta.forModel);
+  const propuesta = alta.proposalId ? getProposal(alta.proposalId) : null;
+  check(
+    "Las personas de la foto salen en la tabla para revisar",
+    propuesta?.rows.length === 2 && propuesta.rows[0].cells.nombre === `${P} Foto Uno`,
+    propuesta?.rows.map((r) => r.cells)
+  );
+  check("La IA se entera de que se leyó con la imagen", alta.forModel.includes("Leí la imagen con la IA"), alta.forModel);
+
+  const descripcion = fakeOutput([say(JSON.stringify({ descripcion: "Una lista escrita a mano con 12 personas: nombre y correo." }))]);
+  const deFoto = await conIaSimulada(descripcion, () => Promise.resolve(leer.run({ pregunta: "¿cuántos son?" }, ctxFoto)));
+  check("leer_archivo cuenta lo que la IA ve en la foto", deFoto.forModel.includes("12 personas"), deFoto.forModel);
+  check("…y ofrece darlos de alta", deFoto.forModel.includes("alta_alumnos"), deFoto.forModel);
+}
+
+/**
  * Movimientos de HOY en el curso zasst para que las consultas tengan qué leer:
  * una tarea entregada, un examen calificado por debajo del mínimo, el curso
  * completado y un certificado que vence en 10 días. Lo borra `cleanup()`.
@@ -4229,6 +4317,7 @@ async function main() {
     await crearCursosChecks();
     await formatoExcelChecks();
     await aplicarExcelChecks();
+    await adjuntoDeFotoChecks();
     await queryChecks();
     await listadoChecks();
     await reporteChecks();

@@ -34,6 +34,7 @@ import { panorama } from "./tools/panorama";
 import { descargarCertificados, descargarCsv } from "./tools/descargas";
 import { formatoExcel } from "./tools/formato-excel";
 import { aplicarExcel } from "./tools/aplicar-excel";
+import { leerArchivo } from "./tools/leer-archivo";
 
 /** Catálogo completo. Lo que la IA no ve aquí, no existe para ella. */
 const ALL: AssistantTool[] = [
@@ -72,6 +73,7 @@ const ALL: AssistantTool[] = [
   descargarCsv,
   formatoExcel,
   aplicarExcel,
+  leerArchivo,
 ];
 
 /** Capacidades previstas que aún no existen: la IA responde «aún no puedo». */
