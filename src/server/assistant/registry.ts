@@ -15,6 +15,8 @@ import { movimientos } from "./tools/movimientos";
 import { pendientes } from "./tools/pendientes";
 import { certificados } from "./tools/certificados";
 import { listado } from "./tools/listado";
+import { reporteAvance } from "./tools/reporte-avance";
+import { reportePeriodo } from "./tools/reporte-periodo";
 import { panorama } from "./tools/panorama";
 import { descargarCertificados, descargarCsv } from "./tools/descargas";
 import { formatoExcel } from "./tools/formato-excel";
@@ -37,6 +39,8 @@ const ALL: AssistantTool[] = [
   pendientes,
   certificados,
   listado,
+  reporteAvance,
+  reportePeriodo,
   panorama,
   descargarCertificados,
   descargarCsv,
@@ -45,7 +49,7 @@ const ALL: AssistantTool[] = [
 ];
 
 /** Capacidades previstas que aún no existen: la IA responde «aún no puedo». */
-export const NOT_YET = ["grupos, recordatorios, reportes, plantillas de diploma"];
+export const NOT_YET = ["grupos, recordatorios, plantillas de diploma"];
 
 export function toolsForRole(role: ToolRole): AssistantTool[] {
   return ALL.filter((t) => t.roles.includes(role));

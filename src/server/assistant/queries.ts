@@ -39,6 +39,8 @@ export type QueryResult = {
   columns: string[];
   /** Hasta 20 filas para mostrar */
   rows: string[][];
+  /** TODAS las filas (hasta 5 000), para el Excel de los reportes */
+  allRows: string[][];
   /** Total real (para «y N más») */
   total: number;
   /** CSV con TODAS las filas (máximo 5 000), con BOM */
@@ -139,11 +141,13 @@ export function toResult(input: {
   forModel: string;
 }): QueryResult {
   const { tiles, columns, allRows } = input;
-  const lines = [csvLine(columns), ...allRows.slice(0, MAX_CSV_ROWS).map((row) => csvLine(row))];
+  const enteras = allRows.slice(0, MAX_CSV_ROWS);
+  const lines = [csvLine(columns), ...enteras.map((row) => csvLine(row))];
   return {
     tiles,
     columns,
     rows: allRows.slice(0, MAX_SHOWN),
+    allRows: enteras,
     total: allRows.length,
     csv: BOM + lines.join("\r\n"),
     forModel: clampForModel(input.forModel),

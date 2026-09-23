@@ -37,7 +37,9 @@ import { detectFormat } from "../src/lib/excel-formats";
 import { assignEnrollmentsToCohort, createCohort } from "../src/server/services/cohorts";
 import { ownScope, type ViewScope } from "../src/server/auth/view-scope";
 import type { SessionUser } from "../src/server/auth/sessions";
-import { toolsForRole, toolByName, toolDefsForRole } from "../src/server/assistant/registry";
+import { NOT_YET, toolsForRole, toolByName, toolDefsForRole } from "../src/server/assistant/registry";
+import { courseMatrix } from "../src/server/services/reports";
+import { hojaAvance, hojaResumen } from "../src/server/assistant/tools/reporte-avance";
 import { certificadosQuery, movimientosQuery, panoramaQuery, pendientesQuery, sinEntrarCount } from "../src/server/assistant/queries";
 import { listadoQuery, type ListadoFiltros, type ListadoResult } from "../src/server/assistant/listado";
 import { runTurn } from "../src/server/assistant/agent";
@@ -1497,6 +1499,180 @@ async function listadoChecks() {
   );
 }
 
+// ─── Reportes en Excel ───────────────────────────────────────────────────────
+
+/** El valor de un tile por su etiqueta. */
+function tileOf(blocks: AssistantBlock[] | undefined, label: string): string | undefined {
+  return (blocks ?? []).flatMap((b) => (b.type === "tiles" ? b.tiles : [])).find((t) => t.label === label)?.value;
+}
+
+/** Las dos descargas de un reporte, en orden (Excel primero). */
+function descargasDe(blocks: AssistantBlock[] | undefined) {
+  return (blocks ?? []).filter((b): b is Extract<AssistantBlock, { type: "download" }> => b.type === "download");
+}
+
+const mimeDe = (href: string) => readExport(ids.teacher, href.split("/").pop() ?? "")?.mime;
+
+/**
+ * Los dos reportes. Usa los cursos que ya sembraron `queryChecks` («zasst
+ * Extintores») y `listadoChecks` («zasst Listado»: dos lecciones requeridas y
+ * cuatro matrículas vivas con avances distintos), más dos cursos vacíos para
+ * los casos en los que no hay nada que reportar.
+ */
+async function reporteChecks() {
+  console.log("\n— Reportes en Excel");
+  const user = { ...teacherUser, id: ids.teacher };
+  const scope = ownScope(user);
+  const conv = createConversation(ids.teacher, `${P} reportes`);
+  const ctx = { ...ctxFor(user, scope), conversationId: conv.id };
+  const avance = toolByName("reporte_avance")!;
+  const periodo = toolByName("reporte_periodo")!;
+
+  check(
+    "Las dos están en el catálogo de los dos roles",
+    ["reporte_avance", "reporte_periodo"].every((n) =>
+      ["teacher", "admin"].every((r) => toolsForRole(r as "teacher").some((t) => t.name === n))
+    ),
+    toolsForRole("teacher").map((t) => t.name)
+  );
+  check("Ya no se anuncian los reportes como «aún no puedo»", !NOT_YET.join(" ").includes("reporte"), NOT_YET);
+
+  // Cursos para los casos sin nada que reportar (se crean antes de contar el periodo)
+  const sinAlumnos = createCourse({ ownerId: ids.teacher, title: `${P} Sin alumnos` }).id;
+  createItem({ courseId: sinAlumnos, parentId: null, kind: "text", title: `${P} Única` });
+  const sinLecciones = createCourse({ ownerId: ids.teacher, title: `${P} Sin lecciones` }).id;
+  enrollStudents(sinLecciones, [ids.s2], ids.teacher);
+
+  // ── La hoja, sobre el SheetSpec ───────────────────────────────────────────
+  const matriz = courseMatrix(lst.curso, { page: 1, pageSize: 100000, filter: "all", cohort: { kind: "default" } });
+  const hoja = hojaAvance(matriz.columns, matriz.rows);
+  check(
+    "Avance: columnas fijas y una por lección requerida",
+    hoja.columns.map((c) => c.title).join("|") === `Estudiante|Correo|% Curso|Estado|${P} Lección 1|${P} Lección 2`,
+    hoja.columns.map((c) => c.title)
+  );
+  const filaDe = (nombre: string) => hoja.rows.find((r) => r[0].text.includes(nombre));
+  const eva = filaDe("Eva");
+  const iris = filaDe("Iris");
+  check("Avance: el % del curso es un número de verdad", eva?.[2].percent === 1 && eva?.[2].text === "100%", eva?.[2]);
+  check("Avance: la lección completada sale en verde", eva?.[4].style === "good" && eva?.[4].text === "Completado", eva?.[4]);
+  check("Avance: la que no se ha empezado sale en gris", iris?.[4].style === "muted" && iris?.[4].text === "Sin empezar", iris?.[4]);
+  check("Avance: la que la secuencia bloquea sale en rojo", iris?.[5].style === "bad" && iris?.[5].text === "Bloqueado", iris?.[5]);
+  check("Avance: el estado del curso acompaña a la fila", eva?.[3].text === "Aprobado" && eva?.[3].style === "good", eva?.[3]);
+  check("Avance: la baja no entra (la matriz la deja fuera)", !hoja.rows.some((r) => r[0].text.includes("Gala")), hoja.rows.map((r) => r[0].text));
+
+  const resumen = hojaResumen(
+    { curso: `${P} Listado`, grupo: "", filtro: "all", incluidos: matriz.rows.length, total: matriz.total },
+    matriz.columns,
+    matriz.rows
+  );
+  const valor = (dato: string) => resumen.rows.find((r) => r[0].text === dato)?.[1];
+  check("Resumen: alumnos, completados y sin empezar", valor("Alumnos")?.number === 4 && valor("Completados")?.number === 1 && valor("Sin empezar")?.number === 1, [
+    valor("Alumnos"),
+    valor("Completados"),
+    valor("Sin empezar"),
+  ]);
+  check("Resumen: el avance medio, como porcentaje", valor("Avance medio")?.percent === 0.5, valor("Avance medio"));
+  const iPeores = resumen.rows.findIndex((r) => r[0].text === "Lecciones con menos avance");
+  check(
+    "Resumen: las lecciones con menos avance, la peor primero",
+    iPeores > 0 && resumen.rows[iPeores + 1]?.[0].text === `${P} Lección 2` && resumen.rows[iPeores + 1]?.[1].percent === 0.25,
+    resumen.rows.slice(iPeores + 1).map((r) => [r[0].text, r[1]?.percent])
+  );
+
+  // ── La herramienta ────────────────────────────────────────────────────────
+  const res = await avance.run({ curso_id: lst.curso, grupo: "", solo: "" }, ctx);
+  const descargas = descargasDe(res.blocks);
+  check("reporte_avance: tiles y tabla corta con los primeros alumnos", tileOf(res.blocks, "Alumnos") === "4" && (res.blocks ?? []).some((b) => b.type === "table" && b.rows.length === 4), res.blocks?.map((b) => b.type));
+  check("reporte_avance: cifras del curso en los tiles", tileOf(res.blocks, "Completados") === "1" && tileOf(res.blocks, "Avance medio") === "50%", res.blocks?.[0]);
+  check(
+    HAS_SOFFICE ? "reporte_avance: las dos descargas, Excel primero" : "reporte_avance: sin LibreOffice, solo el CSV",
+    HAS_SOFFICE
+      ? descargas.length === 2 && descargas[0].label === "Descargar Excel" && descargas[1].label === "Descargar CSV"
+      : descargas.length === 1 && descargas[0].label === "Descargar CSV",
+    descargas.map((d) => d.label)
+  );
+  if (HAS_SOFFICE) {
+    check("reporte_avance: cada descarga con su tipo", mimeDe(descargas[0].href) === XLSX_MIME && mimeDe(descargas[1].href) === "text/csv", descargas.map((d) => mimeDe(d.href)));
+  }
+  check("reporte_avance: a la IA, una línea corta con las cifras", res.forModel.length <= 400 && res.forModel.includes("4 alumno(s)") && res.forModel.includes("avance medio 50 %"), res.forModel);
+
+  const csvDelReporte = readExport(ids.teacher, descargas.at(-1)!.href.split("/").pop() ?? "")?.content ?? "";
+  check("reporte_avance: el CSV es el mismo de la pantalla de Reportes", csvDelReporte.includes("Estudiante,Correo,% Curso,Estado del curso,"), csvDelReporte.slice(0, 80));
+
+  if (HAS_SOFFICE) {
+    const hojas = await hojasDeDescarga(res.blocks);
+    check("Excel: las dos hojas del reporte", hojas.length === 2 && hojas[0].name === "Avance" && hojas[1].name === "Resumen", hojas.map((h) => h.name));
+    const filas = hojas[0]?.rows ?? [];
+    check("Excel: el encabezado trae una columna por lección", filas[0]?.cells.join("|") === `Estudiante|Correo|% Curso|Estado|${P} Lección 1|${P} Lección 2`, filas[0]?.cells);
+    check("Excel: una fila por alumno", filas.length === 5, filas.length);
+    const fEva = filas.find((r) => r.cells[0].includes("Eva"));
+    check("Excel: la fila de la que terminó viene en verde", fEva?.color === "verde", fEva?.color);
+  }
+
+  // ── Filtros y casos en los que no hay nada que reportar ───────────────────
+  const porGrupo = await avance.run({ curso_id: lst.curso, grupo: lst.grupo, solo: "" }, ctx);
+  check(
+    "reporte_avance: el grupo deja solo a su alumno",
+    tileOf(porGrupo.blocks, "Alumnos") === "1" && porGrupo.forModel.includes(lst.grupo) && porGrupo.forModel.length <= 400,
+    porGrupo.forModel
+  );
+  const soloCompletados = await avance.run({ curso_id: lst.curso, grupo: "", solo: "completados" }, ctx);
+  const tablaCompletados = (soloCompletados.blocks ?? []).find((b) => b.type === "table");
+  check(
+    "reporte_avance: «completados» deja solo a quien terminó",
+    tileOf(soloCompletados.blocks, "Alumnos") === "1" && tablaCompletados?.type === "table" && tablaCompletados.rows[0][0].includes("Eva"),
+    tablaCompletados
+  );
+  const grupoRaro = await avance.run({ curso_id: lst.curso, grupo: `${P} Nocturno`, solo: "" }, ctx);
+  check("reporte_avance: un grupo que no existe se avisa sin generar nada", descargasDe(grupoRaro.blocks).length === 0 && grupoRaro.forModel.includes("Nocturno"), grupoRaro.forModel);
+  const ajeno = await avance.run({ curso_id: fmt.ajeno, grupo: "", solo: "" }, ctx);
+  check("reporte_avance: curso ajeno, se niega", descargasDe(ajeno.blocks).length === 0 && ajeno.forModel.includes("no te pertenece"), ajeno.forModel);
+  const sinCurso = await avance.run({ curso_id: "", grupo: "", solo: "" }, ctx);
+  check("reporte_avance: sin curso manda a buscar_curso", descargasDe(sinCurso.blocks).length === 0 && sinCurso.forModel.includes("buscar_curso"), sinCurso.forModel);
+  const vacioAlumnos = await avance.run({ curso_id: sinAlumnos, grupo: "", solo: "" }, ctx);
+  check("reporte_avance: curso sin alumnos, lo dice y no genera nada", descargasDe(vacioAlumnos.blocks).length === 0 && vacioAlumnos.forModel.includes("no tiene alumnos"), vacioAlumnos.forModel);
+  const vacioLecciones = await avance.run({ curso_id: sinLecciones, grupo: "", solo: "" }, ctx);
+  check("reporte_avance: curso sin lecciones requeridas, lo dice y no genera nada", descargasDe(vacioLecciones.blocks).length === 0 && vacioLecciones.forModel.includes("ninguna lección"), vacioLecciones.forModel);
+
+  // ── Reporte de periodo ────────────────────────────────────────────────────
+  const hoy = dateRange("hoy", "");
+  const mov = movimientosQuery(scope, hoy, null);
+  const movTile = (label: string) => mov.tiles.find((t) => t.label === label)?.value;
+  const per = await periodo.run({ desde: "hoy", hasta: "", curso_id: "" }, ctx);
+  const descargasPer = descargasDe(per.blocks);
+  check(
+    "reporte_periodo: las cifras cuadran con las de movimientos",
+    ["Entregas", "Exámenes", "Aprobados", "Certificados"].every((l) => tileOf(per.blocks, l) === movTile(l)),
+    ["Entregas", "Exámenes", "Aprobados", "Certificados"].map((l) => [l, tileOf(per.blocks, l), movTile(l)])
+  );
+  check("reporte_periodo: también cuenta altas y matrículas del periodo", Number(tileOf(per.blocks, "Altas")) > 0 && Number(tileOf(per.blocks, "Matrículas")) > 0, [tileOf(per.blocks, "Altas"), tileOf(per.blocks, "Matrículas")]);
+  check("reporte_periodo: a la IA, el rango en palabras y corto", per.forModel.length <= 400 && per.forModel.includes("hoy"), per.forModel);
+  check(
+    HAS_SOFFICE ? "reporte_periodo: las dos descargas con su tipo" : "reporte_periodo: sin LibreOffice, solo el CSV",
+    HAS_SOFFICE
+      ? descargasPer.length === 2 && mimeDe(descargasPer[0].href) === XLSX_MIME && mimeDe(descargasPer[1].href) === "text/csv"
+      : descargasPer.length === 1 && mimeDe(descargasPer[0].href) === "text/csv",
+    descargasPer.map((d) => [d.label, mimeDe(d.href)])
+  );
+
+  if (HAS_SOFFICE) {
+    const hojasPer = await hojasDeDescarga(per.blocks);
+    check("Excel: las hojas Resumen y Detalle", hojasPer.length === 2 && hojasPer[0].name === "Resumen" && hojasPer[1].name === "Detalle", hojasPer.map((h) => h.name));
+    const cifra = (dato: string) => hojasPer[0]?.rows.find((r) => r.cells[0] === dato)?.cells[1];
+    check("Resumen: una fila por cifra, con los mismos números", cifra("Entregas") === movTile("Entregas") && cifra("Certificados emitidos") === movTile("Certificados"), [cifra("Entregas"), cifra("Certificados emitidos")]);
+    check("Resumen: el reparto por curso cuando hay varios", (hojasPer[0]?.rows ?? []).some((r) => r.cells[0] === "Curso" && r.cells[1] === "Matrículas"), hojasPer[0]?.rows.map((r) => r.cells[0]));
+    check("Detalle: las mismas filas que movimientos", (hojasPer[1]?.rows.length ?? 0) === mov.total + 1, [hojasPer[1]?.rows.length, mov.total]);
+  }
+
+  const unCurso = await periodo.run({ desde: "hoy", hasta: "", curso_id: ids.course }, ctx);
+  check("reporte_periodo: acotado a un curso, lo dice", unCurso.forModel.includes("Extintores") && descargasDe(unCurso.blocks).length >= 1, unCurso.forModel);
+  const ajenoPer = await periodo.run({ desde: "hoy", hasta: "", curso_id: fmt.ajeno }, ctx);
+  check("reporte_periodo: curso ajeno, se niega", descargasDe(ajenoPer.blocks).length === 0 && ajenoPer.forModel.includes("no te pertenece"), ajenoPer.forModel);
+  const sinNada = await periodo.run({ desde: "2021-01-01", hasta: "2021-01-02", curso_id: "" }, ctx);
+  check("reporte_periodo: un periodo sin movimientos no genera archivos", descargasDe(sinNada.blocks).length === 0 && sinNada.forModel.includes("ningún movimiento"), sinNada.forModel);
+}
+
 /** Las herramientas de consulta: usan lo que sembró `queryChecks`. */
 async function consultaToolChecks() {
   console.log("\n— Herramientas de consulta");
@@ -2485,6 +2661,7 @@ async function main() {
     await aplicarExcelChecks();
     await queryChecks();
     await listadoChecks();
+    await reporteChecks();
     await consultaToolChecks();
     await descargaToolChecks();
     suggestionChecks();
