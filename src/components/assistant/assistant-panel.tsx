@@ -151,7 +151,9 @@ function Thread() {
                     disabled={busy}
                     className="flex w-full items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-left text-[12.5px] hover:bg-slate-50 disabled:opacity-50"
                   >
-                    <span className="min-w-0 flex-1 truncate text-slate-800">{s.text}</span>
+                    {/* Sin recortar: en celular la pregunta no cabe en una línea
+                        y cortada («…este m…») deja de entenderse */}
+                    <span className="min-w-0 flex-1 text-slate-800">{s.text}</span>
                     <span className="shrink-0 text-slate-500">{s.detail}</span>
                   </button>
                 ))}

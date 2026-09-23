@@ -19,7 +19,14 @@ const PREVIEW_ROWS = 5;
  * Tabla editable con lo que el asistente propone hacer. El maestro corrige
  * celdas, quita filas y aplica; una vez aplicada o cancelada queda congelada.
  */
-export function ReviewTable({ block, onChange }: { block: ProposalBlock; onChange(next: ProposalBlock): void }) {
+export function ReviewTable({
+  block,
+  onChange,
+}: {
+  block: ProposalBlock;
+  /** `extra`: lo que dejó la acción al aplicar (la descarga de las contraseñas, enlaces) */
+  onChange(next: ProposalBlock, extra?: AssistantBlock[]): void;
+}) {
   const [rows, setRows] = useState<ProposalRow[]>(block.rows);
   const [wide, setWide] = useState(false);
   const [confirmText, setConfirmText] = useState("");
@@ -52,7 +59,7 @@ export function ReviewTable({ block, onChange }: { block: ProposalBlock; onChang
         return;
       }
       toast.success(result.text, { position: "top-center" });
-      onChange({ ...block, rows, status: "applied", resultText: result.text });
+      onChange({ ...block, rows, status: "applied", resultText: result.text }, result.blocks);
       setWide(false);
     });
 

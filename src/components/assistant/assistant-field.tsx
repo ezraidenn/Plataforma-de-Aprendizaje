@@ -100,7 +100,17 @@ export function AssistantField() {
             {uploading ? (
               <Loader2 className="size-[18px] shrink-0 animate-spin text-indigo-600" aria-hidden />
             ) : (
-              <Sparkles className="size-[18px] shrink-0 text-indigo-600" aria-hidden />
+              // La chispa abre el panel en blanco: sin ella, en escritorio no
+              // hay forma de ver las sugerencias sin escribir antes algo
+              <button
+                type="button"
+                onClick={() => setOpen(true)}
+                title="Abrir el asistente de IA"
+                aria-label="Abrir el asistente de IA"
+                className="flex size-[18px] shrink-0 items-center justify-center rounded-full text-indigo-600 transition-colors hover:text-indigo-800"
+              >
+                <Sparkles className="size-[18px]" aria-hidden />
+              </button>
             )}
             {uploading ? (
               <p className="min-w-0 flex-1 truncate text-[13.5px] text-slate-500" aria-live="polite">

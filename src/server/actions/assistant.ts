@@ -22,7 +22,7 @@ import {
 } from "@/server/services/ai-conversations";
 import { attachToConversation } from "@/server/services/attachment-intake";
 import { attachmentDetail, suggestionsFor } from "@/lib/attachment-summary";
-import type { AssistantMessage, ConversationSummary, ProposalRow } from "@/lib/assistant-blocks";
+import type { AssistantBlock, AssistantMessage, ConversationSummary, ProposalRow } from "@/lib/assistant-blocks";
 
 /**
  * Puerta del asistente. Todas exigen maestro o admin; el contexto de vista se
@@ -110,14 +110,20 @@ async function toolContext(user: Awaited<ReturnType<typeof requireTeacher>>, con
   return { user, scope, actingOwnerId: actingOwnerId(scope, user), route: "/", conversationId, messageId, attachments: [] };
 }
 
-export async function applyProposalAction(input: { proposalId: string; rows: ProposalRow[]; confirm?: string }): Promise<{ ok: true; text: string } | { error: string }> {
+/**
+ * Aplica una propuesta. Devuelve además los bloques que deje la acción (la
+ * descarga de las contraseñas del alta, los enlaces): el servidor ya los
+ * guardó en el mensaje y el panel los pinta sin recargar.
+ */
+export async function applyProposalAction(input: { proposalId: string; rows: ProposalRow[]; confirm?: string }): Promise<{ ok: true; text: string; blocks: AssistantBlock[] } | { error: string }> {
   const user = await requireTeacher();
   const rows = validRows(input.rows);
   const confirm = String(input.confirm ?? "").slice(0, 40);
+  // La conversación y el mensaje los pone `applyProposal`: son los de la propuesta
   const result = await applyProposal(String(input.proposalId ?? ""), rows, await toolContext(user, "", ""), confirm);
   if ("error" in result) return result;
   refreshAfterChange();
-  return { ok: true, text: result.text };
+  return { ok: true, text: result.text, blocks: result.blocks ?? [] };
 }
 
 export async function cancelProposalAction(input: { proposalId: string }): Promise<{ ok: boolean }> {

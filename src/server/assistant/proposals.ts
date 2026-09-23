@@ -4,7 +4,7 @@ import { db } from "@/server/db";
 import { aiConversations, aiProposals } from "@/server/db/schema";
 import { applicableRows, type ProposalRow } from "@/lib/assistant-blocks";
 import { audit } from "@/server/services/audit";
-import { patchProposalBlock } from "@/server/services/ai-conversations";
+import { appendBlocks, patchProposalBlock } from "@/server/services/ai-conversations";
 import { toolByName } from "./registry";
 import { getProposal, type Proposal } from "./proposal-store";
 import type { ApplyResult, ToolCtx } from "./tool-types";
@@ -78,7 +78,11 @@ export async function applyProposal(
   const toApply = proposal.draft.recheckOnApply ? safe : applicableRows(safe);
   let result: ApplyResult;
   try {
-    result = await tool.apply(toApply, proposal.payload, ctx, confirm);
+    // Aplicar llega de un botón, no del bucle del turno: quien llama no sabe de
+    // qué conversación es la propuesta. Se la ponemos aquí, ya comprobado que
+    // es suya, porque lo que se aplica cuelga de ella (la descarga de las
+    // contraseñas del alta vive en la conversación y su clave ajena lo exige).
+    result = await tool.apply(toApply, proposal.payload, { ...ctx, conversationId: proposal.conversationId, messageId: proposal.messageId }, confirm);
   } catch (err) {
     // Si la herramienta falla, la propuesta vuelve a estar disponible
     db.update(aiProposals).set({ status: "pending" }).where(eq(aiProposals.id, id)).run();
@@ -87,6 +91,9 @@ export async function applyProposal(
 
   db.update(aiProposals).set({ result: { text: result.text, rows: safe.length } }).where(eq(aiProposals.id, id)).run();
   patchProposalBlock(proposal.conversationId, id, { status: "applied", rows: safe, resultText: result.text });
+  // Lo que deja la acción (la descarga de las contraseñas, los enlaces) se
+  // guarda en el mismo mensaje: el cliente lo pinta y sigue ahí al recargar
+  appendBlocks(proposal.messageId, result.blocks ?? []);
   audit(ctx.user.id, `assistant_${proposal.tool}`, "ai_proposal", id, { via: "assistant", conversationId: proposal.conversationId, rows: safe.length });
   return result;
 }

@@ -231,10 +231,14 @@ function Block({ block, message, conversationId }: { block: AssistantBlock; mess
       return (
         <ReviewTable
           block={block}
-          onChange={(next) =>
+          onChange={(next, extra) =>
             replaceMessage({
               ...message,
-              blocks: message.blocks.map((b) => (b.type === "proposal" && b.proposalId === next.proposalId ? next : b)),
+              blocks: [
+                ...message.blocks.map((b) => (b.type === "proposal" && b.proposalId === next.proposalId ? next : b)),
+                // Lo que dejó la acción (descarga de contraseñas, enlaces) va al final
+                ...(extra ?? []),
+              ],
             })
           }
         />

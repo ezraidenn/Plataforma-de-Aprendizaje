@@ -205,6 +205,22 @@ export function patchProposalBlock(
   }
 }
 
+/**
+ * Añade bloques al final de un mensaje ya guardado. Lo usa aplicar una
+ * propuesta: la descarga de las contraseñas nace al pulsar el botón, mucho
+ * después del turno, y tiene que quedarse en el hilo (si no, se pierde al
+ * recargar y esas contraseñas no se vuelven a mostrar).
+ */
+export function appendBlocks(messageId: string, extra: AssistantBlock[]): void {
+  if (extra.length === 0) return;
+  const row = db.select({ content: aiMessages.content }).from(aiMessages).where(eq(aiMessages.id, messageId)).get();
+  if (!row) return;
+  db.update(aiMessages)
+    .set({ content: [...(row.content as AssistantBlock[]), ...extra] })
+    .where(eq(aiMessages.id, messageId))
+    .run();
+}
+
 export function deleteConversation(userId: string, id: string): boolean {
   if (!ownedConversation(userId, id)) return false;
   db.delete(aiConversations).where(eq(aiConversations.id, id)).run();
