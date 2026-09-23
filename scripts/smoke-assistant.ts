@@ -10,7 +10,7 @@ import { placeholderFor } from "../src/lib/assistant-placeholder";
 import { dateRange } from "../src/lib/assistant-dates";
 import type { AssistantBlock } from "../src/lib/assistant-blocks";
 import { requestWithTools, type ChatItem, type ToolDef } from "../src/server/services/ai-client";
-import { and, desc, eq, inArray, like, or } from "drizzle-orm";
+import { and, desc, eq, inArray, like, or, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { db } from "../src/server/db";
 import {
@@ -29,20 +29,24 @@ import {
   files,
   itemAssignments,
   itemProgress,
+  jobs,
   notifications,
   users,
 } from "../src/server/db/schema";
 import {
   createCourse,
   enrollStudents,
+  listTeacherCourses,
   publishCourse,
   setCourseStatus,
   setStudentActive,
   unenrollStudent,
+  updateCourse,
 } from "../src/server/services/courses";
 import { createTemplate } from "../src/server/services/certificates";
-import { createItem, getItem } from "../src/server/services/tree";
-import { listQuestions } from "../src/server/services/exams";
+import { createItem, getItem, getItems } from "../src/server/services/tree";
+import { createQuestion, listQuestions } from "../src/server/services/exams";
+import { verifyPassword } from "../src/server/auth/passwords";
 import { detectFormat } from "../src/lib/excel-formats";
 import { assignEnrollmentsToCohort, cohortOptions, createCohort, findCohortByName, getCohort } from "../src/server/services/cohorts";
 import { unreadCount } from "../src/server/services/notifications";
@@ -268,12 +272,16 @@ const ids = {
   a3: nanoid(),
   // Maestro de otra cuenta: su plantilla de diploma no debe poder usarse
   otroMaestro: nanoid(),
+  // Maestro al que se le reasignan cursos (se crea en su propia sección)
+  maestroDestino: nanoid(),
   course: "",
   grupoCourse: "",
   avisoCourse: "",
   // Entrega 5: un curso con tareas y examen y otro sin contenido
   e5Course: "",
   e5Vacio: "",
+  // Curso con carpetas, lecciones, examen y tarea: el que se duplica
+  duplicable: "",
 };
 
 function makeUser(id: string, key: string, name: string, role: "teacher" | "admin" | "student", createdBy: string | null) {
@@ -338,6 +346,9 @@ async function cleanup() {
     db.delete(auditLog).where(inArray(auditLog.userId, userIds)).run();
     db.delete(aiConversations).where(like(aiConversations.title, `${P}%`)).run();
     const courseIds = db.select({ id: coursesTable.id }).from(coursesTable).where(like(coursesTable.title, `${P}%`)).all().map((c) => c.id);
+    // Trabajos que encolaron las pruebas (reacomodo de archivos al copiar un
+    // curso): aquí no corre el worker, así que se retiran a mano
+    for (const id of courseIds) db.delete(jobs).where(sql`${jobs.payload} LIKE ${`%${id}%`}`).run();
     for (const id of courseIds) {
       // Cubre assistant_matricular y assistant_matricular_undo
       db.delete(auditLog).where(and(eq(auditLog.entity, "enrollment"), like(auditLog.entityId, `${id}:%`))).run();
@@ -348,6 +359,8 @@ async function cleanup() {
       db.delete(certificates).where(eq(certificates.courseId, id)).run();
       const itemIds = db.select({ id: courseItems.id }).from(courseItems).where(eq(courseItems.courseId, id)).all().map((i) => i.id);
       if (itemIds.length) {
+        // Enganchar un documento encola su reacomodo: aquí no corre el worker
+        for (const itemId of itemIds) db.delete(jobs).where(sql`${jobs.payload} LIKE ${`%${itemId}%`}`).run();
         db.delete(examAttempts).where(inArray(examAttempts.examItemId, itemIds)).run();
         db.delete(assignmentSubmissions).where(inArray(assignmentSubmissions.itemId, itemIds)).run();
         db.delete(exams).where(inArray(exams.itemId, itemIds)).run();
@@ -2768,6 +2781,294 @@ async function fechaLimiteChecks(tareas: { tareaA: string; tareaB: string }) {
   check("Curso ajeno: negado y sin tocar la fecha", ajeno.forModel.includes("no te pertenece") && fechaDe(tareas.tareaA)?.getDay() === 5, ajeno.forModel);
 }
 
+/** Curso con dos carpetas, cuatro lecciones, un examen con preguntas y una tarea. */
+function seedDuplicable(): string {
+  const id = createCourse({ ownerId: ids.teacher, title: `${P} Duplicable`, description: "Curso de prueba para copiar" }).id;
+  updateCourse(id, { enforceSequence: false, validityMode: "months", validityMonths: 12 });
+  const carpetaA = createItem({ courseId: id, parentId: null, kind: "folder", title: `${P} Carpeta A` });
+  createItem({ courseId: id, parentId: carpetaA.id, kind: "text", title: `${P} Lectura` });
+  createItem({ courseId: id, parentId: carpetaA.id, kind: "video", title: `${P} Video` });
+  const carpetaB = createItem({ courseId: id, parentId: null, kind: "folder", title: `${P} Carpeta B` });
+  createItem({ courseId: id, parentId: carpetaB.id, kind: "link", title: `${P} Enlace` });
+  createItem({ courseId: id, parentId: null, kind: "document", title: `${P} Documento` });
+  const examen = createItem({ courseId: id, parentId: null, kind: "exam", title: `${P} Examen copiado` });
+  createQuestion(examen.id, {
+    type: "true_false",
+    promptMd: "El fuego necesita oxígeno",
+    points: 2,
+    options: [
+      { textMd: "Verdadero", isCorrect: true },
+      { textMd: "Falso", isCorrect: false },
+    ],
+  });
+  createQuestion(examen.id, { type: "short_text", promptMd: "Número de emergencias", points: 1, config: { accepted: ["911"] } });
+  createItem({ courseId: id, parentId: null, kind: "assignment", title: `${P} Tarea copiada` });
+  return id;
+}
+
+/** Cómo queda el árbol de un curso: ruta completa, tipo y posición de cada ítem. */
+function firmaDelArbol(courseId: string): string {
+  const items = getItems(courseId);
+  const byId = new Map(items.map((i) => [i.id, i] as const));
+  const ruta = (item: (typeof items)[number]): string => {
+    const padre = item.parentId ? byId.get(item.parentId) : null;
+    return padre ? `${ruta(padre)} / ${item.title}` : item.title;
+  };
+  return items
+    .map((i) => `${ruta(i)}#${i.kind}@${i.position}`)
+    .sort()
+    .join(" | ");
+}
+
+function cursoDe(courseId: string) {
+  return db.select().from(coursesTable).where(eq(coursesTable.id, courseId)).get();
+}
+
+function matriculasDe(courseId: string): number {
+  return db.select().from(enrollments).where(eq(enrollments.courseId, courseId)).all().length;
+}
+
+async function duplicarCursoChecks() {
+  console.log("\n— Duplicar un curso");
+  const user = { ...teacherUser, id: ids.teacher };
+  const conv = createConversation(ids.teacher, `${P} duplicar`);
+  const anchor = appendMessage(conv.id, "assistant", [], "");
+  const ctx = { ...ctxFor(user, ownScope(user)), conversationId: conv.id, messageId: anchor.id };
+  const tool = toolByName("duplicar_curso")!;
+  ids.duplicable = seedDuplicable();
+  const original = cursoDe(ids.duplicable)!;
+
+  const falta = await tool.run({ curso_id: "", titulo_nuevo: "", con_contenido: "" }, ctx);
+  check("Sin curso_id: lo pide y no copia nada", !falta.undo && falta.forModel.includes("curso_id"), falta.forModel);
+
+  const copiado = await tool.run({ curso_id: ids.duplicable, titulo_nuevo: "", con_contenido: "" }, ctx);
+  const copiaId = String(copiado.undo?.params.curso_id ?? "");
+  const copia = cursoDe(copiaId);
+  check("Título por defecto: el del original con «(copia)»", copia?.title === `${P} Duplicable (copia)`, copia?.title);
+  check("Nace en borrador y a nombre del maestro", copia?.status === "draft" && copia?.ownerId === ids.teacher, copia);
+  check(
+    "Copia descripción, vigencia y secuencia obligatoria",
+    copia?.description === original.description &&
+      copia?.validityMode === "months" &&
+      copia?.validityMonths === 12 &&
+      copia?.enforceSequence === false,
+    copia
+  );
+  check(
+    "Mismo número de elementos",
+    getItems(copiaId).length === getItems(ids.duplicable).length,
+    [getItems(copiaId).length, getItems(ids.duplicable).length]
+  );
+  check(
+    "Mismo árbol y mismo orden (carpetas incluidas)",
+    firmaDelArbol(copiaId) === firmaDelArbol(ids.duplicable),
+    [firmaDelArbol(copiaId), firmaDelArbol(ids.duplicable)]
+  );
+
+  const examenCopiado = getItems(copiaId).find((i) => i.kind === "exam");
+  const preguntas = examenCopiado ? listQuestions(examenCopiado.id) : [];
+  check(
+    "El examen copiado conserva sus preguntas y sus opciones",
+    preguntas.length === 2 && preguntas[0].options.length === 2,
+    preguntas.map((q) => q.promptMd)
+  );
+  check("La copia no se lleva alumnos", matriculasDe(copiaId) === 0);
+  check(
+    "Trae deshacer y bloque de resultado",
+    copiado.undo?.tool === "duplicar_curso" && (copiado.blocks ?? []).some((b) => b.type === "result" && b.undoable === true),
+    copiado.undo
+  );
+  check(
+    "El texto dice qué se copió y qué no, con enlace al contenido nuevo",
+    copiado.forModel.includes("borrador") &&
+      copiado.forModel.includes("certificados") &&
+      (copiado.blocks ?? []).some((b) => b.type === "links" && b.links.some((l) => l.href === `/teach/courses/${copiaId}/content`)),
+    copiado.forModel
+  );
+  check("Auditoría de la copia", hayAuditoria("assistant_duplicar_curso", copiaId));
+
+  await tool.undo!(copiado.undo!.params, ctx);
+  check("Deshacer borra la copia y deja el original", cursoDe(copiaId) === undefined && cursoDe(ids.duplicable) !== undefined);
+  const dosVeces = await errorOf(async () => tool.undo!(copiado.undo!.params, ctx));
+  check("Deshacer dos veces: error claro", dosVeces.startsWith("No se pudo deshacer"), dosVeces);
+
+  // Con alumnos ya no se puede deshacer: sería borrarles el curso
+  const conAlumnos = await tool.run({ curso_id: ids.duplicable, titulo_nuevo: `${P} Copia con alumnos`, con_contenido: "si" }, ctx);
+  const conAlumnosId = String(conAlumnos.undo?.params.curso_id ?? "");
+  enrollStudents(conAlumnosId, [ids.s2], ids.teacher);
+  const negado = await errorOf(async () => tool.undo!(conAlumnos.undo!.params, ctx));
+  check("Con alumnos, deshacer se niega y no borra nada", negado.includes("ya tiene alumnos") && cursoDe(conAlumnosId) !== undefined, negado);
+
+  // Sin contenido: solo la configuración
+  const vacia = await tool.run({ curso_id: ids.duplicable, titulo_nuevo: `${P} Copia vacía`, con_contenido: "no" }, ctx);
+  const vaciaId = String(vacia.undo?.params.curso_id ?? "");
+  check(
+    "«con_contenido: no» deja el curso vacío pero con su configuración",
+    getItems(vaciaId).length === 0 && cursoDe(vaciaId)?.validityMonths === 12 && vacia.forModel.includes("vacío"),
+    vacia.forModel
+  );
+  await tool.undo!(vacia.undo!.params, ctx);
+
+  // La portada se copia a un archivo propio: borrar la copia no toca la del original
+  const portada = await saveTestFile(Buffer.from("portada de prueba"), `${P}-portada.bin`, ids.teacher);
+  updateCourse(ids.duplicable, { coverFileId: portada });
+  const conPortada = await tool.run({ curso_id: ids.duplicable, titulo_nuevo: `${P} Copia con portada`, con_contenido: "no" }, ctx);
+  const portadaCopiada = cursoDe(String(conPortada.undo?.params.curso_id ?? ""))?.coverFileId ?? null;
+  check(
+    "La portada se copia: la copia estrena su propio archivo",
+    !!portadaCopiada && portadaCopiada !== portada && !!getFileRecord(portadaCopiada),
+    portadaCopiada
+  );
+  await tool.undo!(conPortada.undo!.params, ctx);
+  check("Al borrar la copia, el archivo del original sigue ahí", !!getFileRecord(portada));
+  // Aquí no corre el worker: el archivo copiado y los trabajos que encoló se retiran a mano
+  if (portadaCopiada) await deleteFile(portadaCopiada);
+  updateCourse(ids.duplicable, { coverFileId: null });
+  for (const fileId of [portada, portadaCopiada]) {
+    if (fileId) db.delete(jobs).where(sql`${jobs.payload} LIKE ${`%${fileId}%`}`).run();
+  }
+
+  const otro = { ...teacherUser, id: ids.admin };
+  const suyos = () => db.select({ id: coursesTable.id }).from(coursesTable).where(eq(coursesTable.ownerId, ids.admin)).all().length;
+  const antes = suyos();
+  const ajeno = await tool.run({ curso_id: ids.duplicable, titulo_nuevo: "", con_contenido: "" }, {
+    ...ctxFor(otro, ownScope(otro)),
+    conversationId: conv.id,
+    messageId: anchor.id,
+  });
+  check("Curso ajeno: negado y sin crear nada", ajeno.forModel.includes("no te pertenece") && suyos() === antes, ajeno.forModel);
+}
+
+async function reasignarCursoChecks() {
+  console.log("\n— Reasignar cursos a otro maestro");
+  makeUser(ids.maestroDestino, "maestro3", "Maestro Destino", "teacher", null);
+  const admin = { ...teacherUser, id: ids.admin, role: "admin" as const };
+  const conv = createConversation(ids.admin, `${P} reasignar`);
+  const anchor = appendMessage(conv.id, "assistant", [], "");
+  const ctx = { ...ctxFor(admin, ownScope(admin)), conversationId: conv.id, messageId: anchor.id };
+  const tool = toolByName("reasignar_curso")!;
+
+  check("Un maestro no la tiene en su catálogo", !toolsForRole("teacher").some((t) => t.name === "reasignar_curso"));
+  check("El administrador sí la tiene", toolsForRole("admin").some((t) => t.name === "reasignar_curso"));
+
+  const reasignable = createCourse({ ownerId: ids.teacher, title: `${P} Reasignable` }).id;
+  const yaSuyo = createCourse({ ownerId: ids.maestroDestino, title: `${P} Ya es suyo` }).id;
+
+  const maestro = { ...teacherUser, id: ids.teacher };
+  const sinPermiso = await tool.run({ curso_ids: [reasignable], maestro: `${P}-maestro3@test.local` }, {
+    ...ctxFor(maestro, ownScope(maestro)),
+    conversationId: conv.id,
+    messageId: anchor.id,
+  });
+  check("Un maestro no puede reasignar", !sinPermiso.proposalId && sinPermiso.forModel.includes("administrador"), sinPermiso.forModel);
+
+  const sinMaestro = await tool.run({ curso_ids: [reasignable], maestro: "" }, ctx);
+  check("Sin maestro: enumera los que hay y pregunta", !sinMaestro.proposalId && sinMaestro.forModel.includes("Maestro Destino"), sinMaestro.forModel);
+
+  const ambiguo = await tool.run({ curso_ids: [reasignable], maestro: `${P} Maestro D` }, ctx);
+  check("Varios parecidos: los lista y no elige", !ambiguo.proposalId && ambiguo.forModel.includes("varios maestros"), ambiguo.forModel);
+
+  const noExiste = await tool.run({ curso_ids: [reasignable], maestro: "Quien Sea" }, ctx);
+  check("Maestro que no existe: lo dice", !noExiste.proposalId && noExiste.forModel.includes("No encontré"), noExiste.forModel);
+
+  const result = await tool.run({ curso_ids: [reasignable, yaSuyo], maestro: `${P}-maestro3@test.local` }, ctx);
+  const proposal = getProposal(result.proposalId!)!;
+  check(
+    "Dos filas con curso, dueño actual y dueño nuevo",
+    proposal.rows.length === 2 && proposal.draft.columns.map((c) => c.key).join(",") === "curso,actual,nuevo",
+    proposal.draft.columns
+  );
+  check("Nada editable", proposal.draft.columns.every((c) => c.editable === false));
+  check(
+    "El que ya es de ese maestro queda bloqueado",
+    proposal.rows[1].blocked === true && (proposal.rows[1].warning ?? "").includes("Ya es de ese maestro"),
+    proposal.rows[1]
+  );
+  check(
+    "Muestra el dueño actual y el nuevo",
+    proposal.rows[0].cells.actual === `${P} Maestro` && proposal.rows[0].cells.nuevo === `${P} Maestro Destino`,
+    proposal.rows[0].cells
+  );
+  check("Pide escribir REASIGNAR", proposal.draft.confirmWord === "REASIGNAR");
+
+  const sinPalabra = await applyProposal(result.proposalId!, proposal.rows, ctx, "");
+  check("Sin la palabra no cambia de dueño", "error" in sinPalabra && cursoDe(reasignable)?.ownerId === ids.teacher, sinPalabra);
+
+  const aplicada = await applyProposal(result.proposalId!, proposal.rows, ctx, "reasignar");
+  check("Con la palabra el curso cambia de dueño en la base", cursoDe(reasignable)?.ownerId === ids.maestroDestino, cursoDe(reasignable)?.ownerId);
+  check("El que ya era suyo se queda como estaba", cursoDe(yaSuyo)?.ownerId === ids.maestroDestino);
+  check(
+    "El texto explica que los certificados conservan al maestro que los firmó",
+    "text" in aplicada && aplicada.text.includes("firmó") && aplicada.text.includes("deja de verlos"),
+    aplicada
+  );
+  check("Auditoría de Administración", hayAuditoria("reassign_course", reasignable));
+
+  const delAnterior = listTeacherCourses(ownScope({ id: ids.teacher, role: "teacher" }), P).map((r) => r.course.id);
+  check("El maestro anterior ya no lo ve", !delAnterior.includes(reasignable), delAnterior.length);
+  const delNuevo = listTeacherCourses(ownScope({ id: ids.maestroDestino, role: "teacher" }), P).map((r) => r.course.id);
+  check("El maestro nuevo sí lo ve", delNuevo.includes(reasignable));
+}
+
+async function crearMaestroChecks() {
+  console.log("\n— Dar de alta un maestro");
+  const admin = { ...teacherUser, id: ids.admin, role: "admin" as const };
+  const conv = createConversation(ids.admin, `${P} maestros`);
+  const anchor = appendMessage(conv.id, "assistant", [], "");
+  const ctx = { ...ctxFor(admin, ownScope(admin)), conversationId: conv.id, messageId: anchor.id };
+  const tool = toolByName("crear_maestro")!;
+
+  check("Un maestro no la tiene en su catálogo", !toolsForRole("teacher").some((t) => t.name === "crear_maestro"));
+
+  const faltan = await tool.run({ nombre: "", correo: "", puede_editar_identidad: "" }, ctx);
+  check("Sin nombre ni correo: pregunta y no propone", !faltan.proposalId && faltan.forModel.includes("correo"), faltan.forModel);
+
+  const repetido = await tool.run({ nombre: `${P} Repetido`, correo: `${P}-maestro@test.local`, puede_editar_identidad: "" }, ctx);
+  const pRepetido = getProposal(repetido.proposalId!)!;
+  check(
+    "Correo que ya tiene cuenta: fila bloqueada",
+    pRepetido.rows[0].blocked === true && (pRepetido.rows[0].warning ?? "").includes("ya tiene cuenta"),
+    pRepetido.rows[0]
+  );
+  const noCreado = await applyProposal(repetido.proposalId!, pRepetido.rows, ctx, "");
+  check("Aplicarla no crea ninguna cuenta", "text" in noCreado && noCreado.text.startsWith("No se creó"), noCreado);
+
+  const correo = `${P}-nueva@test.local`;
+  const alta = await tool.run({ nombre: `${P} Maestra Nueva`, correo: correo.toUpperCase(), puede_editar_identidad: "si" }, ctx);
+  const pAlta = getProposal(alta.proposalId!)!;
+  check(
+    "Una fila con nombre, correo y lo que podrá hacer",
+    pAlta.rows.length === 1 && !pAlta.rows[0].blocked && (pAlta.rows[0].cells.podra ?? "").includes("identidad"),
+    pAlta.rows[0]
+  );
+  check("El correo se normaliza", pAlta.rows[0].cells.correo === correo, pAlta.rows[0].cells.correo);
+
+  const creada = await applyProposal(alta.proposalId!, pAlta.rows, ctx, "");
+  const cuenta = db.select().from(users).where(eq(users.email, correo)).get();
+  check("Crea la cuenta con rol maestro", cuenta?.role === "teacher" && cuenta?.fullName === `${P} Maestra Nueva`, cuenta?.role);
+  check("Con el permiso de identidad que se pidió", cuenta?.canEditBranding === true);
+  check("Auditoría del alta (la de Administración)", !!cuenta && hayAuditoria("create_user", cuenta.id));
+
+  const bloques = "text" in creada ? (creada.blocks ?? []) : [];
+  const descarga = bloques.find((b) => b.type === "download");
+  check(
+    "Deja la descarga con los datos de acceso",
+    descarga?.type === "download" && descarga.label.includes("datos de acceso") && (descarga.detail ?? "").includes("24 horas"),
+    bloques
+  );
+  check("El texto recuerda cambiar la contraseña", "text" in creada && creada.text.includes("cambie"), creada);
+
+  const exportId = descarga?.type === "download" ? (descarga.href.split("/").pop() ?? "") : "";
+  const csv = readExport(ids.admin, exportId)?.content ?? "";
+  const contrasena = (csv.split(/\r?\n/)[1] ?? "").split(",")[2] ?? "";
+  check(
+    "El CSV trae nombre, correo y contraseña",
+    csv.includes(correo) && csv.includes(`${P} Maestra Nueva`) && contrasena.length >= 8,
+    csv
+  );
+  check("Esa contraseña es la que abre la cuenta", !!cuenta && (await verifyPassword(cuenta.passwordHash, contrasena)));
+}
+
 async function reactivarAlumnosChecks() {
   console.log("\n— Reactivar alumnos");
   const user = { ...teacherUser, id: ids.teacher };
@@ -3583,6 +3884,9 @@ async function main() {
     await publicarCursoChecks();
     await asignarDiplomaChecks();
     await fechaLimiteChecks(tareasE5);
+    await duplicarCursoChecks();
+    await reasignarCursoChecks();
+    await crearMaestroChecks();
     // Al final: borrar a Dora dejaría sin alumno a las demás secciones
     await reactivarAlumnosChecks();
     await bajaAlumnosChecks();

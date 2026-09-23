@@ -15,6 +15,9 @@ import { restaurar } from "./tools/restaurar";
 import { avisar } from "./tools/avisar";
 import { recertificar } from "./tools/recertificar";
 import { publicarCurso } from "./tools/publicar-curso";
+import { duplicarCurso } from "./tools/duplicar-curso";
+import { reasignarCurso } from "./tools/reasignar-curso";
+import { crearMaestro } from "./tools/crear-maestro";
 import { asignarDiploma } from "./tools/asignar-diploma";
 import { fechaLimite } from "./tools/fecha-limite";
 import { crearCursos } from "./tools/crear-cursos";
@@ -46,6 +49,9 @@ const ALL: AssistantTool[] = [
   avisar,
   recertificar,
   publicarCurso,
+  duplicarCurso,
+  reasignarCurso,
+  crearMaestro,
   asignarDiploma,
   fechaLimite,
   crearCursos,
