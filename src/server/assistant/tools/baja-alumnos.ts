@@ -56,7 +56,7 @@ function toRows(targets: Target[], modo: Modo, ctx: ToolCtx): ProposalRow[] {
     if (!account) return { id, cells, warning: "No hay ninguna cuenta con ese correo", blocked: true };
 
     const perms = studentAccountPermissions(ctx.user, account.id);
-    if (!perms.visible) return { id, cells, warning: "No es uno de tus alumnos", blocked: true };
+    if (!perms.mine) return { id, cells, warning: "No es uno de tus alumnos", blocked: true };
 
     if (modo === "deshabilitar") {
       if (!perms.canDeactivate) {

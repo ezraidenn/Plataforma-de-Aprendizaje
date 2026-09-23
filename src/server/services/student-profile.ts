@@ -11,7 +11,7 @@ import {
 import { courseProgress } from "./progress";
 import { latestCycleOnly } from "./enrollment-scope";
 import { scopeOwnerId, type ViewScope } from "@/server/auth/view-scope";
-import { isStudentVisible } from "./student-scope";
+import { isStudentInPool } from "./student-scope";
 
 /**
  * Perfil/expediente del estudiante para maestros y admin: datos de la cuenta,
@@ -60,16 +60,12 @@ export type StudentProfile = {
 };
 
 /**
- * `scope` filtra lo que se muestra (cursos, certificados, tiempo). `access`
- * decide si se puede abrir: el maestro, solo a sus alumnos; el admin pasa
- * `{ kind: "all" }` y abre a cualquiera en cualquier contexto.
+ * Cualquier maestro abre la ficha de cualquier alumno del pool (para
+ * matricularlo), pero `scope` filtra lo que se muestra: cursos, certificados y
+ * tiempo solo de los cursos del contexto. De los demás, solo `outsideCount`.
  */
-export function getStudentProfile(
-  studentId: string,
-  scope: ViewScope,
-  access: ViewScope = scope
-): StudentProfile | null {
-  if (!isStudentVisible(access, studentId)) return null;
+export function getStudentProfile(studentId: string, scope: ViewScope): StudentProfile | null {
+  if (!isStudentInPool(studentId)) return null;
   const ownerId = scopeOwnerId(scope);
   const inScope = ownerId === null ? undefined : eq(courses.ownerId, ownerId);
 
@@ -135,7 +131,7 @@ export function getStudentProfile(
       .where(and(eq(enrollments.studentId, studentId), inScope))
       .get()?.n ?? 0;
 
-  // Cursos vigentes con otros dueños (el admin lo ve como aviso en el perfil)
+  // Cursos vigentes con otros dueños: solo el número, como aviso en la ficha
   const outsideCount =
     ownerId === null
       ? 0

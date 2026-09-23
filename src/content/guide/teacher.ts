@@ -146,7 +146,7 @@ export const TEACHER_GUIDE: RoleGuide = {
       steps: [
         {
           title: "Crear un estudiante",
-          text: "En «Estudiantes» pulsa «Nuevo estudiante»: nombre y correo; la contraseña temporal se genera sola y se muestra una sola vez (cópiala). Al terminar, «Matricular en cursos» te lleva directo a inscribirlo.",
+          text: "Antes, búscalo en «Estudiantes»: quizá otro maestro ya lo registró. Si no está, pulsa «Nuevo estudiante»: nombre y correo; la contraseña temporal se genera sola y se muestra una sola vez (cópiala). Al terminar, «Matricular en cursos» te lleva directo a inscribirlo.",
           href: "/teach/students",
           hrefLabel: "Estudiantes",
           ui: ["Nuevo estudiante", "Copiar credenciales", "Matricular en cursos"],
@@ -168,11 +168,11 @@ export const TEACHER_GUIDE: RoleGuide = {
           ui: ["Portafolio ZIP", "Restablecer contraseña"],
         },
         {
-          title: "Alumnos compartidos con otros maestros",
-          text: "En «Estudiantes» ves a quienes diste de alta y a quienes están o estuvieron en tus cursos. Un alumno puede tomar cursos con varios maestros: de él solo ves tus cursos, su avance y tus certificados. Al inscribir, el buscador encuentra a cualquier alumno de la plataforma. Puedes reactivar la cuenta de tus alumnos, pero solo puedes restablecer su contraseña o desactivarla si el alumno está únicamente en tus cursos; si también toma cursos con otro maestro, pídeselo al administrador. Para sacarlo solo de tu curso usa «Quitar del curso», que no afecta sus otros cursos.",
+          title: "Una sola base de alumnos",
+          text: "La base de alumnos es una sola para todos los maestros: un alumno que registra cualquier maestro queda disponible para todos, así que no hace falta volver a darlo de alta. «Estudiantes» abre en «Todos los alumnos»; «Mis alumnos» muestra solo a quienes diste de alta y a quienes están o estuvieron en tus cursos. Puedes abrir la ficha de cualquiera y matricularlo en tus cursos, pero de él solo ves tus cursos, su avance y tus certificados. Si registras un correo que ya existe, te ofrece matricular a ese alumno. Puedes reactivar la cuenta de tus alumnos, pero solo puedes restablecer su contraseña o desactivarla si el alumno está únicamente en tus cursos; si también toma cursos con otro maestro, pídeselo al administrador. Para sacarlo solo de tu curso usa «Quitar del curso», que no afecta sus otros cursos.",
           href: "/teach/students",
           hrefLabel: "Estudiantes",
-          ui: ["Restablecer contraseña", "Desactivar cuenta", "Quitar del curso"],
+          ui: ["Todos los alumnos", "Mis alumnos", "Matricular en cursos", "Quitar del curso"],
         },
         {
           title: "Importar estudiantes con IA",

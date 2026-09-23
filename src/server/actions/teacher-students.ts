@@ -16,6 +16,7 @@ import {
 } from "@/lib/student-account";
 import {
   createStudent,
+  ExistingStudentError,
   listStudents,
   resetStudentPassword,
   setStudentActive,
@@ -45,7 +46,11 @@ export async function newTempPasswordAction(): Promise<NewTempPasswordResult> {
   return { password: generateTempPassword() };
 }
 
-export type CreateStudentResult = { ok: true; studentId: string } | { error: string };
+export type CreateStudentResult =
+  | { ok: true; studentId: string }
+  /** El correo ya es de un alumno del pool: se abre su ficha para matricularlo */
+  | { existing: { studentId: string; fullName: string } }
+  | { error: string };
 
 export async function createStudentAction(input: {
   fullName: string;
@@ -79,6 +84,9 @@ export async function createStudentAction(input: {
     revalidatePath("/teach/dashboard");
     return { ok: true, studentId };
   } catch (err) {
+    if (err instanceof ExistingStudentError) {
+      return { existing: { studentId: err.studentId, fullName: err.fullName } };
+    }
     return { error: errorMessage(err, "No se pudo crear el estudiante. Intenta de nuevo.") };
   }
 }
@@ -90,7 +98,7 @@ export async function resetStudentPasswordAction(studentId: string): Promise<Res
   const user = await requireTeacher();
   const perms = studentAccountPermissions(user, studentId);
   if (!perms.canResetPassword) {
-    return { error: perms.visible ? SHARED_STUDENT_RESET_MSG : NOT_YOUR_STUDENT_MSG };
+    return { error: perms.mine ? SHARED_STUDENT_RESET_MSG : NOT_YOUR_STUDENT_MSG };
   }
   try {
     const password = generateTempPassword();
@@ -113,7 +121,7 @@ export async function setStudentActiveAction(
   const perms = studentAccountPermissions(user, studentId);
   // Reactivar no perjudica a nadie; desactivar le cerraría los cursos de otros maestros
   if (!(active ? perms.canActivate : perms.canDeactivate)) {
-    return { error: perms.visible ? SHARED_STUDENT_DEACTIVATE_MSG : NOT_YOUR_STUDENT_MSG };
+    return { error: perms.mine ? SHARED_STUDENT_DEACTIVATE_MSG : NOT_YOUR_STUDENT_MSG };
   }
   try {
     setStudentActive(studentId, active);

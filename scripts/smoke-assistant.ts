@@ -436,10 +436,16 @@ async function readToolChecks() {
   const none = await toolByName("buscar_alumno")!.run({ texto: "nadie-asi" }, ctx);
   check("buscar_alumno sin resultados lo dice", none.forModel.includes("No hay alumnos"));
 
-  // Id de admin pero rol maestro a propósito: un maestro distinto no ve a los alumnos de otro
+  // Id de admin pero rol maestro a propósito: un maestro distinto encuentra a Ana
+  // en el pool (base única), marcada como que aún no está en sus cursos
   const other: SessionUser = { id: ids.admin, email: "", fullName: "x", role: "teacher" };
-  const invisible = await toolByName("buscar_alumno")!.run({ texto: "ana" }, ctxFor(other, ownScope(other)));
-  check("Otro maestro no ve a Ana", !invisible.forModel.includes(ids.s1));
+  const enPool = await toolByName("buscar_alumno")!.run({ texto: "ana lópez" }, ctxFor(other, ownScope(other)));
+  check(
+    "Otro maestro encuentra a Ana en el pool, marcada como no suya",
+    enPool.forModel.includes(ids.s1) && enPool.forModel.includes("aún no está en tus cursos"),
+    enPool.forModel
+  );
+  check("Para su maestro, Ana no lleva esa marca", !found.forModel.includes("aún no está en tus cursos"), found.forModel);
 
   const course = await toolByName("buscar_curso")!.run({ texto: "extintores" }, ctx);
   check("buscar_curso encuentra el curso", course.forModel.includes(ids.course));
@@ -448,7 +454,11 @@ async function readToolChecks() {
   check("ficha_alumno: cursos y tiles", ficha.forModel.includes("Extintores") && (ficha.blocks ?? []).some((b) => b.type === "tiles"));
   check("ficha_alumno: enlace al perfil", (ficha.blocks ?? []).some((b) => b.type === "links" && b.links[0].href === `/teach/students/${ids.s1}`));
   const fichaAjena = await toolByName("ficha_alumno")!.run({ alumno_id: ids.s1 }, ctxFor(other, ownScope(other)));
-  check("ficha_alumno ajena: denegada", fichaAjena.forModel.includes("No encontramos"));
+  check(
+    "ficha_alumno de otro maestro: se abre, sin sus cursos, solo cuántos",
+    fichaAjena.forModel.includes("Ana López") && !fichaAjena.forModel.includes("Extintores") && fichaAjena.forModel.includes("con otros maestros"),
+    fichaAjena.forModel
+  );
 
   const resumen = await toolByName("resumen_curso")!.run({ curso_id: ids.course }, ctx);
   check("resumen_curso: 1 matriculado", resumen.forModel.includes("1 matriculado"));
@@ -543,10 +553,10 @@ async function proposalChecks() {
     .then(() => null, (e: Error) => e.message);
   check("Deshacer de nuevo (ya de baja): lanza, no devuelve texto", typeof undoAgain === "string" && undoAgain.startsWith("No se pudo deshacer"), undoAgain);
 
-  // Alumno de otro maestro: fila bloqueada
+  // Alumno que registró otro maestro: está en el pool, se puede matricular
   const foreign = await toolByName("matricular")!.run({ alumno_ids: [ids.s2, ids.s3], curso_id: ids.course }, ctx);
   const foreignRows = getProposal(foreign.proposalId!)!.rows;
-  check("Alumno ajeno: fila bloqueada «No es uno de tus alumnos»", foreignRows.some((r) => r.id === ids.s3 && r.blocked && r.warning === "No es uno de tus alumnos") && foreignRows.some((r) => r.id === ids.s2 && !r.blocked), foreignRows);
+  check("Alumno de otro maestro (pool): fila lista para matricular", foreignRows.length === 2 && foreignRows.every((r) => !r.blocked), foreignRows);
   cancelProposal(foreign.proposalId!, ids.teacher);
 
   // Varios: propuesta

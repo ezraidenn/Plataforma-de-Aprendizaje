@@ -14,7 +14,6 @@ import {
   ShieldX,
 } from "lucide-react";
 import { requireTeacher } from "@/server/auth/guards";
-import { fullScope } from "@/server/auth/view-scope";
 import { getViewScope } from "@/server/auth/view-scope-cookie";
 import { getStudentProfile } from "@/server/services/student-profile";
 import { studentAccountPermissions } from "@/server/services/student-scope";
@@ -65,11 +64,13 @@ export default async function StudentProfilePage({
   const user = await requireTeacher();
   const scope = await getViewScope(user);
   const { studentId } = await params;
-  const profile = getStudentProfile(studentId, scope, fullScope(user));
+  // Cualquier alumno del pool; cursos y certificados, solo los del contexto
+  const profile = getStudentProfile(studentId, scope);
   if (!profile) notFound();
 
   const { student, courses, certificates, totals, outsideCount } = profile;
-  const { canDeactivate, canResetPassword } = studentAccountPermissions(user, studentId);
+  // Su cuenta (contraseña, activar) solo la toca quien lo tiene en sus cursos o el admin
+  const { mine, canDeactivate, canResetPassword } = studentAccountPermissions(user, studentId);
   // De quién son los cursos que se muestran (null = todos)
   const whose =
     scope.kind === "all" ? null : scope.kind === "own" ? "tus cursos" : `los cursos de ${ownerNameOf(scope) ?? "—"}`;
@@ -156,15 +157,26 @@ export default async function StudentProfilePage({
               cohorts={existingCohorts}
             />
             <PortfolioZipButton studentId={student.id} disabled={activeCerts.length === 0} />
-            <StudentActions student={student} canDeactivate={canDeactivate} canResetPassword={canResetPassword} />
+            {mine && (
+              <StudentActions student={student} canDeactivate={canDeactivate} canResetPassword={canResetPassword} />
+            )}
           </div>
         </CardContent>
       </Card>
 
-      {user.role === "admin" && outsideCount > 0 && (
+      {outsideCount > 0 && (
         <p className="anim-rise rounded-xl border border-primary/20 bg-brand-tint px-4 py-3 text-sm text-primary">
-          Tiene {outsideCount} {outsideCount === 1 ? "curso más" : "cursos más"} fuera de esta vista ·{" "}
-          <SwitchContextButton value={VIEW_ALL}>Ver en General</SwitchContextButton>
+          {user.role === "admin" ? (
+            <>
+              Tiene {outsideCount} {outsideCount === 1 ? "curso más" : "cursos más"} fuera de esta vista ·{" "}
+              <SwitchContextButton value={VIEW_ALL}>Ver en General</SwitchContextButton>
+            </>
+          ) : (
+            // Del trabajo con otros maestros solo se dice cuánto, no qué
+            <>
+              Toma {outsideCount} {outsideCount === 1 ? "curso" : "cursos"} con otros maestros.
+            </>
+          )}
         </p>
       )}
 

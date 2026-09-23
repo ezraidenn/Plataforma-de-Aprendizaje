@@ -3,8 +3,6 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/server/db";
 import { enrollments, users } from "@/server/db/schema";
 import { enrollStudents, getOwnedCourse, unenrollStudent } from "@/server/services/courses";
-import { isStudentVisible } from "@/server/services/student-scope";
-import { fullScope } from "@/server/auth/view-scope";
 import { audit } from "@/server/services/audit";
 import type { ProposalRow } from "@/lib/assistant-blocks";
 import { createProposal } from "../proposal-store";
@@ -46,15 +44,17 @@ const COLUMNS = [
   { key: "correo", label: "Correo", editable: false },
 ];
 
-/** Filas de revisión para una lista de alumnos en un curso. */
-function rowsFor(studentIds: string[], courseId: string, ctx: ToolCtx, action: "enroll" | "unenroll"): ProposalRow[] {
+/**
+ * Filas de revisión para una lista de alumnos en un curso. Cualquier alumno
+ * del pool se puede matricular (lo haya registrado quien sea): basta con que
+ * el curso sea del usuario, y eso lo revisa quien llama.
+ */
+function rowsFor(studentIds: string[], courseId: string, action: "enroll" | "unenroll"): ProposalRow[] {
   const found = studentsByIds(studentIds);
-  const scope = fullScope(ctx.user);
   return studentIds.map((id) => {
     const s = found.get(id);
     if (!s) return { id, cells: { nombre: "(desconocido)", correo: id }, warning: "No existe ese alumno", blocked: true };
     const cells = { nombre: s.fullName, correo: s.email };
-    if (!isStudentVisible(scope, id)) return { id, cells, warning: "No es uno de tus alumnos", blocked: true };
     const enrolled = isEnrolled(courseId, id);
     if (action === "enroll" && enrolled) return { id, cells, warning: "Ya está matriculado", blocked: true };
     if (action === "unenroll" && !enrolled) return { id, cells, warning: "No está matriculado", blocked: true };
@@ -70,7 +70,7 @@ function applyRows(rows: ProposalRow[], payload: Record<string, unknown>, ctx: T
   const courseId = String(payload.courseId);
   const course = getOwnedCourse(courseId, ctx.user);
   if (!course) return { text: "El curso ya no está disponible." };
-  const ids = rowsFor(rows.map((r) => r.id), course.id, ctx, action)
+  const ids = rowsFor(rows.map((r) => r.id), course.id, action)
     .filter((r) => !r.blocked)
     .map((r) => r.id);
   if (action === "enroll") {
@@ -98,7 +98,7 @@ export const matricular: AssistantTool = {
     const course = getOwnedCourse(courseId, ctx.user);
     if (!course) return { forModel: "No encontramos ese curso o no te pertenece." };
 
-    const rows = rowsFor(studentIds, course.id, ctx, "enroll");
+    const rows = rowsFor(studentIds, course.id, "enroll");
 
     if (rows.length === 1) {
       const row = rows[0];
@@ -138,7 +138,7 @@ export const matricular: AssistantTool = {
     const studentId = param(params, "alumno_id");
     const course = getOwnedCourse(param(params, "curso_id"), ctx.user);
     if (!studentId || !course) throw new Error("No se pudo deshacer: el curso ya no está disponible.");
-    const [row] = rowsFor([studentId], course.id, ctx, "unenroll");
+    const [row] = rowsFor([studentId], course.id, "unenroll");
     if (row.blocked) throw new Error(`No se pudo deshacer: ${row.warning}.`);
     unenrollStudent(course.id, row.id, ctx.user.id);
     audit(ctx.user.id, "assistant_matricular_undo", "enrollment", `${course.id}:${row.id}`, { via: "assistant", conversationId: ctx.conversationId });
@@ -162,7 +162,7 @@ export const desmatricular: AssistantTool = {
     if (studentIds.length === 0 || !courseId) return { forModel: "Faltan alumno_ids o curso_id." };
     const course = getOwnedCourse(courseId, ctx.user);
     if (!course) return { forModel: "No encontramos ese curso o no te pertenece." };
-    const rows = rowsFor(studentIds, course.id, ctx, "unenroll");
+    const rows = rowsFor(studentIds, course.id, "unenroll");
     const proposalId = createProposal("desmatricular", ctx, ctx.messageId, {
       title: `Dar de baja de ${course.title}`,
       applyLabel: "Dar de baja",

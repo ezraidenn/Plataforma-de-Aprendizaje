@@ -5,24 +5,49 @@ import { users } from "@/server/db/schema";
 import { ownScope, scopeOwnerId, type ViewScope } from "@/server/auth/view-scope";
 
 /**
- * La base de alumnos es una sola, pero cada maestro ve solo a los suyos: los
- * que dio de alta más los que tienen o tuvieron matrícula (cualquier estado o
- * ciclo) en alguno de sus cursos.
+ * Dos reglas distintas sobre la MISMA base de alumnos:
  *
- * OJO: en subconsultas correlacionadas la columna externa va calificada a mano
- * («"users"."id"»), como en latestCycleOnly.
- * Requiere que «users» vaya sin alias y sea la fila del alumno.
+ * - Pool (`studentInPoolCondition`): el directorio. Cualquier maestro encuentra
+ *   a cualquier alumno, lo registre quien lo registre, para abrir su ficha y
+ *   matricularlo. Solo expone datos de la cuenta (nombre, correo, estado); lo
+ *   que se ve de sus cursos lo sigue filtrando el contexto.
+ * - Mis alumnos (`studentVisibleCondition`): los que el maestro dio de alta más
+ *   los que tienen o tuvieron matrícula (cualquier estado o ciclo) en alguno de
+ *   sus cursos. Rige reportes, avisos, historial, certificados, conteos y los
+ *   permisos sobre la cuenta (`studentAccountPermissions`).
  */
+
+/** Pool: toda cuenta con rol alumno. */
+export const studentInPoolCondition: SQL = eq(users.role, "student");
+
+export function isStudentInPool(studentId: string): boolean {
+  return Boolean(
+    db
+      .select({ id: users.id })
+      .from(users)
+      .where(and(eq(users.id, studentId), studentInPoolCondition))
+      .get()
+  );
+}
+
+/**
+ * SQL: el alumno («users») es de `ownerId` — alta propia o matrícula en uno de
+ * sus cursos. OJO: en subconsultas correlacionadas la columna externa va
+ * calificada a mano («"users"."id"»), como en latestCycleOnly. Requiere que
+ * «users» vaya sin alias y sea la fila del alumno.
+ */
+export function ownStudentSql(ownerId: string): SQL {
+  return sql`(${users.createdBy} = ${ownerId} OR EXISTS (
+    SELECT 1 FROM enrollments e JOIN courses c ON c.id = e.course_id
+    WHERE e.student_id = "users"."id" AND c.owner_id = ${ownerId}
+  ))`;
+}
+
+/** Mis alumnos del contexto («General»: todos). */
 export function studentVisibleCondition(scope: ViewScope): SQL {
   const ownerId = scopeOwnerId(scope);
-  if (ownerId === null) return eq(users.role, "student");
-  return and(
-    eq(users.role, "student"),
-    sql`(${users.createdBy} = ${ownerId} OR EXISTS (
-      SELECT 1 FROM enrollments e JOIN courses c ON c.id = e.course_id
-      WHERE e.student_id = "users"."id" AND c.owner_id = ${ownerId}
-    ))`
-  )!;
+  if (ownerId === null) return studentInPoolCondition;
+  return and(studentInPoolCondition, ownStudentSql(ownerId))!;
 }
 
 /**
@@ -79,8 +104,12 @@ export function isSharedElsewhere(ownerId: string, studentId: string): boolean {
 }
 
 export type StudentAccountPermissions = {
-  /** El alumno es del usuario (o el usuario es admin) */
-  visible: boolean;
+  /**
+   * El alumno es del usuario (alta propia o matrícula en sus cursos) o el
+   * usuario es admin. Un alumno del pool que no es suyo lo ve y lo matricula,
+   * pero no toca su cuenta.
+   */
+  mine: boolean;
   /** Restablecer: solo si es exclusivo (a un compartido lo restablece el admin) */
   canResetPassword: boolean;
   /** Reactivar nunca perjudica a otro maestro */
@@ -101,14 +130,14 @@ export function studentAccountPermissions(
   studentId: string
 ): StudentAccountPermissions {
   if (user.role === "admin") {
-    return { visible: true, canResetPassword: true, canActivate: true, canDeactivate: true };
+    return { mine: true, canResetPassword: true, canActivate: true, canDeactivate: true };
   }
   if (!isStudentVisible(ownScope(user), studentId)) {
-    return { visible: false, canResetPassword: false, canActivate: false, canDeactivate: false };
+    return { mine: false, canResetPassword: false, canActivate: false, canDeactivate: false };
   }
   const shared = isSharedElsewhere(user.id, studentId);
   return {
-    visible: true,
+    mine: true,
     canResetPassword: !shared,
     canActivate: true,
     canDeactivate: !shared,

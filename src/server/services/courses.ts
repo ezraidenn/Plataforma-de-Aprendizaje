@@ -19,7 +19,12 @@ import {
 } from "@/server/db/schema";
 import { hashPassword } from "@/server/auth/passwords";
 import { ownerCondition, scopeOwnerId, type ViewScope } from "@/server/auth/view-scope";
-import { sharedElsewhereSql, studentVisibleCondition } from "./student-scope";
+import {
+  ownStudentSql,
+  sharedElsewhereSql,
+  studentInPoolCondition,
+  studentVisibleCondition,
+} from "./student-scope";
 import { enqueueJob } from "@/server/jobs/queue";
 import { latestCycleOnly } from "./enrollment-scope";
 import {
@@ -249,6 +254,20 @@ export function deleteCourse(courseId: string) {
 
 // ─── Estudiantes ─────────────────────────────────────────────────────────────
 
+/**
+ * El correo ya es de un alumno del pool: no se duplica, se matricula al que
+ * existe (lo registrara quien lo registrara).
+ */
+export class ExistingStudentError extends Error {
+  constructor(
+    readonly studentId: string,
+    readonly fullName: string
+  ) {
+    super(`${fullName} ya está en la base de alumnos.`);
+    this.name = "ExistingStudentError";
+  }
+}
+
 export async function createStudent(opts: {
   fullName: string;
   email: string;
@@ -257,17 +276,13 @@ export async function createStudent(opts: {
 }) {
   const email = opts.email.trim().toLowerCase();
   const existing = db
-    .select({ id: users.id, role: users.role })
+    .select({ id: users.id, role: users.role, fullName: users.fullName })
     .from(users)
     .where(eq(users.email, email))
     .get();
   if (existing) {
-    // La base de alumnos es una sola: si ya existe, se inscribe desde el curso
-    throw new Error(
-      existing.role === "student"
-        ? "Ya existe un alumno con ese correo. Búscalo con «Matricular estudiantes» dentro del curso."
-        : "Ese correo ya pertenece a otra cuenta de la plataforma."
-    );
+    if (existing.role === "student") throw new ExistingStudentError(existing.id, existing.fullName);
+    throw new Error("Ese correo ya pertenece a otra cuenta de la plataforma.");
   }
 
   const id = nanoid();
@@ -285,20 +300,22 @@ export async function createStudent(opts: {
 }
 
 /**
- * Alumnos del contexto: el maestro ve a los suyos (alta propia o matrícula en
- * sus cursos) y «General» a todos, cada uno una sola vez. «Cursos» cuenta solo
- * los del contexto; `sharedElsewhere` = también toma cursos con otro maestro.
+ * Alumnos del contexto, cada uno una sola vez. Por defecto, los del maestro
+ * (alta propia o matrícula en sus cursos; «General»: todos). Con `pool`, el
+ * directorio completo: cualquier alumno, lo haya registrado quien sea.
+ * «Cursos» cuenta solo los del contexto; `mine` = es del maestro del contexto;
+ * `sharedElsewhere` = también toma cursos con otro maestro.
  */
 export function listStudents(
   scope: ViewScope,
-  opts: { search?: string; page?: number; pageSize?: number } = {}
+  opts: { search?: string; page?: number; pageSize?: number; pool?: boolean } = {}
 ) {
   const page = Math.max(1, opts.page ?? 1);
   const pageSize = Math.min(100, opts.pageSize ?? 50);
   const term = opts.search?.trim();
   const ownerId = scopeOwnerId(scope);
 
-  const visible = studentVisibleCondition(scope);
+  const visible = opts.pool ? studentInPoolCondition : studentVisibleCondition(scope);
   const where = term
     ? and(visible, matchesSearch(term, [users.fullName, users.email])!)
     : visible;
@@ -311,6 +328,10 @@ export function listStudents(
     ownerId === null
       ? sql<number>`0`
       : sql<number>`CASE WHEN ${sharedElsewhereSql(ownerId)} THEN 1 ELSE 0 END`;
+  const mine =
+    ownerId === null
+      ? sql<number>`1`
+      : sql<number>`CASE WHEN ${ownStudentSql(ownerId)} THEN 1 ELSE 0 END`;
 
   const rows = db
     .select({
@@ -320,6 +341,7 @@ export function listStudents(
       active: users.active,
       lastLoginAt: users.lastLoginAt,
       courseCount,
+      mine,
       sharedElsewhere,
     })
     .from(users)

@@ -1,5 +1,5 @@
 /**
- * Contexto de vista del admin y alumnos por maestro, contra la base real.
+ * Contexto de vista del admin, alumnos por maestro y pool general, contra la base real.
  * Crea sus datos con el prefijo «zscope» y los borra al terminar; los conteos
  * se miden SOLO sobre esos datos (búsqueda «zscope»), así que los datos demo
  * no afectan.
@@ -39,8 +39,8 @@ import { inlineAllowed } from "../src/lib/inline-mime";
 import { resolveUploadMime } from "../src/lib/upload-types";
 import { isDocumentLoad, stripCookie, titleWithOwner, initialsOf, contextWords, VIEW_ALL } from "../src/lib/view-context";
 import { actingOwnerId, fullScope, ownScope, resolveViewScope } from "../src/server/auth/view-scope";
-import { isStudentVisible, studentAccountPermissions } from "../src/server/services/student-scope";
-import { enrollStudents, listStudents, listTeacherCourses } from "../src/server/services/courses";
+import { isStudentInPool, isStudentVisible, studentAccountPermissions } from "../src/server/services/student-scope";
+import { createStudent, enrollStudents, ExistingStudentError, listStudents, listTeacherCourses } from "../src/server/services/courses";
 import { getStudentProfile } from "../src/server/services/student-profile";
 import { gradingQueue } from "../src/server/services/grading";
 import { renewalCounts } from "../src/server/services/renewals";
@@ -256,22 +256,22 @@ function accountSection(f: Fixture) {
   check("General ve a todos", isStudentVisible({ kind: "all" }, s0));
 
   const bOnS0 = studentAccountPermissions(f.b, s0);
-  check("B no puede tocar la cuenta de un ajeno", !bOnS0.canResetPassword && !bOnS0.canActivate && !bOnS0.canDeactivate && !bOnS0.visible, bOnS0);
+  check("B no puede tocar la cuenta de un ajeno", !bOnS0.canResetPassword && !bOnS0.canActivate && !bOnS0.canDeactivate && !bOnS0.mine, bOnS0);
   const bOnS15 = studentAccountPermissions(f.b, s15);
-  check("B reactiva a un compartido, pero no lo restablece ni desactiva", bOnS15.visible && !bOnS15.canResetPassword && bOnS15.canActivate && !bOnS15.canDeactivate, bOnS15);
+  check("B reactiva a un compartido, pero no lo restablece ni desactiva", bOnS15.mine && !bOnS15.canResetPassword && bOnS15.canActivate && !bOnS15.canDeactivate, bOnS15);
   const aOnS5 = studentAccountPermissions(f.a, s5);
   check("A desactiva a su alumno exclusivo", aOnS5.canResetPassword && aOnS5.canDeactivate, aOnS5);
   check("A no desactiva a un compartido", !studentAccountPermissions(f.a, s15).canDeactivate);
   check("A no restablece a un compartido", !studentAccountPermissions(f.a, s15).canResetPassword);
   const adm = studentAccountPermissions(f.admin, s15);
-  check("El admin puede todo", adm.canResetPassword && adm.canActivate && adm.canDeactivate && adm.visible);
+  check("El admin puede todo", adm.canResetPassword && adm.canActivate && adm.canDeactivate && adm.mine);
   check("Un maestro nunca es «alumno visible»", !isStudentVisible({ kind: "all" }, f.a.id));
 
   // Creador cuyo alumno ya solo estudia con otro maestro: lo ve, no lo restablece ni desactiva
   const x = addUser("s-creado-b", "Alumno creado por B", "student", f.b.id);
   enroll(f.coursesA[0], x, f.a.id);
   const bOnX = studentAccountPermissions(f.b, x);
-  check("Creador sin cursos del alumno: lo ve, pero no lo restablece ni desactiva", bOnX.visible && !bOnX.canResetPassword && !bOnX.canDeactivate, bOnX);
+  check("Creador sin cursos del alumno: lo ve, pero no lo restablece ni desactiva", bOnX.mine && !bOnX.canResetPassword && !bOnX.canDeactivate, bOnX);
   db.delete(users).where(eq(users.id, x)).run(); // su matrícula cae en cascada
 
   // Aprobado con otro maestro también cuenta como compartido
@@ -334,14 +334,21 @@ function studentsSection(f: Fixture) {
   check("A: su exclusivo no está marcado", !rowsA.find((r) => r.id === f.students[5])?.sharedElsewhere);
 
   console.log("\n— Perfil del alumno");
-  check("B no abre a un alumno solo de A", getStudentProfile(f.students[0], ownScope(f.b)) === null);
+  // Pool: B abre la ficha de un alumno solo de A, pero no ve nada de los cursos de A
+  const p0 = getStudentProfile(f.students[0], ownScope(f.b));
+  check(
+    "B abre a un alumno solo de A, sin sus cursos ni certificados",
+    p0 !== null && p0.courses.length === 0 && p0.certificates.length === 0 && p0.totals.totalSeconds === 0 && p0.outsideCount > 0,
+    p0
+  );
+  check("La ficha no abre a un maestro", getStudentProfile(f.a.id, ownScope(f.b)) === null);
   const p = getStudentProfile(f.students[15], ownScope(f.b))!;
   check("B ve solo sus cursos del alumno", p.courses.length === 1 && p.courses[0].courseId === f.coursesB[0], p.courses);
   check("Cuenta los cursos fuera de la vista", p.outsideCount === 1, p.outsideCount);
   const asA = { kind: "teacher", ownerId: f.a.id } as const;
-  const adminAsA = getStudentProfile(f.students[15], asA, { kind: "all" })!;
+  const adminAsA = getStudentProfile(f.students[15], asA)!;
   check("Admin viendo como A: solo cursos de A", adminAsA.courses.every((c) => f.coursesA.includes(c.courseId)));
-  check("Admin puede abrir a alguien fuera del contexto", getStudentProfile(f.students[0], ownScope(f.admin), { kind: "all" }) !== null);
+  check("Admin puede abrir a alguien fuera del contexto", getStudentProfile(f.students[0], ownScope(f.admin)) !== null);
   check("General: todos sus cursos", getStudentProfile(f.students[15], { kind: "all" })!.courses.length === 2);
 
   const allRows = listStudents({ kind: "all" }, { search: P, pageSize: 100 }).rows;
@@ -349,9 +356,56 @@ function studentsSection(f: Fixture) {
   // Visible solo por haberlo dado de alta: sin cursos en la vista, pero con uno fuera
   const y = addUser("s-solo-alta", "Alumno de alta de B", "student", f.b.id);
   enroll(f.coursesA[1], y, f.a.id);
-  const py = getStudentProfile(y, { kind: "teacher", ownerId: f.b.id }, { kind: "all" })!;
+  const py = getStudentProfile(y, { kind: "teacher", ownerId: f.b.id })!;
   check("Solo por alta: sin cursos en la vista, 1 fuera", py.courses.length === 0 && py.outsideCount === 1, py);
   db.delete(users).where(eq(users.id, y)).run(); // su matrícula cae en cascada
+}
+
+async function poolSection(f: Fixture) {
+  console.log("\n— Pool general de alumnos");
+  const [s0] = f.students;
+  const s15 = f.students[15];
+  const pool = (scope: Parameters<typeof listStudents>[0]) =>
+    listStudents(scope, { search: P, pageSize: 100, pool: true });
+  check("B ve en el pool a los 20 (A los registró todos)", pool(ownScope(f.b)).total === 20, pool(ownScope(f.b)).total);
+  check("A también ve 20 en el pool", pool(ownScope(f.a)).total === 20);
+  check("El pool no trae maestros ni admins", pool({ kind: "all" }).rows.every((r) => f.students.includes(r.id)));
+  const rowsB = pool(ownScope(f.b)).rows;
+  const r0 = rowsB.find((r) => r.id === s0);
+  check("Pool de B: uno solo de A no es suyo y no cuenta cursos", r0?.mine === 0 && r0?.courseCount === 0, r0);
+  check("Pool de B: el compartido sí es suyo", rowsB.find((r) => r.id === s15)?.mine === 1);
+  check("En General todos son «mine»", pool({ kind: "all" }).rows.every((r) => r.mine === 1));
+  check("isStudentInPool: alumno sí, maestro no", isStudentInPool(s0) && !isStudentInPool(f.a.id));
+
+  // B matricula a un alumno del pool en su curso: pasa a ser suyo, sin ver lo de A
+  check("B matricula a un alumno que registró A", enrollStudents(f.coursesB[1], [s0], f.b.id) === 1);
+  check("Tras matricularlo, B lo ve como suyo", isStudentVisible(ownScope(f.b), s0));
+  const pAfter = getStudentProfile(s0, ownScope(f.b))!;
+  check("Ficha de B: solo su curso", pAfter.courses.length === 1 && pAfter.courses[0].courseId === f.coursesB[1], pAfter.courses);
+  const bPerms = studentAccountPermissions(f.b, s0);
+  check("Sigue con A: B no restablece ni desactiva su cuenta", bPerms.mine && !bPerms.canResetPassword && !bPerms.canDeactivate, bPerms);
+  // Fuera: las secciones siguientes cuentan el ejemplo exacto (B = 10)
+  db.delete(enrollments).where(and(eq(enrollments.courseId, f.coursesB[1]), eq(enrollments.studentId, s0))).run();
+
+  // Alta con un correo que ya está en el pool: no se duplica, se señala al existente
+  let existing: unknown = null;
+  try {
+    await createStudent({ fullName: "Otro nombre", email: `${P}-s00@test.local`, password: "x".repeat(8), createdBy: f.b.id });
+  } catch (err) {
+    existing = err;
+  }
+  check(
+    "Correo repetido: ExistingStudentError con el alumno del pool",
+    existing instanceof ExistingStudentError && existing.studentId === s0,
+    String(existing)
+  );
+  let staff: unknown = null;
+  try {
+    await createStudent({ fullName: "X", email: `${P}-a@test.local`, password: "x".repeat(8), createdBy: f.b.id });
+  } catch (err) {
+    staff = err;
+  }
+  check("Correo de un maestro: error común, no «ya existe»", staff instanceof Error && !(staff instanceof ExistingStudentError));
 }
 
 function listingsSection(f: Fixture) {
@@ -487,7 +541,7 @@ function certificatesSection(f: Fixture) {
   check("Perfil de A: sus 2 certificados", getStudentProfile(f.students[0], ownScope(f.a))!.certificates.length === 2);
   check(
     "Admin viendo como B: sin certificados de A",
-    getStudentProfile(f.students[0], { kind: "teacher", ownerId: f.b.id }, { kind: "all" })!.certificates.length === 0
+    getStudentProfile(f.students[0], { kind: "teacher", ownerId: f.b.id })!.certificates.length === 0
   );
 
   check("Relleno graba los datos a los viejos", backfillCertificateSnapshots() >= 1);
@@ -855,6 +909,7 @@ async function main() {
     accountSection(f);
     coursesSection(f);
     studentsSection(f);
+    await poolSection(f);
     listingsSection(f);
     optionsSection(f);
     certificatesSection(f);

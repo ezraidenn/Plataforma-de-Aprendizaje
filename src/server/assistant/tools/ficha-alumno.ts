@@ -1,6 +1,5 @@
 import "server-only";
 import { getStudentProfile } from "@/server/services/student-profile";
-import { fullScope } from "@/server/auth/view-scope";
 import { schema, str, param, type AssistantTool } from "../tool-types";
 
 const DATE = new Intl.DateTimeFormat("es-MX", { day: "numeric", month: "short", year: "numeric" });
@@ -20,10 +19,10 @@ export const fichaAlumno: AssistantTool = {
   run(params, ctx) {
     const id = param(params, "alumno_id");
     if (!id) return { forModel: "Falta alumno_id." };
-    // Igual que la página del perfil: el maestro solo abre a los suyos
-    const profile = getStudentProfile(id, ctx.scope, fullScope(ctx.user));
-    if (!profile) return { forModel: "No encontramos a ese alumno o no está entre los tuyos." };
-    const { student, courses, totals } = profile;
+    // Igual que la página del perfil: cualquier alumno del pool, con solo los cursos del contexto
+    const profile = getStudentProfile(id, ctx.scope);
+    if (!profile) return { forModel: "No encontramos a ese alumno." };
+    const { student, courses, totals, outsideCount } = profile;
     const courseLines = courses.map((c) => `- ${c.courseTitle}: ${c.percent}% (${statusLabel(c.enrollmentStatus)})`);
     const forModel = [
       `${student.fullName} <${student.email}>${student.active ? "" : " (deshabilitado)"}. Último acceso: ${student.lastLoginAt ? DATE.format(student.lastLoginAt) : "nunca"}.`,
@@ -31,6 +30,7 @@ export const fichaAlumno: AssistantTool = {
       ...courseLines.slice(0, 5),
       ...(courseLines.length > 5 ? [`… y ${courseLines.length - 5} más`] : []),
       `Certificados: ${totals.certificates}.`,
+      ...(outsideCount > 0 ? [`Toma ${outsideCount} curso(s) con otros maestros (no se muestran).`] : []),
     ].join("\n");
     return {
       forModel,

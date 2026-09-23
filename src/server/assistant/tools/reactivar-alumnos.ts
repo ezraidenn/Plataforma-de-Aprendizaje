@@ -51,7 +51,7 @@ function toRows(targets: Target[], ctx: ToolCtx): ProposalRow[] {
     if (!cells.nombre) cells.nombre = "(desconocido)";
 
     if (!account) return { id, cells, warning: "No hay ninguna cuenta con ese correo", blocked: true };
-    if (!studentAccountPermissions(ctx.user, account.id).visible) {
+    if (!studentAccountPermissions(ctx.user, account.id).mine) {
       return { id, cells, warning: "No es uno de tus alumnos", blocked: true };
     }
     if (account.active) return { id, cells, warning: "Ya estaba activo", blocked: true };
@@ -162,7 +162,7 @@ export const reactivarAlumnos: AssistantTool = {
     const account = accountsFor([{ id: studentId, email: "", name: "" }]).byId.get(studentId);
     if (!account) throw new Error("No se pudo deshacer: esa cuenta ya no existe.");
     const perms = studentAccountPermissions(ctx.user, studentId);
-    if (!perms.visible) throw new Error("No se pudo deshacer: no es uno de tus alumnos.");
+    if (!perms.mine) throw new Error("No se pudo deshacer: no es uno de tus alumnos.");
     if (!perms.canDeactivate) throw new Error("No se pudo deshacer: lo comparte otro maestro y solo el administrador puede deshabilitarlo.");
     if (!account.active) throw new Error("No se pudo deshacer: la cuenta ya estaba deshabilitada.");
     setStudentActive(studentId, false);

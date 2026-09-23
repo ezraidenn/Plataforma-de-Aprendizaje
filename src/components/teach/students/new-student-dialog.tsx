@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { BookPlus, Check, Copy, Loader2, Plus, RefreshCw, TriangleAlert } from "lucide-react";
+import { BookPlus, Check, Copy, Loader2, Plus, RefreshCw, TriangleAlert, UserCheck } from "lucide-react";
 import { toast } from "sonner";
 import { copyToClipboard } from "@/lib/clipboard";
 import { Button } from "@/components/ui/button";
@@ -33,6 +33,8 @@ export function NewStudentDialog({ urlTrigger = false }: { urlTrigger?: boolean 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [created, setCreated] = useState<{ email: string; password: string; studentId: string } | null>(null);
+  // El correo ya es de un alumno del pool: se matricula ese, no se duplica
+  const [existing, setExisting] = useState<{ email: string; fullName: string; studentId: string } | null>(null);
   const [copied, setCopied] = useState(false);
   const [pending, startTransition] = useTransition();
   const [regenerating, startRegenerate] = useTransition();
@@ -42,7 +44,13 @@ export function NewStudentDialog({ urlTrigger = false }: { urlTrigger?: boolean 
     setEmail("");
     setPassword("");
     setCreated(null);
+    setExisting(null);
     setCopied(false);
+  }
+
+  function goEnroll(studentId: string) {
+    setOpen(false);
+    router.push(`/teach/students/${studentId}?matricular=1`);
   }
 
   function loadPassword() {
@@ -67,6 +75,10 @@ export function NewStudentDialog({ urlTrigger = false }: { urlTrigger?: boolean 
       const result = await createStudentAction({ fullName, email, password });
       if ("error" in result) {
         toast.error(result.error);
+        return;
+      }
+      if ("existing" in result) {
+        setExisting({ email: email.trim().toLowerCase(), ...result.existing });
         return;
       }
       setCreated({ email: email.trim().toLowerCase(), password, studentId: result.studentId });
@@ -140,16 +152,44 @@ export function NewStudentDialog({ urlTrigger = false }: { urlTrigger?: boolean 
                 </Button>
                 <Button
                   className="h-11 bg-cta text-cta-foreground hover:bg-cta/90"
-                  onClick={() => {
-                    setOpen(false);
-                    router.push(`/teach/students/${created.studentId}?matricular=1`);
-                  }}
+                  onClick={() => goEnroll(created.studentId)}
                 >
                   <BookPlus aria-hidden />
                   Matricular en cursos
                 </Button>
                 <Button variant="ghost" className="h-11" onClick={() => handleOpenChange(false)}>
                   Listo
+                </Button>
+              </DialogFooter>
+            </>
+          ) : existing ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>Ya está en la base de alumnos</DialogTitle>
+                <DialogDescription>
+                  La base de alumnos es una sola para todos los maestros: no hace falta registrarlo
+                  otra vez.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="flex items-center gap-3 rounded-xl border bg-muted/40 p-4">
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-section-soft text-section-strong">
+                  <UserCheck className="size-4" aria-hidden />
+                </span>
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-medium">{existing.fullName}</span>
+                  <span className="block truncate text-xs text-muted-foreground">{existing.email}</span>
+                </span>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" className="h-11" onClick={() => setExisting(null)}>
+                  Cambiar el correo
+                </Button>
+                <Button
+                  className="h-11 bg-cta text-cta-foreground hover:bg-cta/90"
+                  onClick={() => goEnroll(existing.studentId)}
+                >
+                  <BookPlus aria-hidden />
+                  Matricular en cursos
                 </Button>
               </DialogFooter>
             </>
