@@ -1,5 +1,5 @@
 import "server-only";
-import { and, desc, eq, like, max } from "drizzle-orm";
+import { and, desc, eq, like, max, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { db } from "@/server/db";
 import { aiConversations, aiMessages } from "@/server/db/schema";
@@ -29,12 +29,29 @@ export function renameConversation(id: string, title: string): void {
   db.update(aiConversations).set({ title: clean }).where(eq(aiConversations.id, id)).run();
 }
 
+/**
+ * Búsqueda por título. `%` y `_` son comodines del LIKE: sin escaparlos,
+ * buscar «100%» no encontraría «100% aprobado» y buscar «%» devolvería TODAS.
+ * La contrabarra va como parámetro (`ESCAPE ?`): escribirla dentro de la
+ * plantilla se presta a perderla en un escape de JavaScript.
+ */
+const LIKE_ESCAPE = "\\";
+
+function likePattern(term: string): string {
+  return `%${term.replace(/[\\%_]/g, (c) => LIKE_ESCAPE + c)}%`;
+}
+
 export function listConversations(userId: string, q?: string): ConversationSummary[] {
   const term = q?.trim();
   return db
     .select({ id: aiConversations.id, title: aiConversations.title, updatedAt: aiConversations.updatedAt })
     .from(aiConversations)
-    .where(and(eq(aiConversations.userId, userId), term ? like(aiConversations.title, `%${term}%`) : undefined))
+    .where(
+      and(
+        eq(aiConversations.userId, userId),
+        term ? sql`${aiConversations.title} LIKE ${likePattern(term)} ESCAPE ${LIKE_ESCAPE}` : undefined
+      )
+    )
     .orderBy(desc(aiConversations.updatedAt))
     .limit(50)
     .all()
