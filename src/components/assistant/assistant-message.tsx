@@ -164,14 +164,18 @@ function Block({ block, message, conversationId }: { block: AssistantBlock; mess
           ))}
         </div>
       );
-    case "table":
+    case "table": {
+      // Con muchas columnas (un listado trae 8) el panel de 440 px parte cada
+      // título en ocho renglones: se pasa a una línea por celda, con corte y
+      // desplazamiento lateral. Con pocas columnas se deja envolver, que cabe.
+      const ancha = block.columns.length > 4;
       return (
         <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
-          <table className="w-full text-[12px]">
+          <table className={cn("text-[12px]", ancha ? "w-max min-w-full" : "w-full")}>
             <thead>
               <tr className="border-b border-slate-200">
                 {block.columns.map((c) => (
-                  <th key={c} scope="col" className="px-2 py-1.5 text-left text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                  <th key={c} scope="col" className={cn("px-2 py-1.5 text-left text-[10px] font-bold uppercase tracking-wide text-slate-500", ancha && "whitespace-nowrap")}>
                     {c}
                   </th>
                 ))}
@@ -181,7 +185,11 @@ function Block({ block, message, conversationId }: { block: AssistantBlock; mess
               {block.rows.map((r, i) => (
                 <tr key={i} className="border-b border-slate-100 last:border-0">
                   {r.map((cell, j) => (
-                    <td key={j} className="px-2 py-1 text-slate-800">
+                    <td
+                      key={j}
+                      title={ancha ? cell : undefined}
+                      className={cn("px-2 py-1 text-slate-800", ancha && "max-w-[220px] truncate whitespace-nowrap")}
+                    >
                       {cell}
                     </td>
                   ))}
@@ -192,6 +200,7 @@ function Block({ block, message, conversationId }: { block: AssistantBlock; mess
           {block.more ? <p className="px-2 py-1.5 text-[11px] text-slate-500">y {block.more} más</p> : null}
         </div>
       );
+    }
     case "links":
       return (
         <div className="flex flex-wrap gap-1.5">

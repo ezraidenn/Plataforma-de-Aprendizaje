@@ -292,7 +292,7 @@ function bloqueMatriculas(scope: ViewScope, f: ListadoFiltros): Bloque {
     filas,
     tiles: [
       tile("Matrículas", filas.length),
-      tile("Fuera del filtro", Math.max(0, base - filas.length)),
+      tile("De un total de", base),
       tile("Completadas", filas.filter((x) => x.cells[5] === "completado").length),
       tile("Bajas", filas.filter((x) => x.cells[5] === "baja").length),
     ],
@@ -402,7 +402,7 @@ function bloqueAlumnos(scope: ViewScope, f: ListadoFiltros): Bloque {
     filas,
     tiles: [
       tile("Alumnos", filas.length),
-      tile("Fuera del filtro", Math.max(0, base - filas.length)),
+      tile("De un total de", base),
       tile("Activos", filas.filter((x) => x.cells[5] === "activo").length),
       tile("Deshabilitados", filas.filter((x) => x.cells[5] === "deshabilitado").length),
     ],
@@ -485,7 +485,7 @@ function bloqueCertificados(scope: ViewScope, f: ListadoFiltros): Bloque {
     filas,
     tiles: [
       tile("Certificados", filas.length),
-      tile("Fuera del filtro", Math.max(0, base - filas.length)),
+      tile("De un total de", base),
       tile("Vigentes", filas.filter((x) => x.cells[5] === "vigente").length),
       tile("Vencidos", filas.filter((x) => x.cells[5] === "vencido").length),
     ],
