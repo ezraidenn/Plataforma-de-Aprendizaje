@@ -14,6 +14,7 @@ import { importQuestionInputs } from "@/server/services/exam-import";
 import { attachmentBytes, attachmentsOf, type StoredAttachment } from "@/server/services/attachment-intake";
 import { readSheetRows, type SheetData } from "@/server/services/sheet-colors";
 import { detectFormat, FORMAT_LABELS, type ExcelFormat } from "@/lib/excel-formats";
+import { extOf } from "@/lib/ai-import-files";
 import type { AssistantBlock, ProposalColumn, ProposalRow } from "@/lib/assistant-blocks";
 import { createProposal } from "../proposal-store";
 import { schema, str, strEnum, param, type AssistantTool, type ToolCtx } from "../tool-types";
@@ -262,6 +263,16 @@ export const aplicarExcel: AssistantTool = {
     const { adjunto } = archivo;
     // Si se rescató de antes, la IA lo dice: el usuario tiene que saber qué archivo se aplicó
     const deAntes = archivo.deAntes ? ` (se usó el archivo de antes en esta conversación: ${adjunto.summary.fileName})` : "";
+
+    // Una foto o un PDF no son una hoja de cálculo, pero eso no quiere decir
+    // que no se puedan leer: los lee la IA desde la herramienta que toque
+    const nombre = adjunto.summary.fileName;
+    if (adjunto.summary.kind === "image" || extOf(nombre) === ".pdf") {
+      const que = adjunto.summary.kind === "image" ? (adjunto.summary.pages ? "un PDF escaneado" : "una foto o una captura") : "un PDF";
+      return {
+        forModel: `«${nombre}» es ${que}, no una hoja de cálculo: esta herramienta solo aplica Excel y CSV. Sí se puede leer con la IA: si es una lista de alumnos, llama a alta_alumnos con origen "adjunto" (y curso_id si además se matriculan); si es una lista de cursos, a crear_cursos con origen "adjunto"; y si solo quieren saber qué contiene, a leer_archivo. No digas que no se puede leer.${deAntes}`,
+      };
+    }
 
     let sheets: SheetData[];
     try {

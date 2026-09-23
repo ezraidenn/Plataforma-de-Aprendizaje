@@ -6,6 +6,7 @@
  *
  * Uso: pnpm smoke:assistant
  */
+import sharp from "sharp";
 import { placeholderFor } from "../src/lib/assistant-placeholder";
 import { dateRange } from "../src/lib/assistant-dates";
 import type { AssistantBlock } from "../src/lib/assistant-blocks";
@@ -99,10 +100,10 @@ import {
 import { readSheetRows, type SheetData } from "../src/server/services/sheet-colors";
 import { attachToConversation, summarizeAttachment, type StoredAttachment } from "../src/server/services/attachment-intake";
 import { absolutePathFor, deleteFile, getFileRecord, saveStream } from "../src/server/services/storage";
-import { peopleRows, headerIndex } from "../src/server/assistant/rows-from-attachment";
+import { peopleRows, courseRows, headerIndex } from "../src/server/assistant/rows-from-attachment";
 import { toCourseDrafts } from "../src/server/services/ai-course-import";
 import { resolveUploadMime } from "../src/lib/upload-types";
-import { aiFileKind, nombreDePegado } from "../src/lib/ai-import-files";
+import { MAX_AI_FILE_BYTES, aiFileKind, nombreDePegado } from "../src/lib/ai-import-files";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync } from "node:fs";
@@ -306,11 +307,11 @@ function makeUser(id: string, key: string, name: string, role: "teacher" | "admi
 const testFileIds: string[] = [];
 
 /** Guarda una hoja de prueba en el almacenamiento real y devuelve su id. */
-async function saveTestFile(bytes: Buffer, name: string, userId: string): Promise<string> {
+async function saveTestFile(bytes: Buffer, name: string, userId: string, mime = XLSX_MIME): Promise<string> {
   const { id } = await saveStream({
     stream: Readable.from(bytes),
     originalName: name,
-    mimeType: XLSX_MIME,
+    mimeType: mime,
     kind: "assistant_attachment",
     uploadedBy: userId,
   });
@@ -864,8 +865,8 @@ function xlsxDeFilas(hoja: string, headers: string[], filas: string[][]): Promis
 }
 
 /** Sube la hoja como adjunto real de la conversación (archivo en disco incluido). */
-async function adjuntar(conversationId: string, bytes: Buffer, name: string): Promise<StoredAttachment> {
-  const fileId = await saveTestFile(bytes, name, ids.teacher);
+async function adjuntar(conversationId: string, bytes: Buffer, name: string, mime?: string): Promise<StoredAttachment> {
+  const fileId = await saveTestFile(bytes, name, ids.teacher, mime);
   const { id, summary } = await attachToConversation({ conversationId, fileId, userId: ids.teacher });
   return { id, fileId, summary };
 }
@@ -3797,6 +3798,20 @@ function attachmentSummaryChecks() {
   check("Detalle: documento con sus caracteres", attachmentDetail({ fileName: "manual.pdf", kind: "doc", sheets: [], chars: 12_000 }) === "PDF · 12 000 caracteres", attachmentDetail({ fileName: "manual.pdf", kind: "doc", sheets: [], chars: 12_000 }));
   check("Detalle: imagen", attachmentDetail({ fileName: "foto.jpg", kind: "image", sheets: [], chars: 0 }) === "Imagen");
 
+  // Una foto no es un archivo inútil: la plataforma la lee con la IA
+  const foto: AttachmentSummary = { fileName: "lista.jpg", kind: "image", sheets: [], chars: 0 };
+  const textoFoto = summaryForModel(foto);
+  check("Para la IA: una imagen se puede leer con la IA", textoFoto.includes("la puedo leer con la IA"), textoFoto);
+  check("Para la IA: una imagen no sale como «0 caracteres»", !textoFoto.includes("0 caracteres"), textoFoto);
+  const escaneo: AttachmentSummary = { fileName: "escaneo.pdf", kind: "image", sheets: [], chars: 0, pages: 3 };
+  const textoEscaneo = summaryForModel(escaneo);
+  check("Para la IA: un PDF escaneado dice sus páginas y que se lee", textoEscaneo.includes("3 página") && textoEscaneo.includes("con la IA"), textoEscaneo);
+  check("Detalle: PDF escaneado con sus páginas", attachmentDetail(escaneo) === "PDF escaneado · 3 páginas", attachmentDetail(escaneo));
+  check("Detalle: escaneo de una sola página", attachmentDetail({ ...escaneo, pages: 1 }) === "PDF escaneado · 1 página", attachmentDetail({ ...escaneo, pages: 1 }));
+  const chipsFoto = suggestionsFor(foto);
+  check("Sugerencias con una foto: dar de alta", chipsFoto.includes("Da de alta a estos alumnos"), chipsFoto);
+  check("Sugerencias con una foto: y solo revisar", chipsFoto.some((c) => c.toLowerCase().includes("qué contiene")), chipsFoto);
+
   const largo: AttachmentSummary = {
     fileName: "grande.xlsx",
     kind: "sheet",
@@ -3967,6 +3982,7 @@ async function intakeChecks() {
   check("Documento de texto: sin hojas y con caracteres", doc.sheets.length === 0 && doc.chars > 20 && doc.kind === "doc");
   const img = await summarizeAttachment(Buffer.from("no importa"), "foto.jpg");
   check("Imagen: se admite sin leer texto", img.kind === "image" && img.sheets.length === 0);
+  check("Imagen: el resumen para la IA dice que se puede leer", summaryForModel(img).includes("con la IA"), summaryForModel(img));
 
   const csv = await summarizeAttachment(Buffer.from("Nombre,Correo\nAna Lopez,ana@x.com\nBeto Ruiz,beto@x.com\n", "utf8"), "lista.csv");
   check("CSV: se resume como hoja", csv.kind === "sheet" && csv.sheets.length === 1, csv.kind);
@@ -4030,6 +4046,58 @@ async function rowsFromAttachmentChecks() {
   const conTitulo = Buffer.from("LISTA DE ASISTENCIA\nSeptiembre 2026\nNombre,Correo\nGina Paz,gina@x.com\n", "utf8");
   const deTitulo = await peopleRows({ bytes: conTitulo, fileName: "titulo.csv" }, { ai: undefined });
   check("Encabezado bajo un título: una persona y sin IA", deTitulo.rows.length === 1 && deTitulo.rows[0].email === "gina@x.com", deTitulo.rows);
+
+  await fotoChecks();
+}
+
+/** Un PNG de verdad, como el que sale de una captura de pantalla o de la cámara. */
+function fotoPng(): Promise<Buffer> {
+  return sharp({ create: { width: 600, height: 400, channels: 3, background: "#ffffff" } }).png().toBuffer();
+}
+
+/** La foto de una lista se lee por la MISMA ruta de visión que «Importar con IA». */
+async function fotoChecks() {
+  const png = await fotoPng();
+  const gente = {
+    students: [
+      { fullName: "Ivan   Ruiz", email: " IVAN@X.COM ", group: "Matutino", issues: [] },
+      { fullName: "Julia Paz", email: "julia@x.com", group: "", issues: [] },
+    ],
+  };
+  let enviado: { input?: { role?: string; content?: unknown }[] } = {};
+  const vision: typeof fetch = async (_url, init) => {
+    enviado = JSON.parse(String(init?.body));
+    return fakeOutput([say(JSON.stringify(gente))])();
+  };
+  const deFoto = await peopleRows({ bytes: png, fileName: "lista.png" }, { ai: { key: "k", model: "m", fetchImpl: vision } });
+  check("Foto: la IA transcribe las personas", deFoto.rows.length === 2 && deFoto.rows[0].fullName === "Ivan Ruiz", deFoto.rows);
+  check("Foto: correo y grupo normalizados", deFoto.rows[0].email === "ivan@x.com" && deFoto.rows[0].group === "Matutino", deFoto.rows[0]);
+  check("Foto: la nota dice que la leyó la IA", deFoto.note.includes("Leí la imagen con la IA"), deFoto.note);
+  const partes = enviado.input?.[1]?.content as { type: string; image_url?: string; detail?: string }[];
+  check(
+    "Foto: va como input_image JPEG con detalle alto (la ruta de siempre)",
+    partes?.length === 2 &&
+      partes[0].type === "input_text" &&
+      partes[1].type === "input_image" &&
+      partes[1].image_url?.startsWith("data:image/jpeg;base64,") === true &&
+      partes[1].detail === "high",
+    partes?.map((c) => c.type)
+  );
+
+  const sinIa = await peopleRows({ bytes: png, fileName: "lista.png" }, {}).catch((e: Error) => e.message);
+  check("Foto sin clave de IA: mensaje claro", typeof sinIa === "string" && sinIa.includes("hace falta la IA"), sinIa);
+
+  const vacia = fakeOutput([say(JSON.stringify({ students: [] }))]);
+  const nadie = await peopleRows({ bytes: png, fileName: "lista.png" }, { ai: { key: "k", model: "m", fetchImpl: vacia }, color: "rojo" });
+  check("Foto sin personas: lo dice con claridad", nadie.rows.length === 0 && nadie.note.includes("No encontré ninguna lista de personas"), nadie.note);
+  check("Foto: el filtro por color no aplica y lo avisa", nadie.note.includes("hojas de cálculo"), nadie.note);
+
+  const grande = Buffer.alloc(MAX_AI_FILE_BYTES + 1);
+  const pesada = await peopleRows({ bytes: grande, fileName: "enorme.png" }, { ai: { key: "k", model: "m", fetchImpl: vacia } }).catch((e: Error) => e.message);
+  check("Foto de más de 10 MB: no se manda a la IA", typeof pesada === "string" && pesada.includes("10 MB"), pesada);
+
+  const cursos = await courseRows({ bytes: png, fileName: "lista.png" }, { ai: { key: "k", model: "m", fetchImpl: vacia } }).catch((e: Error) => e.message);
+  check("Foto para una lista de cursos: pide un archivo con texto", typeof cursos === "string" && cursos.includes("Excel"), cursos);
 }
 
 async function modeloChatChecks() {

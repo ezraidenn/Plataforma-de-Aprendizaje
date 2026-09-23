@@ -50,8 +50,9 @@ export async function summarizeAttachment(bytes: Buffer, fileName: string): Prom
     const { text } = await extractText(bytes, fileName);
     return { fileName, kind: "doc", sheets: [], chars: text.length };
   } catch (err) {
-    // Un PDF escaneado se admite: la herramienta lo leerá como imagen
-    if (err instanceof ScannedPdfError) return { fileName, kind: "image", sheets: [], chars: 0 };
+    // Un PDF escaneado se admite: la herramienta lo leerá como imagen. Se
+    // guardan sus páginas para poder decir de qué tamaño es sin volver a abrirlo
+    if (err instanceof ScannedPdfError) return { fileName, kind: "image", sheets: [], chars: 0, pages: err.pages };
     throw err;
   }
 }

@@ -1,18 +1,27 @@
 import "server-only";
 import { readSheetRows } from "@/server/services/sheet-colors";
-import { extractText } from "@/server/services/text-extract";
-import { splitRosterChunks, interpretStudentsChunkWithRetry } from "@/server/services/ai-student-import";
+import { extractText, pdfPageCount, ScannedPdfError } from "@/server/services/text-extract";
+import { prepareImage } from "@/server/services/image-prep";
+import {
+  splitRosterChunks,
+  interpretStudentsChunkWithRetry,
+  interpretStudentsVisionWithRetry,
+} from "@/server/services/ai-student-import";
 import { interpretCoursesChunkWithRetry } from "@/server/services/ai-course-import";
 import { normalizeStudentEmail, normalizeStudentName } from "@/lib/student-draft";
+import { MAX_AI_FILE_BYTES, MAX_SCANNED_PAGES, aiFileKind, extOf, scannedTooLongMessage } from "@/lib/ai-import-files";
 import type { ColorFamily } from "@/lib/attachment-summary";
-import type { AiOpts } from "@/server/services/ai-client";
+import type { AiOpts, VisionPart } from "@/server/services/ai-client";
 
 /**
  * Del archivo a las filas que revisará el usuario. Con una hoja de cálculo se
  * leen las columnas directamente (sin gastar tokens) y se puede filtrar por el
  * color con que están pintadas; con un documento de texto se trocea y lo lee la
- * IA, como en «Importar con IA». Lo mismo sirve para personas (`peopleRows`) y
- * para cursos (`courseRows`): solo cambian los encabezados que se buscan.
+ * IA, como en «Importar con IA». Una foto o un PDF escaneado se leen con la
+ * visión de la IA, por la MISMA ruta que «Importar con IA» del diálogo de
+ * estudiantes (`prepareImage` → `VisionPart` → `interpretStudentsVision`).
+ * Lo mismo sirve para personas (`peopleRows`) y para cursos (`courseRows`):
+ * solo cambian los encabezados que se buscan.
  */
 
 export type PersonRow = { fullName: string; email: string; group: string };
@@ -69,6 +78,8 @@ type RowSpec<I, R> = {
   fromCells: (cells: string[], idx: I) => R;
   /** Texto que no viene en columnas: lo lee la IA (o lanza si no hay clave). */
   viaAi: (text: string) => Promise<R[]>;
+  /** Fotos y PDF escaneados: los lee la IA con visión. Sin esto, no se admiten. */
+  viaVision?: (parts: VisionPart[]) => Promise<R[]>;
 };
 
 /** Primera fila que parece el encabezado; lo de arriba se descarta y lo de abajo son los datos. */
@@ -97,11 +108,21 @@ export const MAX_PEOPLE_ROWS = 5_000;
 
 /** Sin clave de IA no se puede leer un documento que no viene en columnas. */
 const NEEDS_AI = "Este archivo necesita la IA para leerse y no hay clave configurada.";
+/** Lo mismo con una foto: sin visión no hay nada que leer. */
+const NEEDS_AI_VISION =
+  "Para leer una foto o un PDF escaneado hace falta la IA y no hay clave configurada. Pide al administrador que agregue la clave de OpenAI.";
 
 export async function peopleRows(source: Source, opts: RowsOpts): Promise<RowsResult> {
   return readRows(source, opts, {
     indexOf: headerIndex,
     fromCells: personFrom,
+    async viaVision(parts) {
+      if (!opts.ai) throw new Error(NEEDS_AI_VISION);
+      const drafts = await interpretStudentsVisionWithRetry(parts, opts.ai);
+      return drafts
+        .slice(0, MAX_PEOPLE_ROWS)
+        .map((d) => ({ fullName: normalizeStudentName(d.fullName), email: normalizeStudentEmail(d.email), group: d.group ?? "" }));
+    },
     async viaAi(text) {
       if (!opts.ai) throw new Error(NEEDS_AI);
       const rows: PersonRow[] = [];
@@ -134,18 +155,18 @@ export async function courseRows(source: Source, opts: CourseRowsOpts): Promise<
   });
 }
 
-async function readRows<I, R>(
-  source: Source,
-  opts: { sheet?: string; color?: ColorFamily },
-  spec: RowSpec<I, R>
-): Promise<{ rows: R[]; note: string }> {
+type ReadOpts = { sheet?: string; color?: ColorFamily; ai?: AiOpts };
+
+async function readRows<I, R>(source: Source, opts: ReadOpts, spec: RowSpec<I, R>): Promise<{ rows: R[]; note: string }> {
   if ("text" in source) return fromText(source.text, opts, spec);
 
+  // Una foto no tiene hojas ni texto: la lee la IA como en «Importar con IA»
+  if (aiFileKind(source.fileName) === "image") return fromVision(source, opts, spec);
+  // Un PDF tampoco es una hoja: abrirlo con LibreOffice solo gastaría tiempo
+  if (extOf(source.fileName) === ".pdf") return fromDoc(source, opts, spec);
+
   const sheets = await readSheetRows(source.bytes, source.fileName);
-  if (sheets.length === 0) {
-    const { text } = await extractText(source.bytes, source.fileName);
-    return fromText(text, opts, spec);
-  }
+  if (sheets.length === 0) return fromDoc(source, opts, spec);
 
   const notes: string[] = [];
   let sheet = sheets[0];
@@ -158,10 +179,7 @@ async function readRows<I, R>(
   }
 
   const header = findHeader(sheet.rows, spec.indexOf);
-  if (!header) {
-    const { text } = await extractText(source.bytes, source.fileName);
-    return fromText(text, opts, spec);
-  }
+  if (!header) return fromDoc(source, opts, spec);
 
   let wanted = sheet.rows.slice(header.at + 1);
   if (opts.color) {
@@ -171,6 +189,74 @@ async function readRows<I, R>(
 
   const rows = wanted.slice(0, MAX_PEOPLE_ROWS).map((r) => spec.fromCells(r.cells, header.idx));
   if (wanted.length > MAX_PEOPLE_ROWS) notes.push(`Solo tomé las primeras ${MAX_PEOPLE_ROWS} filas.`);
+  return { rows, note: notes.join(" ") };
+}
+
+/** Documento con texto; si es un PDF escaneado, lo lee la IA como imagen. */
+async function fromDoc<I, R>(
+  source: { bytes: Buffer; fileName: string },
+  opts: ReadOpts,
+  spec: RowSpec<I, R>
+): Promise<{ rows: R[]; note: string }> {
+  try {
+    const { text } = await extractText(source.bytes, source.fileName);
+    return fromText(text, opts, spec);
+  } catch (err) {
+    // Sin texto útil: es un escaneo, así que se lee con la visión
+    if (err instanceof ScannedPdfError) return fromVision(source, opts, spec);
+    throw err;
+  }
+}
+
+/**
+ * Foto o PDF escaneado → las partes que entiende la visión de OpenAI, con los
+ * mismos límites que la ruta de «Importar con IA» (`/api/teach/ai-vision`).
+ * `pages` solo viene con un PDF.
+ */
+export async function visionPartsOf(
+  bytes: Buffer,
+  fileName: string
+): Promise<{ parts: VisionPart[]; pages: number | null }> {
+  if (bytes.length > MAX_AI_FILE_BYTES) throw new Error(`«${fileName}» pasa de 10 MB.`);
+  if (extOf(fileName) === ".pdf") {
+    let pages: number;
+    try {
+      // Copia: pdfjs puede quedarse con el búfer que recibe
+      pages = await pdfPageCount(new Uint8Array(bytes));
+    } catch {
+      throw new Error(`No se pudo leer el PDF «${fileName}».`);
+    }
+    if (pages > MAX_SCANNED_PAGES) throw new Error(scannedTooLongMessage(fileName, pages));
+    return { parts: [{ kind: "pdf", fileName, dataUrl: `data:application/pdf;base64,${bytes.toString("base64")}` }], pages };
+  }
+  return { parts: [{ kind: "image", dataUrl: (await prepareImage(bytes, fileName)).dataUrl }], pages: null };
+}
+
+/** La foto (o el escaneo) la transcribe la IA: las filas salen igual que las del texto. */
+async function fromVision<I, R>(
+  source: { bytes: Buffer; fileName: string },
+  opts: ReadOpts,
+  spec: RowSpec<I, R>
+): Promise<{ rows: R[]; note: string }> {
+  if (!spec.viaVision) {
+    throw new Error("De una foto o un PDF escaneado no puedo sacar esa lista; súbela en Excel, CSV o un documento con texto.");
+  }
+  if (!opts.ai) throw new Error(NEEDS_AI_VISION);
+
+  const { parts, pages } = await visionPartsOf(source.bytes, source.fileName);
+  const escaneo = pages !== null;
+  const notes: string[] = [];
+  if (opts.color) notes.push("El filtro por color solo funciona con hojas de cálculo; leí todo lo que se ve.");
+  notes.push(escaneo ? `Leí el PDF escaneado con la IA (${pages} página(s)).` : "Leí la imagen con la IA.");
+
+  const rows = await spec.viaVision(parts);
+  if (rows.length === 0) {
+    notes.push(
+      escaneo
+        ? "No encontré ninguna lista de personas en esas páginas: revisa que el escaneo se lea bien."
+        : "No encontré ninguna lista de personas en la imagen: revisa que la foto salga completa y que el texto se lea."
+    );
+  }
   return { rows, note: notes.join(" ") };
 }
 

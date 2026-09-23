@@ -30,6 +30,7 @@ export function systemPrompt(opts: {
     ? [
         ...attachments.map((a) => summaryForModel(a.summary)),
         'Para usar el archivo, llama a la herramienta con `origen: "adjunto"`. Tú no puedes leer el archivo entero; el servidor sí. Si el usuario habla de filas pintadas de un color, pásalo en `filtro_color`. Si el archivo tiene varias hojas y no está claro cuál, pregunta.',
+        'Las fotos y los PDF escaneados se leen igual, con las mismas herramientas y `origen: "adjunto"`: el servidor los pasa por la IA que transcribe listas (la misma de «Importar con IA»). Nunca digas que no puedes leer una imagen ni pidas que la conviertan a Excel: llama a la herramienta (alta_alumnos para una lista de personas, leer_archivo si solo quieren saber qué contiene) y si de verdad no se pudo leer, el servidor te lo dirá.',
       ]
     : [];
   return [

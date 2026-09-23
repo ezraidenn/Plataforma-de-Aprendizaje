@@ -21,10 +21,13 @@ export type SheetSummary = {
 
 export type AttachmentSummary = {
   fileName: string;
+  /** «image» es tanto una foto como un PDF escaneado: los dos los lee la visión de la IA */
   kind: "sheet" | "doc" | "image";
   sheets: SheetSummary[];
   /** Caracteres de texto extraídos (para saber si hará falta trocear) */
   chars: number;
+  /** Solo en un PDF escaneado: cuántas páginas tiene */
+  pages?: number;
 };
 
 /**
@@ -71,7 +74,15 @@ export function summaryForModel(summary: AttachmentSummary): string {
       lines.push(`  filas pintadas: ${colors.map(([c, n]) => `${c} ${n}`).join(", ")}`);
     }
   }
-  if (summary.sheets.length === 0) lines.push(`- Documento de ${summary.chars} caracteres de texto.`);
+  if (summary.kind === "image") {
+    // Sin esto la IA veía «documento de 0 caracteres» y contestaba que no se
+    // puede leer: sí se puede, con la visión, y por las herramientas de siempre
+    lines.push(
+      summary.pages
+        ? `- PDF escaneado de ${summary.pages} página(s), sin texto: lo puedo leer con la IA (por ejemplo, una lista de alumnos escaneada).`
+        : "- Imagen: la puedo leer con la IA (por ejemplo, una lista de alumnos en papel o una captura de pantalla)."
+    );
+  } else if (summary.sheets.length === 0) lines.push(`- Documento de ${summary.chars} caracteres de texto.`);
   // Cómo usarlo se dice una sola vez en la instrucción del sistema, no por archivo
   const text = lines.join("\n");
   return text.length <= MAX_SUMMARY_CHARS ? text : `${text.slice(0, MAX_SUMMARY_CHARS - 1)}…`;
@@ -86,7 +97,10 @@ const grouped = (n: number) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
  * se conoce: así se ve de cuál se está hablando.
  */
 export function attachmentDetail(summary: AttachmentSummary): string {
-  if (summary.kind === "image") return "Imagen";
+  if (summary.kind === "image") {
+    if (!summary.pages) return "Imagen";
+    return `PDF escaneado · ${summary.pages} ${summary.pages === 1 ? "página" : "páginas"}`;
+  }
   if (summary.sheets.length > 0) {
     const rows = summary.sheets.reduce((n, s) => n + s.rowCount, 0);
     const filas = `${grouped(rows)} ${rows === 1 ? "fila" : "filas"}`;
@@ -113,6 +127,10 @@ export function suggestionsFor(summary: AttachmentSummary): string[] {
   const headers = summary.sheets.flatMap((s) => s.headers);
   const colors = new Set(summary.sheets.flatMap((s) => Object.keys(s.colors)));
   const chips: string[] = [];
+
+  // Una foto o un PDF escaneado no traen encabezados: hasta que la IA los lee
+  // no se sabe qué hay, y lo que se manda casi siempre es una lista de personas
+  if (summary.kind === "image") chips.push("Da de alta a estos alumnos", "Matricúlalos en un curso");
 
   const people = has(headers, ["correo", "email", "mail"]) || has(headers, ["nombre", "alumno", "estudiante"]);
   if (people) {
