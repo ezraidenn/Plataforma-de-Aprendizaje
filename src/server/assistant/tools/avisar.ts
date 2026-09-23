@@ -108,11 +108,16 @@ function alumnosPorId(ids: string[]): Map<string, Alumno> {
   return new Map(rows.map((r) => [r.id, r]));
 }
 
-/** Matriculados del curso (sin bajas), incluidos los de grupos cerrados. */
+/**
+ * Matriculados del curso (sin bajas), incluidos los de grupos cerrados. Los
+ * que ya terminaron el curso también reciben el aviso, así que el motivo lo
+ * dice con todas las letras: el maestro puede quitar esas filas en la tabla si
+ * no quiere molestarlos.
+ */
 function delCurso(courseId: string): Destinatario[] {
   return listCourseStudents(courseId, { cohort: { kind: "all" } }).map((s) => ({
     studentId: s.studentId,
-    motivo: "matriculado",
+    motivo: s.status === "completed" ? "ya completó el curso" : "matriculado",
   }));
 }
 
@@ -257,8 +262,8 @@ export const avisar: AssistantTool = {
 
     const rows = toRows(destinatarios, ctx);
     const proposalId = createProposal("avisar", ctx, ctx.messageId, {
-      // El título de la revisión es el del aviso: así se ve lo que van a recibir
-      title: titulo,
+      // La cabecera dice lo que se va a hacer; el título del aviso ya se lee en la vista previa
+      title: `Mandar un aviso a ${rows.length} ${rows.length === 1 ? "alumno" : "alumnos"}`,
       applyLabel: "Mandar aviso",
       columns: COLUMNS,
       rows,

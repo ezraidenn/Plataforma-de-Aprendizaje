@@ -2268,7 +2268,7 @@ async function avisarChecks() {
     pTodos.draft.columns.map((c) => c.key).join(",") === "alumno,correo,motivo" && pTodos.draft.columns.every((c) => c.editable === false),
     pTodos.draft.columns
   );
-  check("El título de la revisión es el del aviso, ya limpio", pTodos.draft.title === "Examen el viernes", pTodos.draft.title);
+  check("La cabecera de la revisión dice lo que se va a hacer", pTodos.draft.title === "Mandar un aviso a 3 alumnos", pTodos.draft.title);
   check(
     "Antes de la tabla va la vista previa de lo que verán",
     (todos.blocks ?? []).some((b) => b.type === "text" && b.text === "Así lo verán: **Examen el viernes** — Traigan su credencial."),
@@ -2395,8 +2395,11 @@ async function avisarChecks() {
   const pLargo = getProposal(largo.proposalId!)!;
   check(
     "Título y mensaje se recortan al proponer",
-    pLargo.draft.title.length <= MAX_TITULO && pLargo.draft.title.endsWith("…") && String(pLargo.payload.mensaje).length <= MAX_MENSAJE && String(pLargo.payload.mensaje).endsWith("…"),
-    [pLargo.draft.title.length, String(pLargo.payload.mensaje).length]
+    String(pLargo.payload.titulo).length <= MAX_TITULO &&
+      String(pLargo.payload.titulo).endsWith("…") &&
+      String(pLargo.payload.mensaje).length <= MAX_MENSAJE &&
+      String(pLargo.payload.mensaje).endsWith("…"),
+    [String(pLargo.payload.titulo).length, String(pLargo.payload.mensaje).length]
   );
   await applyProposal(largo.proposalId!, pLargo.rows, ctx, "");
   const guardado = avisosDe([ids.a3]).find((n) => n.title.startsWith("Recordatorio"));
@@ -2414,6 +2417,22 @@ async function avisarChecks() {
     !tope.proposalId && tope.forModel.includes(String(MAX_DESTINATARIOS + 1)) && tope.forModel.includes(String(MAX_DESTINATARIOS)),
     tope.forModel
   );
+
+  // Quien ya terminó el curso también recibe el aviso, pero el motivo lo dice
+  db.update(enrollments)
+    .set({ status: "completed", completedAt: new Date() })
+    .where(and(eq(enrollments.courseId, curso), eq(enrollments.studentId, ids.a3)))
+    .run();
+  const conCompletado = await tool.run(params({ curso_id: curso, titulo: "Cierre", mensaje: "Gracias a todos." }), ctx);
+  const pCompletado = getProposal(conCompletado.proposalId!)!;
+  check(
+    "El motivo distingue al que ya completó el curso (se puede quitar de la tabla)",
+    pCompletado.rows.length === 3 &&
+      pCompletado.rows.find((r) => r.id === ids.a3)?.cells.motivo === "ya completó el curso" &&
+      pCompletado.rows.filter((r) => r.id !== ids.a3).every((r) => r.cells.motivo === "matriculado"),
+    pCompletado.rows
+  );
+  cancelProposal(conCompletado.proposalId!, ids.teacher);
 
   // Curso ajeno
   const otro = { ...teacherUser, id: ids.admin };
