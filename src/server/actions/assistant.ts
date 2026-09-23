@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { requireTeacher } from "@/server/auth/guards";
 import { getViewScope } from "@/server/auth/view-scope-cookie";
 import { actingOwnerId } from "@/server/auth/view-scope";
-import { getAiKey, getAiSettings } from "@/server/services/ai-settings";
+import { chatModelOf, getAiKey } from "@/server/services/ai-settings";
 import { runTurn } from "@/server/assistant/agent";
 import { applyProposal, cancelProposal, expireProposals } from "@/server/assistant/proposals";
 import { rateLimitHit } from "@/server/assistant/rate-limit";
@@ -57,7 +57,9 @@ export async function sendTurnAction(input: {
     conversationId: typeof input.conversationId === "string" ? input.conversationId : null,
     text: String(input.text ?? "").slice(0, 4000),
     attachmentIds: validAttachmentIds(input.attachmentIds),
-    ai: { key, model: getAiSettings().model },
+    // Conversar puede ir con un modelo más barato; extraer archivos y exámenes
+    // no: esas herramientas leen `getAiSettings().model` por su cuenta
+    ai: { key, model: chatModelOf() },
   });
   if ("error" in result) return result;
   refreshAfterChange();
@@ -74,6 +76,9 @@ export type AttachResult =
  */
 export async function attachAction(input: { conversationId: string | null; fileId: string }): Promise<AttachResult> {
   const user = await requireTeacher();
+  // Subir y convertir con LibreOffice cuesta disco y CPU: mismo freno que los
+  // turnos, pero con su propio cubo (adjuntar no debe gastar las preguntas)
+  if (rateLimitHit(`attach:${user.id}`)) return { error: "Espera un momento: demasiados archivos seguidos." };
   const fileId = String(input.fileId ?? "");
   if (!fileId) return { error: "No recibimos el archivo." };
 

@@ -46,12 +46,18 @@ function cleanDrafts(drafts: unknown): QuestionDraft[] {
 
 export type AiSettingsResult = { ok: true } | { error: string };
 
-export async function saveAiSettingsAction(input: { key?: string; model: string }): Promise<AiSettingsResult> {
+export async function saveAiSettingsAction(input: {
+  key?: string;
+  model: string;
+  /** Modelo aparte para conversar; vacío = quitarlo y usar el principal */
+  chatModel?: string;
+}): Promise<AiSettingsResult> {
   const user = await requireAdmin();
   try {
     saveAiSettings(input);
     audit(user.id, "update_ai_settings", "app_settings", undefined, {
       model: input.model.trim(),
+      chatModel: input.chatModel?.trim() ?? "",
       keyChanged: !!input.key?.trim(),
     });
     revalidatePath("/admin/settings");

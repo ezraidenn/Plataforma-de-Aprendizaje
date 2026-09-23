@@ -35,6 +35,7 @@ import type { SessionUser } from "../src/server/auth/sessions";
 import { toolsForRole, toolByName, toolDefsForRole } from "../src/server/assistant/registry";
 import { certificadosQuery, movimientosQuery, panoramaQuery, pendientesQuery } from "../src/server/assistant/queries";
 import { runTurn } from "../src/server/assistant/agent";
+import { chatModelOf, getAiSettings, saveAiSettings } from "../src/server/services/ai-settings";
 import { platformSuggestions } from "../src/server/assistant/suggestions";
 import { rateLimitHit } from "../src/server/assistant/rate-limit";
 import { systemPrompt } from "../src/server/assistant/prompt";
@@ -984,6 +985,13 @@ async function detallesChecks() {
   check("El 21 se frena", rateLimitHit(quien, ahora) === true);
   check("Otro usuario no paga el plato", rateLimitHit(`${quien}-otro`, ahora) === false);
   check("Pasados 5 minutos vuelve a pasar", rateLimitHit(quien, ahora + 5 * 60_000) === false);
+
+  // Adjuntar tiene su propio cubo: subir archivos y preguntar no se estorban
+  const conArchivos = `${P}-ritmo-archivos`;
+  Array.from({ length: 20 }, () => rateLimitHit(conArchivos, ahora));
+  check("Agotadas las preguntas, todavía puede adjuntar", rateLimitHit(conArchivos, ahora) === true && rateLimitHit(`attach:${conArchivos}`, ahora) === false);
+  Array.from({ length: 19 }, () => rateLimitHit(`attach:${conArchivos}`, ahora));
+  check("El cubo de adjuntos también se frena a los 20", rateLimitHit(`attach:${conArchivos}`, ahora) === true);
 }
 
 async function reactivarAlumnosChecks() {
@@ -1582,10 +1590,43 @@ async function rowsFromAttachmentChecks() {
   check("Encabezado bajo un título: una persona y sin IA", deTitulo.rows.length === 1 && deTitulo.rows[0].email === "gina@x.com", deTitulo.rows);
 }
 
+async function modeloChatChecks() {
+  console.log("\n— Modelo aparte para conversar");
+  // Los ajustes de IA son globales y esta base es la de verdad: se guarda lo
+  // que había y se restaura pase lo que pase
+  const antes = getAiSettings();
+  try {
+    saveAiSettings({ model: "gpt-5.6-terra", chatModel: "gpt-5.6-luna" });
+    const con = getAiSettings();
+    check("Se guarda y se lee el modelo de conversación", con.chatModel === "gpt-5.6-luna" && con.model === "gpt-5.6-terra", con);
+    check("Conversar usa el de conversación", chatModelOf(con) === "gpt-5.6-luna");
+    check("Las extracciones siguen con el principal", getAiSettings().model === "gpt-5.6-terra");
+
+    const malo = await errorOf(async () => saveAiSettings({ model: "gpt-5.6-terra", chatModel: "no es un modelo" }));
+    check("Un modelo de conversación inválido se rechaza con mensaje", malo.includes("nombre del modelo"), malo);
+    check("…y no pisa el que ya estaba", getAiSettings().chatModel === "gpt-5.6-luna");
+
+    saveAiSettings({ model: "gpt-5.6-terra", chatModel: "" });
+    const sin = getAiSettings();
+    check("Vacío borra el ajuste", sin.chatModel === "");
+    check("…y entonces se conversa con el principal", chatModelOf(sin) === "gpt-5.6-terra");
+
+    // Sin `chatModel` en la entrada, el que hubiera se queda como estaba
+    saveAiSettings({ model: "gpt-5.6-terra", chatModel: "gpt-5.6-luna" });
+    saveAiSettings({ model: "gpt-5.6-terra" });
+    check("Guardar sin tocar el campo no lo borra", getAiSettings().chatModel === "gpt-5.6-luna");
+  } finally {
+    saveAiSettings({ model: antes.model, chatModel: antes.chatModel });
+    const vuelto = getAiSettings();
+    check("Los ajustes de IA quedan como estaban", vuelto.model === antes.model && vuelto.chatModel === antes.chatModel, [antes.model, antes.chatModel, vuelto.model, vuelto.chatModel]);
+  }
+}
+
 async function main() {
   placeholderChecks();
   dateRangeChecks();
   await clientChecks();
+  await modeloChatChecks();
   attachmentSummaryChecks();
   await sheetColorChecks();
   await intakeChecks();

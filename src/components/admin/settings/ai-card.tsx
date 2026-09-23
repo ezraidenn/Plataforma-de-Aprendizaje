@@ -36,19 +36,22 @@ export function AiCard({
   unreadable,
   masked,
   model,
+  chatModel,
 }: {
   configured: boolean;
   unreadable: boolean;
   masked: string | null;
   model: string;
+  chatModel: string;
 }) {
   const router = useRouter();
   const [key, setKey] = useState("");
   const [modelValue, setModelValue] = useState(model);
+  const [chatModelValue, setChatModelValue] = useState(chatModel);
   const [tested, setTested] = useState(false);
   const [busy, startBusy] = useTransition();
 
-  const dirty = key.trim() !== "" || modelValue.trim() !== model;
+  const dirty = key.trim() !== "" || modelValue.trim() !== model || chatModelValue.trim() !== chatModel;
 
   function test() {
     startBusy(async () => {
@@ -65,7 +68,11 @@ export function AiCard({
 
   function save() {
     startBusy(async () => {
-      const result = await saveAiSettingsAction({ key: key.trim() || undefined, model: modelValue });
+      const result = await saveAiSettingsAction({
+        key: key.trim() || undefined,
+        model: modelValue,
+        chatModel: chatModelValue.trim(),
+      });
       if ("error" in result) {
         toast.error(result.error);
         return;
@@ -107,6 +114,12 @@ export function AiCard({
             <p>
               <span className="font-medium text-success">Configurada</span> · clave {masked} · modelo{" "}
               <code className="font-mono text-[13px]">{model}</code>
+              {chatModel ? (
+                <>
+                  {" "}
+                  · conversación <code className="font-mono text-[13px]">{chatModel}</code>
+                </>
+              ) : null}
             </p>
           ) : unreadable ? (
             <p className="text-amber-900">
@@ -149,6 +162,21 @@ export function AiCard({
             />
             <p className="text-xs text-muted-foreground">
               Recomendado: gpt-5.6-terra. Más económico: gpt-5.6-luna.
+            </p>
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="ai-chat-model">Modelo para conversación (opcional)</Label>
+            <Input
+              id="ai-chat-model"
+              spellCheck={false}
+              value={chatModelValue}
+              onChange={(e) => setChatModelValue(e.target.value)}
+              placeholder={modelValue.trim() || model}
+              className="font-mono text-[13px]"
+            />
+            <p className="text-xs text-muted-foreground">
+              Un modelo más barato para conversar con el asistente. Las extracciones de archivos y
+              exámenes siguen usando el principal.
             </p>
           </div>
         </div>

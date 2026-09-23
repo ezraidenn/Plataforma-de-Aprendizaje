@@ -12,6 +12,8 @@ import { appSettings } from "@/server/db/schema";
 
 const KEY_SETTING = "openai_api_key";
 const MODEL_SETTING = "openai_model";
+/** Modelo solo para conversar con el asistente (opcional: vacío = el principal). */
+const CHAT_MODEL_SETTING = "openai_chat_model";
 export const DEFAULT_AI_MODEL = "gpt-5.6-terra";
 
 /** Se puede apuntar a otro servidor compatible (o a un simulador en las pruebas). */
@@ -63,6 +65,8 @@ export type AiSettings = {
   unreadable: boolean;
   masked: string | null;
   model: string;
+  /** Modelo para conversar; vacío = se usa `model` (ver `chatModelOf`) */
+  chatModel: string;
 };
 
 export function getAiSettings(): AiSettings {
@@ -73,7 +77,18 @@ export function getAiSettings(): AiSettings {
     unreadable: !!stored && !key,
     masked: key ? maskKey(key) : null,
     model: readSetting(MODEL_SETTING) || DEFAULT_AI_MODEL,
+    chatModel: readSetting(CHAT_MODEL_SETTING) || "",
   };
+}
+
+/**
+ * El modelo con el que se conversa: el de conversación si lo hay, si no el
+ * principal. Va como ayudante y no como campo derivado de `AiSettings` para
+ * que quede claro dónde se decide: lo que extrae archivos y exámenes lee
+ * `settings.model` a secas y no debe tocar esto.
+ */
+export function chatModelOf(settings: AiSettings = getAiSettings()): string {
+  return settings.chatModel || settings.model;
 }
 
 /** La clave en claro, solo para llamar a la API. */
@@ -98,13 +113,20 @@ export function validateAiModel(raw: string): string {
   return model;
 }
 
-/** Guarda el modelo y, si viene, una clave nueva (vacía = conservar la actual). */
-export function saveAiSettings(input: { key?: string; model: string }) {
+/**
+ * Guarda el modelo y, si viene, una clave nueva (vacía = conservar la actual).
+ * `chatModel` es opcional: si no viene, se deja como está; si viene vacío se
+ * borra el ajuste (y entonces se conversa con el principal). Todo se valida
+ * antes de escribir nada: un modelo mal escrito no deja media configuración.
+ */
+export function saveAiSettings(input: { key?: string; model: string; chatModel?: string }) {
   const model = validateAiModel(input.model);
-  if (input.key !== undefined && input.key.trim() !== "") {
-    writeSetting(KEY_SETTING, encryptSecret(validateAiKey(input.key)));
-  }
+  const chatModel = input.chatModel?.trim() ? validateAiModel(input.chatModel) : "";
+  const key = input.key !== undefined && input.key.trim() !== "" ? validateAiKey(input.key) : null;
+
+  if (key) writeSetting(KEY_SETTING, encryptSecret(key));
   writeSetting(MODEL_SETTING, model);
+  if (input.chatModel !== undefined) writeSetting(CHAT_MODEL_SETTING, chatModel || null);
 }
 
 export function clearAiKey() {
