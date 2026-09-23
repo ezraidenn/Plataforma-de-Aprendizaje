@@ -61,7 +61,10 @@ export function courseMatrix(
 ) {
   const cohortCond = cohortCondition(opts.cohort ?? { kind: "default" });
   const page = Math.max(1, opts.page ?? 1);
-  const pageSize = Math.min(100, opts.pageSize ?? 50);
+  // La pantalla pide 50; las exportaciones piden todo. El tope alto solo evita
+  // que un pageSize disparatado se lleve la memoria (antes cortaba a 100 y el
+  // CSV de Reportes se quedaba en los primeros 100 alumnos sin avisar).
+  const pageSize = Math.min(opts.pageSize ?? 50, 100_000);
   const now = Date.now();
 
   const courseEnforces =
