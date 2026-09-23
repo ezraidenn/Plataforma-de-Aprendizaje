@@ -1,6 +1,13 @@
 import "server-only";
 import { fullScope } from "@/server/auth/view-scope";
 import { audit } from "@/server/services/audit";
+import {
+  assignEnrollmentsToCohort,
+  cohortOptions,
+  findCohortByName,
+  findOrCreateCohort,
+  getCohort,
+} from "@/server/services/cohorts";
 import { getOwnedCourse, listDroppedEnrollments, restoreEnrollments } from "@/server/services/courses";
 import { isStudentVisible } from "@/server/services/student-scope";
 import type { ProposalRow } from "@/lib/assistant-blocks";
@@ -13,6 +20,10 @@ import { schema, str, strList, param, paramList, type AssistantTool, type ToolCt
  * la matrícula desde cero: el alumno vuelve con su avance, calificaciones,
  * certificado y estatus tal como los dejó (su ciclo sigue siendo el mismo).
  * Siempre se revisa en una tabla: son varias personas y conviene verlas.
+ *
+ * Se puede decir a qué grupo vuelven: sin decir nada conservan el que tenían
+ * y, si se pide uno que no existe en el curso, se crea al aplicar (como en la
+ * pantalla de Grupos).
  */
 
 // Todo viene de la base: se ve, no se edita
@@ -21,7 +32,10 @@ const COLUMNS = [
   { key: "correo", label: "Correo", editable: false },
   { key: "baja", label: "Dado de baja", editable: false },
   { key: "avance", label: "Avance que conserva", editable: false },
+  { key: "grupo", label: "Grupo al volver", editable: false },
 ];
+
+const SIN_GRUPO = "Sin grupo";
 
 type Baja = ReturnType<typeof listDroppedEnrollments>[number];
 
@@ -33,15 +47,20 @@ function avanceDe(baja: Baja): string {
   return partes.join(" · ");
 }
 
-/** Una fila por baja; la de un alumno que no es tuyo se bloquea. */
-function toRows(bajas: Baja[], ctx: ToolCtx): ProposalRow[] {
+/**
+ * Una fila por baja; la de un alumno que no es tuyo se bloquea. `destino` es
+ * el grupo al que van a volver: vacío = el que ya tenían.
+ */
+function toRows(bajas: Baja[], courseId: string, destino: string, ctx: ToolCtx): ProposalRow[] {
   const scope = fullScope(ctx.user);
+  const nombres = new Map(cohortOptions(courseId, { includeClosed: true }).map((c) => [c.id, c.name]));
   return bajas.map((b) => {
     const cells = {
       alumno: b.fullName,
       correo: b.email,
       baja: b.droppedAt ? fmtDate(b.droppedAt) : "sin fecha",
       avance: avanceDe(b),
+      grupo: destino || (b.cohortId ? (nombres.get(b.cohortId) ?? "Otro grupo") : SIN_GRUPO),
     };
     if (!isStudentVisible(scope, b.studentId)) {
       return { id: b.enrollmentId, cells, warning: "No es uno de tus alumnos", blocked: true };
@@ -53,10 +72,11 @@ function toRows(bajas: Baja[], ctx: ToolCtx): ProposalRow[] {
 export const restaurar: AssistantTool = {
   name: "restaurar",
   description:
-    "Devuelve al curso a alumnos que se dieron de baja (la papelera del curso): vuelven con su avance, calificaciones, certificado y estatus tal como los dejaron. Siempre se muestra una tabla para revisar.",
+    "Devuelve al curso a alumnos que se dieron de baja (la papelera del curso): vuelven con su avance, calificaciones, certificado y estatus tal como los dejaron. Se puede decir a qué grupo vuelven (si no existe, lo creo). Siempre se muestra una tabla para revisar.",
   parameters: schema({
     curso_id: str("Id del curso de cuya papelera se sacan las matrículas, de buscar_curso"),
     alumno_ids: strList("Ids de los alumnos a devolver, de buscar_alumno (lista vacía = todos los dados de baja de ese curso)"),
+    grupo: str("Nombre del grupo del curso en el que quedan al volver; si no existe, lo creo («» = cada uno conserva el grupo que tenía)"),
   }),
   roles: ["admin", "teacher"],
   risk: "review",
@@ -69,19 +89,30 @@ export const restaurar: AssistantTool = {
     const bajas = listDroppedEnrollments(course.id);
     if (bajas.length === 0) return { forModel: `${course.title} no tiene bajas en la papelera: no hay nada que restaurar.` };
 
+    // El grupo de destino solo se comprueba aquí (el nombre puede no ser válido); se crea al aplicar
+    const grupo = param(params, "grupo");
+    let grupoNuevo = false;
+    if (grupo) {
+      try {
+        grupoNuevo = findCohortByName(course.id, grupo) === null;
+      } catch (err) {
+        return { forModel: err instanceof Error ? err.message : "Ese nombre de grupo no es válido." };
+      }
+    }
+
     const pedidos = new Set(paramList(params, "alumno_ids"));
     const elegidas = pedidos.size > 0 ? bajas.filter((b) => pedidos.has(b.studentId)) : bajas;
     if (elegidas.length === 0) {
       return { forModel: `Ninguno de esos alumnos está en la papelera de ${course.title}, donde hay ${bajas.length} baja(s). Mírala con listado o pídeme restaurarlas todas.` };
     }
 
-    const rows = toRows(elegidas, ctx);
+    const rows = toRows(elegidas, course.id, grupo, ctx);
     const proposalId = createProposal("restaurar", ctx, ctx.messageId, {
-      title: `Devolver al curso ${course.title}`,
+      title: grupo ? `Devolver al curso ${course.title}, al grupo «${grupo}»` : `Devolver al curso ${course.title}`,
       applyLabel: "Restaurar",
       columns: COLUMNS,
       rows,
-      payload: { courseId: course.id, courseTitle: course.title },
+      payload: { courseId: course.id, courseTitle: course.title, cohortName: grupo },
     });
 
     // La IA solo ve cuántas son: los nombres y correos se quedan en la tabla
@@ -91,11 +122,19 @@ export const restaurar: AssistantTool = {
     if (bloqueadas > 0) partes.push(`${bloqueadas} con aviso (no es tu alumno)`);
     if (pedidos.size > elegidas.length) partes.push(`de los ${pedidos.size} que pediste, ${elegidas.length} están en la papelera`);
     partes.push("vuelven con su avance tal como lo dejaron");
+    if (grupo) {
+      partes.push(
+        grupoNuevo
+          ? `quedarán en el grupo «${grupo}», que todavía no existe en ${course.title}: lo crearé al aplicar`
+          : `quedarán en el grupo «${grupo}»`
+      );
+    }
     return { forModel: `${partes.join("; ")}. El usuario revisará la tabla.`, proposalId };
   },
   /**
    * Aplica las filas ya revisadas. Se revalida contra la papelera de ahora:
-   * una baja que alguien ya restauró o borró para siempre se salta.
+   * una baja que alguien ya restauró o borró para siempre se salta. El grupo
+   * de destino, si lo hay, se crea aquí y solo cuando hay a quién mover.
    */
   apply(rows, payload, ctx) {
     const course = getOwnedCourse(String(payload.courseId ?? ""), ctx.user);
@@ -117,14 +156,32 @@ export const restaurar: AssistantTool = {
       ids.push(row.id);
     }
     const restauradas = ids.length ? restoreEnrollments(ids) : 0;
+
+    // Grupo de destino: se crea ahora, y solo si de verdad volvió alguien
+    const cohortName = String(payload.cohortName ?? "");
+    let grupoTexto = "";
+    if (cohortName && restauradas > 0) {
+      try {
+        const nuevo = findCohortByName(course.id, cohortName) === null;
+        const cohortId = findOrCreateCohort(course.id, cohortName, ctx.user.id);
+        assignEnrollmentsToCohort(ids, cohortId);
+        // El nombre bueno es el del grupo, no el que escribió la IA (mayúsculas, espacios)
+        const nombre = getCohort(cohortId)?.name ?? cohortName;
+        grupoTexto = nuevo ? ` Creé el grupo «${nombre}» y ahí quedaron.` : ` Quedaron en el grupo «${nombre}».`;
+      } catch (err) {
+        grupoTexto = ` No pude ponerlos en el grupo «${cohortName}»: ${err instanceof Error ? err.message.toLowerCase() : "no se pudo"}. Conservan el que tenían.`;
+      }
+    }
+
     for (const id of ids) {
       audit(ctx.user.id, "assistant_restaurar", "enrollment", id, {
         via: "assistant",
         conversationId: ctx.conversationId,
         courseId: course.id,
+        grupo: cohortName || null,
       });
     }
-    let text = `${restauradas} alumno(s) volvieron a ${course.title} con su avance, calificaciones y certificado tal como los dejaron.`;
+    let text = `${restauradas} alumno(s) volvieron a ${course.title} con su avance, calificaciones y certificado tal como los dejaron.${grupoTexto}`;
     if (motivos.length > 0) text += ` ${motivos.length} no se pudieron: ${[...new Set(motivos)].join("; ")}.`;
     return {
       text,

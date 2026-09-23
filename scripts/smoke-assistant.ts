@@ -2022,17 +2022,78 @@ async function gruposChecks() {
   // Curso ajeno: ninguna acción pasa
   const otro = { ...teacherUser, id: ids.admin };
   const ctxAjeno = { ...ctxFor(otro, ownScope(otro)), conversationId: conv.id, messageId: anchor.id };
-  const acciones = ["listar", "crear", "mover", "renombrar", "cerrar", "reabrir"];
+  const acciones = ["listar", "crear", "mover", "renombrar", "cerrar", "reabrir", "borrar"];
   const negadas = [];
   for (const accion of acciones) {
     const r = await tool.run({ accion, curso_id: curso, grupo: "Turno A", nombre_nuevo: "Turno Z", alumno_ids: [ids.g1] }, ctxAjeno);
     negadas.push(r.forModel);
   }
   check(
-    "Curso ajeno: las seis acciones se niegan y no tocan nada",
+    "Curso ajeno: las siete acciones se niegan y no tocan nada",
     negadas.every((t) => t.includes("no te pertenece")) && cohortOptions(curso, { includeClosed: true }).length === 2 && getCohort(grupoA!.id)?.name === "Turno A",
     negadas
   );
+
+  // Mover a un grupo que todavía no existe: se crea al vuelo (como en la pantalla)
+  const alVuelo = await tool.run(params({ accion: "mover", grupo: "Matutino", alumno_ids: [ids.g3] }), ctx);
+  const matutino = findCohortByName(curso, "Matutino");
+  check(
+    "Mover a un grupo que no existe: lo crea al vuelo y lo dice con todas las letras",
+    matutino !== null && donde(ids.g3) === matutino.id && alVuelo.forModel.includes("Creé el grupo «Matutino»") && alVuelo.forModel.includes("1 alumno"),
+    alVuelo.forModel
+  );
+  check("Crear al vuelo sigue siendo instantáneo, con deshacer", !alVuelo.proposalId && (alVuelo.blocks ?? []).some((b) => b.type === "result" && b.undoable === true), alVuelo.blocks);
+  await tool.undo!(alVuelo.undo!.params, ctx);
+  check(
+    "Deshacer devuelve al alumno y borra el grupo que nació con el movimiento",
+    donde(ids.g3) === null && findCohortByName(curso, "Matutino") === null
+  );
+
+  // Varios a un grupo nuevo: el grupo nace al aplicar, no al proponer
+  const variosNuevo = await tool.run(params({ accion: "mover", grupo: "Vespertino", alumno_ids: [ids.g3, ids.g1] }), ctx);
+  const pNuevo = getProposal(variosNuevo.proposalId!)!;
+  check(
+    "Proponer no crea el grupo todavía, y se avisa",
+    findCohortByName(curso, "Vespertino") === null && variosNuevo.forModel.includes("lo crearé al aplicar"),
+    variosNuevo.forModel
+  );
+  check("Con un grupo que no existe nadie sale «ya está en ese grupo»", pNuevo.rows.every((r) => r.warning !== "Ya está en ese grupo"), pNuevo.rows);
+  const aplNuevo = await applyProposal(variosNuevo.proposalId!, pNuevo.rows, ctx, "");
+  const vespertino = findCohortByName(curso, "Vespertino");
+  check(
+    "Aplicar crea el grupo, mueve a los dos y lo dice",
+    "text" in aplNuevo && aplNuevo.text.startsWith("Creé el grupo «Vespertino» y moví a 2 alumno(s)") && vespertino !== null && donde(ids.g3) === vespertino.id && donde(ids.g1) === vespertino.id,
+    aplNuevo
+  );
+
+  // Cancelar una propuesta de grupo al vuelo no deja grupos vacíos por ahí
+  const cancelada = await tool.run(params({ accion: "mover", grupo: "Nocturno", alumno_ids: [ids.g1, ids.g2] }), ctx);
+  cancelProposal(cancelada.proposalId!, ids.teacher);
+  check("Cancelar la propuesta no deja el grupo creado", findCohortByName(curso, "Nocturno") === null);
+
+  // Borrar: es irreversible, así que va por revisión con ELIMINAR
+  const borrado = await tool.run(params({ accion: "borrar", grupo: "Vespertino" }), ctx);
+  const pBorrar = getProposal(borrado.proposalId!)!;
+  check("Borrar va por propuesta y pide escribir ELIMINAR", !!borrado.proposalId && pBorrar.draft.confirmWord === "ELIMINAR", pBorrar.draft);
+  check(
+    "La tabla dice qué grupo se borra y a cuántos deja sin grupo",
+    pBorrar.rows.length === 1 && pBorrar.rows[0].cells.grupo === "Vespertino" && pBorrar.rows[0].cells.alumnos === "2" && pBorrar.draft.columns.map((c) => c.key).join(",") === "grupo,alumnos" && pBorrar.draft.columns.every((c) => c.editable === false),
+    pBorrar.rows
+  );
+  const sinPalabra = await applyProposal(borrado.proposalId!, pBorrar.rows, ctx, "");
+  check("Sin escribir ELIMINAR no se borra nada", "error" in sinPalabra && getCohort(vespertino!.id) !== null, sinPalabra);
+  const borrada = await applyProposal(borrado.proposalId!, pBorrar.rows, ctx, " eliminar ");
+  check(
+    "Con ELIMINAR se borra; los alumnos se quedan sin grupo pero siguen matriculados",
+    "text" in borrada && borrada.text.includes("2 alumno(s) se quedaron sin grupo") && getCohort(vespertino!.id) === null && donde(ids.g1) === null && donde(ids.g3) === null && matriculaDe(curso, ids.g1)?.status === "active",
+    borrada
+  );
+  check(
+    "Auditoría del borrado",
+    db.select().from(auditLog).where(and(eq(auditLog.action, "assistant_grupos"), eq(auditLog.entityId, vespertino!.id))).get() !== undefined
+  );
+  const noExiste = await tool.run(params({ accion: "borrar", grupo: "Vespertino" }), ctx);
+  check("Borrar un grupo que ya no existe: lo dice y no propone", !noExiste.proposalId && noExiste.forModel.includes("No hay ningún grupo"), noExiste.forModel);
 }
 
 async function restaurarChecks() {
@@ -2044,19 +2105,25 @@ async function restaurarChecks() {
   const tool = toolByName("restaurar")!;
   const curso = ids.grupoCourse;
 
-  const sinBajas = await tool.run({ curso_id: curso, alumno_ids: [] }, ctx);
+  const sinBajas = await tool.run({ curso_id: curso, alumno_ids: [], grupo: "" }, ctx);
   check("Curso sin bajas: lo dice y no propone", !sinBajas.proposalId && sinBajas.forModel.includes("no tiene bajas"), sinBajas.forModel);
 
   unenrollStudent(curso, ids.g1, ids.teacher);
   unenrollStudent(curso, ids.g2, ids.teacher);
-  const result = await tool.run({ curso_id: curso, alumno_ids: [] }, ctx);
+  const result = await tool.run({ curso_id: curso, alumno_ids: [], grupo: "" }, ctx);
   const propuesta = getProposal(result.proposalId!)!;
   check("Dos bajas, dos filas", propuesta.rows.length === 2, propuesta.rows);
   check("Cada fila trae su fecha de baja y lo que conserva", propuesta.rows.every((r) => r.cells.baja !== "" && r.cells.baja !== "sin fecha" && r.cells.avance === "En curso"), propuesta.rows);
   check(
-    "Columnas Alumno, Correo, Dado de baja y Avance, no editables",
-    propuesta.draft.columns.map((c) => c.key).join(",") === "alumno,correo,baja,avance" && propuesta.draft.columns.every((c) => c.editable === false),
+    "Columnas Alumno, Correo, Dado de baja, Avance y Grupo, no editables",
+    propuesta.draft.columns.map((c) => c.key).join(",") === "alumno,correo,baja,avance,grupo" && propuesta.draft.columns.every((c) => c.editable === false),
     propuesta.draft.columns
+  );
+  check(
+    "Sin grupo de destino, la columna muestra el que cada uno tenía",
+    propuesta.rows.find((r) => r.cells.alumno.includes("Gael"))?.cells.grupo === "Turno A" &&
+      propuesta.rows.find((r) => r.cells.alumno.includes("Gina"))?.cells.grupo === "Sin grupo",
+    propuesta.rows.map((r) => [r.cells.alumno, r.cells.grupo])
   );
   check("Ninguna fila bloqueada: son sus alumnos", propuesta.rows.every((r) => !r.blocked), propuesta.rows);
   check("La IA no recibe correos", !result.forModel.includes("@test.local"), result.forModel);
@@ -2072,10 +2139,12 @@ async function restaurarChecks() {
   check("El texto explica que vuelven con su avance", "text" in aplicada && aplicada.text.includes("avance"), aplicada);
   check("Auditoría de la restauración", db.select().from(auditLog).where(eq(auditLog.action, "assistant_restaurar")).get() !== undefined);
 
+  check("Sin grupo de destino, Gael conserva el suyo", grupoDe(curso, ids.g2) === findCohortByName(curso, "Turno A")?.id);
+
   // Por alumno_ids: solo esa baja
   unenrollStudent(curso, ids.g1, ids.teacher);
   unenrollStudent(curso, ids.g3, ids.teacher);
-  const soloUno = await tool.run({ curso_id: curso, alumno_ids: [ids.g3] }, ctx);
+  const soloUno = await tool.run({ curso_id: curso, alumno_ids: [ids.g3], grupo: "" }, ctx);
   const pUno = getProposal(soloUno.proposalId!)!;
   check("Con alumno_ids solo viene ese alumno", pUno.rows.length === 1 && pUno.rows[0].cells.alumno.includes("Gema"), pUno.rows);
   await applyProposal(soloUno.proposalId!, pUno.rows, ctx, "");
@@ -2084,12 +2153,44 @@ async function restaurarChecks() {
     matriculaDe(curso, ids.g3)?.status === "active" && matriculaDe(curso, ids.g1)?.status === "dropped"
   );
 
-  const fuera = await tool.run({ curso_id: curso, alumno_ids: [ids.g2] }, ctx);
+  const fuera = await tool.run({ curso_id: curso, alumno_ids: [ids.g2], grupo: "" }, ctx);
   check("Un alumno que no está en la papelera: lo dice y no propone", !fuera.proposalId && fuera.forModel.includes("Ninguno"), fuera.forModel);
+
+  // Con grupo de destino: se crea al aplicar y ahí quedan
+  unenrollStudent(curso, ids.g2, ids.teacher);
+  const conGrupo = await tool.run({ curso_id: curso, alumno_ids: [ids.g2], grupo: "Regreso" }, ctx);
+  const pGrupo = getProposal(conGrupo.proposalId!)!;
+  check("La columna del grupo muestra el destino pedido", pGrupo.rows.length === 1 && pGrupo.rows[0].cells.grupo === "Regreso", pGrupo.rows);
+  check(
+    "Proponer todavía no crea el grupo, y se avisa",
+    findCohortByName(curso, "Regreso") === null && conGrupo.forModel.includes("lo crearé al aplicar"),
+    conGrupo.forModel
+  );
+  const aplGrupo = await applyProposal(conGrupo.proposalId!, pGrupo.rows, ctx, "");
+  const regreso = findCohortByName(curso, "Regreso");
+  check(
+    "Al aplicar se crea el grupo y los restaurados quedan ahí",
+    "text" in aplGrupo && aplGrupo.text.includes("Creé el grupo «Regreso»") && regreso !== null && grupoDe(curso, ids.g2) === regreso.id && matriculaDe(curso, ids.g2)?.status === "active",
+    [aplGrupo, regreso]
+  );
+
+  // Un grupo que ya existe no se duplica: los restaurados se suman a él
+  unenrollStudent(curso, ids.g3, ids.teacher);
+  const mismoGrupo = await tool.run({ curso_id: curso, alumno_ids: [ids.g3], grupo: "regreso" }, ctx);
+  const pMismo = getProposal(mismoGrupo.proposalId!)!;
+  const aplMismo = await applyProposal(mismoGrupo.proposalId!, pMismo.rows, ctx, "");
+  check(
+    "Con un grupo que ya existe: ni lo duplica ni dice que lo creó",
+    "text" in aplMismo && aplMismo.text.includes("Quedaron en el grupo «Regreso»") && cohortOptions(curso, { includeClosed: true }).filter((c) => c.name === "Regreso").length === 1 && grupoDe(curso, ids.g3) === regreso!.id,
+    aplMismo
+  );
+
+  const nombreMalo = await tool.run({ curso_id: curso, alumno_ids: [], grupo: "x" }, ctx);
+  check("Nombre de grupo inválido: lo dice y no propone", !nombreMalo.proposalId && nombreMalo.forModel.includes("entre 2 y 80"), nombreMalo.forModel);
 
   // Curso ajeno
   const otro = { ...teacherUser, id: ids.admin };
-  const ajeno = await tool.run({ curso_id: curso, alumno_ids: [] }, { ...ctxFor(otro, ownScope(otro)), conversationId: conv.id, messageId: anchor.id });
+  const ajeno = await tool.run({ curso_id: curso, alumno_ids: [], grupo: "" }, { ...ctxFor(otro, ownScope(otro)), conversationId: conv.id, messageId: anchor.id });
   check("Curso ajeno: negado", !ajeno.proposalId && ajeno.forModel.includes("no te pertenece"), ajeno.forModel);
 }
 
