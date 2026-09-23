@@ -5,7 +5,7 @@ import { users } from "@/server/db/schema";
 import { fullScope } from "@/server/auth/view-scope";
 import { isStudentVisible } from "@/server/services/student-scope";
 import { getOwnedCourse } from "@/server/services/courses";
-import { readExport } from "../exports";
+import { XLSX_MIME, readExport } from "../exports";
 import { schema, str, param, type AssistantTool } from "../tool-types";
 
 /**
@@ -82,12 +82,13 @@ export const descargarCsv: AssistantTool = {
     // `readExport` ya comprueba dueño y caducidad: aquí no hace falta nada más
     const file = id ? readExport(ctx.user.id, id) : null;
     if (!file) return { forModel: "Esa descarga ya no está disponible; vuelve a hacer la consulta." };
+    // El botón dice lo que de verdad se baja: un listado deja Excel y CSV
     return {
       forModel: `Dejé lista la descarga ${file.fileName}.`,
       blocks: [
         {
           type: "download",
-          label: "Descargar CSV",
+          label: file.mime === XLSX_MIME ? "Descargar Excel" : "Descargar CSV",
           href: `/api/assistant/export/${id}`,
           detail: `${file.fileName} · caduca en 24 horas`,
         },

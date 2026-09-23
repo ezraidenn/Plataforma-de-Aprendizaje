@@ -47,16 +47,16 @@ export type QueryResult = {
   forModel: string;
 };
 
-const DAY_MS = 86_400_000;
+export const DAY_MS = 86_400_000;
 /** Filas que se enseñan en el chat; el resto va en el CSV */
 const MAX_SHOWN = 20;
-const MAX_CSV_ROWS = 5_000;
+export const MAX_CSV_ROWS = 5_000;
 /** Tope duro de lo que ve la IA */
 const MAX_FOR_MODEL = 400;
 /** Nombres que se le pasan a la IA como mucho */
 const MAX_NAMES = 5;
 /** Sin entrar: días sin acceso para considerarlo pendiente */
-const IDLE_DAYS = 14;
+export const IDLE_DAYS = 14;
 /** Certificados por vencer: ventana por defecto y tope */
 const DEFAULT_WINDOW_DAYS = 30;
 const MAX_WINDOW_DAYS = 365;
@@ -83,7 +83,7 @@ function isThisYear(value: Date): boolean {
 }
 
 /** Columnas de fecha: «22 sep», o «30 sep 2025» si es de otro año. Nunca lleva hora. */
-function fmtDate(value: Date | null | undefined): string {
+export function fmtDate(value: Date | null | undefined): string {
   if (!value) return "";
   return (isThisYear(value) ? DAY_FMT : DAY_YEAR_FMT).format(value);
 }
@@ -112,7 +112,7 @@ function clampForModel(text: string): string {
 }
 
 /** Hasta 5 nombres distintos de una columna: la lista entera no sale de aquí. */
-function fewNames(rows: string[][], column = 0): string {
+export function fewNames(rows: string[][], column = 0): string {
   const unique = [...new Set(rows.map((r) => r[column]).filter((n) => n))];
   if (unique.length === 0) return "";
   const shown = unique.slice(0, MAX_NAMES).join(", ");
@@ -123,7 +123,7 @@ function countDistinct(values: string[]): number {
   return new Set(values).size;
 }
 
-function tile(label: string, value: number): QueryTile {
+export function tile(label: string, value: number): QueryTile {
   return { label, value: String(value) };
 }
 
@@ -132,7 +132,7 @@ function tile(label: string, value: number): QueryTile {
  * todas (hasta 5 000). El CSV va con BOM y saltos CRLF, como el resto de las
  * descargas: así Excel lo abre con acentos.
  */
-function toResult(input: {
+export function toResult(input: {
   tiles: QueryTile[];
   columns: string[];
   allRows: string[][];
@@ -151,7 +151,7 @@ function toResult(input: {
 }
 
 /** Filtros de «los cursos del contexto», con el curso concreto si lo pidieron. */
-function courseFilters(scope: ViewScope, courseId: string | null): SQL[] {
+export function courseFilters(scope: ViewScope, courseId: string | null): SQL[] {
   const conds: SQL[] = [];
   const owner = ownerCondition(scope, courses.ownerId);
   if (owner) conds.push(owner);
@@ -160,7 +160,7 @@ function courseFilters(scope: ViewScope, courseId: string | null): SQL[] {
 }
 
 /** « en «Extintores»» para la línea de la IA (vacío si no filtraron por curso). */
-function courseLabel(scope: ViewScope, courseId: string | null): string {
+export function courseLabel(scope: ViewScope, courseId: string | null): string {
   if (!courseId) return "";
   const row = db
     .select({ title: courses.title })
@@ -286,9 +286,20 @@ export function pendientesQuery(scope: ViewScope, tipo: PendienteTipo, courseId:
   return sinEntrar(scope, courseId);
 }
 
+/**
+ * «Sin entrar»: el alumno («users») nunca entró o lleva 14 días sin hacerlo.
+ * UNA sola definición para `pendientes` y para `listado`: si cambia el
+ * criterio, cambia en los dos sitios a la vez.
+ *
+ * Requiere que «users» vaya sin alias y sea la fila del alumno.
+ */
+export function sinEntrarCondition(): SQL {
+  const limit = new Date(Date.now() - IDLE_DAYS * DAY_MS);
+  return or(isNull(users.lastLoginAt), lt(users.lastLoginAt, limit))!;
+}
+
 /** Matriculados activos que no entran desde hace 14 días (o que nunca entraron). */
 function sinEntrar(scope: ViewScope, courseId: string | null): QueryResult {
-  const limit = new Date(Date.now() - IDLE_DAYS * DAY_MS);
   const rows = db
     .select({
       studentId: users.id,
@@ -299,13 +310,7 @@ function sinEntrar(scope: ViewScope, courseId: string | null): QueryResult {
     .from(enrollments)
     .innerJoin(courses, eq(enrollments.courseId, courses.id))
     .innerJoin(users, eq(enrollments.studentId, users.id))
-    .where(
-      and(
-        eq(enrollments.status, "active"),
-        or(isNull(users.lastLoginAt), lt(users.lastLoginAt, limit)),
-        ...courseFilters(scope, courseId)
-      )
-    )
+    .where(and(eq(enrollments.status, "active"), sinEntrarCondition(), ...courseFilters(scope, courseId)))
     // SQLite ordena los NULL primero: los que nunca entraron encabezan la lista
     .orderBy(asc(users.lastLoginAt), asc(users.fullName))
     .all();
@@ -333,20 +338,13 @@ function sinEntrar(scope: ViewScope, courseId: string | null): QueryResult {
  * nadie usa.
  */
 export function sinEntrarCount(scope: ViewScope): number {
-  const limit = new Date(Date.now() - IDLE_DAYS * DAY_MS);
   return (
     db
       .select({ n: sql<number>`count(distinct ${enrollments.studentId})` })
       .from(enrollments)
       .innerJoin(courses, eq(enrollments.courseId, courses.id))
       .innerJoin(users, eq(enrollments.studentId, users.id))
-      .where(
-        and(
-          eq(enrollments.status, "active"),
-          or(isNull(users.lastLoginAt), lt(users.lastLoginAt, limit)),
-          ...courseFilters(scope, null)
-        )
-      )
+      .where(and(eq(enrollments.status, "active"), sinEntrarCondition(), ...courseFilters(scope, null)))
       .get()?.n ?? 0
   );
 }
@@ -412,6 +410,51 @@ const latestGradedAttempt = sql`NOT EXISTS (
      )
 )`;
 
+/**
+ * «Reprobado»: el último intento calificado quedó por debajo del mínimo del
+ * examen. UNA sola definición para `pendientes` y para `listado`.
+ */
+function reprobadoWhere(scope: ViewScope, courseId: string | null): SQL {
+  return and(
+    eq(examAttempts.status, "graded"),
+    isNotNull(exams.passScore),
+    isNotNull(examAttempts.finalScore),
+    sql`${examAttempts.maxScoreSnapshot} > 0`,
+    sql`(${examAttempts.finalScore} * 100.0 / ${examAttempts.maxScoreSnapshot}) < ${exams.passScore}`,
+    latestGradedAttempt,
+    ...courseFilters(scope, courseId)
+  )!;
+}
+
+/**
+ * Quién está reprobado, en tres llaves para que cualquier lista pueda marcarlo:
+ * por matrícula, por alumno y por alumno+curso. Los intentos antiguos pueden no
+ * tener matrícula (`enrollment_id` es anulable), así que la llave alumno+curso
+ * es la que nunca se escapa.
+ */
+export function reprobadoKeys(
+  scope: ViewScope,
+  courseId: string | null
+): { enrollments: Set<string>; students: Set<string>; studentCourse: Set<string> } {
+  const rows = db
+    .select({
+      enrollmentId: examAttempts.enrollmentId,
+      studentId: examAttempts.studentId,
+      courseId: courses.id,
+    })
+    .from(examAttempts)
+    .innerJoin(exams, eq(examAttempts.examItemId, exams.itemId))
+    .innerJoin(courseItems, eq(exams.itemId, courseItems.id))
+    .innerJoin(courses, eq(courseItems.courseId, courses.id))
+    .where(reprobadoWhere(scope, courseId))
+    .all();
+  return {
+    enrollments: new Set(rows.map((r) => r.enrollmentId).filter((id): id is string => id !== null)),
+    students: new Set(rows.map((r) => r.studentId)),
+    studentCourse: new Set(rows.map((r) => `${r.studentId}:${r.courseId}`)),
+  };
+}
+
 /** Quien no llegó al mínimo del examen. Un examen sin mínimo no cuenta. */
 function reprobados(scope: ViewScope, courseId: string | null): QueryResult {
   const rows = db
@@ -429,17 +472,7 @@ function reprobados(scope: ViewScope, courseId: string | null): QueryResult {
     .innerJoin(courseItems, eq(exams.itemId, courseItems.id))
     .innerJoin(courses, eq(courseItems.courseId, courses.id))
     .innerJoin(users, eq(examAttempts.studentId, users.id))
-    .where(
-      and(
-        eq(examAttempts.status, "graded"),
-        isNotNull(exams.passScore),
-        isNotNull(examAttempts.finalScore),
-        sql`${examAttempts.maxScoreSnapshot} > 0`,
-        sql`(${examAttempts.finalScore} * 100.0 / ${examAttempts.maxScoreSnapshot}) < ${exams.passScore}`,
-        latestGradedAttempt,
-        ...courseFilters(scope, courseId)
-      )
-    )
+    .where(reprobadoWhere(scope, courseId))
     .orderBy(asc(users.fullName), asc(courses.title), asc(courseItems.title))
     .all();
 

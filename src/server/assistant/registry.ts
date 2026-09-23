@@ -14,6 +14,7 @@ import { crearCursos } from "./tools/crear-cursos";
 import { movimientos } from "./tools/movimientos";
 import { pendientes } from "./tools/pendientes";
 import { certificados } from "./tools/certificados";
+import { listado } from "./tools/listado";
 import { panorama } from "./tools/panorama";
 import { descargarCertificados, descargarCsv } from "./tools/descargas";
 
@@ -33,6 +34,7 @@ const ALL: AssistantTool[] = [
   movimientos,
   pendientes,
   certificados,
+  listado,
   panorama,
   descargarCertificados,
   descargarCsv,

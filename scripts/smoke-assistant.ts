@@ -10,7 +10,7 @@ import { placeholderFor } from "../src/lib/assistant-placeholder";
 import { dateRange } from "../src/lib/assistant-dates";
 import type { AssistantBlock } from "../src/lib/assistant-blocks";
 import { requestWithTools, type ChatItem, type ToolDef } from "../src/server/services/ai-client";
-import { and, eq, inArray, like } from "drizzle-orm";
+import { and, eq, inArray, like, or } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { db } from "../src/server/db";
 import {
@@ -27,13 +27,16 @@ import {
   exams,
   files,
   itemAssignments,
+  itemProgress,
   users,
 } from "../src/server/db/schema";
 import { createCourse, enrollStudents, setStudentActive, unenrollStudent } from "../src/server/services/courses";
+import { assignEnrollmentsToCohort, createCohort } from "../src/server/services/cohorts";
 import { ownScope, type ViewScope } from "../src/server/auth/view-scope";
 import type { SessionUser } from "../src/server/auth/sessions";
 import { toolsForRole, toolByName, toolDefsForRole } from "../src/server/assistant/registry";
 import { certificadosQuery, movimientosQuery, panoramaQuery, pendientesQuery, sinEntrarCount } from "../src/server/assistant/queries";
+import { listadoQuery, type ListadoFiltros, type ListadoResult } from "../src/server/assistant/listado";
 import { runTurn } from "../src/server/assistant/agent";
 import { maybeSummarize } from "../src/server/assistant/summarize";
 import { chatModelOf, getAiSettings, saveAiSettings } from "../src/server/services/ai-settings";
@@ -277,12 +280,20 @@ async function setup() {
 
 async function cleanup() {
   // Archivos de prueba: los de esta corrida y los que dejara una que se cortó.
-  // Van antes que los usuarios: la fila de `files` apunta a quien la subió.
-  const leftovers = db.select({ id: files.id }).from(files).where(like(files.originalName, `${P}%`)).all().map((f) => f.id);
+  // Van antes que los usuarios: la fila de `files` apunta a quien la subió (y
+  // esa FK no borra en cascada). Por nombre no basta: el Excel de un listado se
+  // llama «listado-2026-09-23.xlsx», así que también van los que subió una
+  // cuenta zasst.
+  const userIds = db.select({ id: users.id }).from(users).where(like(users.email, `${P}-%`)).all().map((u) => u.id);
+  const leftovers = db
+    .select({ id: files.id })
+    .from(files)
+    .where(or(like(files.originalName, `${P}%`), userIds.length ? inArray(files.uploadedBy, userIds) : undefined))
+    .all()
+    .map((f) => f.id);
   for (const id of new Set([...testFileIds, ...leftovers])) await deleteFile(id);
   testFileIds.length = 0;
 
-  const userIds = db.select({ id: users.id }).from(users).where(like(users.email, `${P}-%`)).all().map((u) => u.id);
   if (userIds.length === 0) return;
   db.transaction(() => {
     // Auditoría que dejó el asistente: propuestas de las conversaciones zasst y matrículas de los cursos zasst
@@ -919,6 +930,324 @@ function exportIdOf(blocks: AssistantBlock[] | undefined): string {
 function downloadOf(blocks: AssistantBlock[] | undefined): Extract<AssistantBlock, { type: "download" }> | undefined {
   const block = (blocks ?? []).find((b) => b.type === "download");
   return block?.type === "download" ? block : undefined;
+}
+
+/**
+ * Datos del listado, en un curso APARTE: las demás secciones cuentan lo que hay
+ * en «zasst Extintores» y no deben notar nada. Dos lecciones requeridas (el
+ * examen no cuenta para completar), así que el avance solo puede ser 0, 50 o
+ * 100 %.
+ */
+const lst = {
+  curso: "",
+  grupo: `${P} Matutino`,
+  eva: nanoid(), // 100 %, completada, certificado vigente
+  fito: nanoid(), // 50 %, activa, la única del grupo
+  gala: nanoid(), // 0 %, dada de baja
+  hugo: nanoid(), // 50 %, activa, reprobada y certificado vencido
+  iris: nanoid(), // 0 %, activa, certificado revocado
+};
+
+function seedListado() {
+  lst.curso = createCourse({ ownerId: ids.teacher, title: `${P} Listado` }).id;
+  const l1 = nanoid();
+  const l2 = nanoid();
+  const examen = nanoid();
+  db.insert(courseItems)
+    .values([
+      { id: l1, courseId: lst.curso, position: 0, kind: "text", title: `${P} Lección 1` },
+      { id: l2, courseId: lst.curso, position: 1, kind: "text", title: `${P} Lección 2` },
+      // No cuenta para completar: así el avance se mide solo con las lecciones
+      { id: examen, courseId: lst.curso, position: 2, kind: "exam", title: `${P} Examen`, requiredForCompletion: false },
+    ])
+    .run();
+  db.insert(exams).values({ itemId: examen, passScore: 80 }).run();
+
+  makeUser(lst.eva, "eva", "Eva Mora", "student", ids.teacher);
+  makeUser(lst.fito, "fito", "Fito Paz", "student", ids.teacher);
+  makeUser(lst.gala, "gala", "Gala Ríos", "student", ids.teacher);
+  makeUser(lst.hugo, "hugo", "Hugo Sol", "student", ids.teacher);
+  makeUser(lst.iris, "iris", "Iris Vela", "student", ids.teacher);
+  enrollStudents(lst.curso, [lst.eva, lst.fito, lst.gala, lst.hugo, lst.iris], ids.teacher);
+
+  const matricula = (studentId: string) =>
+    db
+      .select({ id: enrollments.id })
+      .from(enrollments)
+      .where(and(eq(enrollments.courseId, lst.curso), eq(enrollments.studentId, studentId)))
+      .get()!.id;
+  const eva = matricula(lst.eva);
+  const fito = matricula(lst.fito);
+  const gala = matricula(lst.gala);
+  const hugo = matricula(lst.hugo);
+  const iris = matricula(lst.iris);
+
+  const termina = (enrollmentId: string, itemIds: string[]) => {
+    for (const itemId of itemIds) {
+      db.insert(itemProgress)
+        .values({ id: nanoid(), enrollmentId, itemId, status: "completed", percent: 100, completedAt: new Date() })
+        .run();
+    }
+  };
+  termina(eva, [l1, l2]);
+  termina(fito, [l1]);
+  termina(hugo, [l1]);
+
+  db.update(enrollments).set({ status: "completed", completedAt: new Date() }).where(eq(enrollments.id, eva)).run();
+  db.update(enrollments)
+    .set({ status: "dropped", droppedAt: new Date(), droppedFrom: "active" })
+    .where(eq(enrollments.id, gala))
+    .run();
+
+  // Un grupo con un solo alumno: el filtro por grupo tiene que dejar fuera al resto
+  assignEnrollmentsToCohort([fito], createCohort(lst.curso, lst.grupo, ids.teacher).id);
+
+  // Hugo reprueba: 5 de 10 (50 %) contra el mínimo de 80
+  db.insert(examAttempts)
+    .values({
+      id: nanoid(),
+      examItemId: examen,
+      studentId: lst.hugo,
+      enrollmentId: hugo,
+      attemptNumber: 1,
+      startedAt: new Date(),
+      submittedAt: new Date(),
+      finalScore: 5,
+      maxScoreSnapshot: 10,
+      status: "graded",
+    })
+    .run();
+
+  const certificado = (studentId: string, enrollmentId: string, expiresAt: Date, revoked: boolean) =>
+    db
+      .insert(certificates)
+      .values({
+        id: nanoid(),
+        folio: `${P}-CERT-${nanoid(8)}`,
+        enrollmentId,
+        studentId,
+        courseId: lst.curso,
+        issuedAt: new Date(),
+        expiresAt,
+        revoked,
+        verificationHash: "x",
+      })
+      .run();
+  const enDias = (n: number) => new Date(Date.now() + n * 86_400_000);
+  certificado(lst.eva, eva, enDias(30), false);
+  certificado(lst.hugo, hugo, enDias(-5), false); // vencido
+  certificado(lst.iris, iris, enDias(30), true); // revocado
+}
+
+/** Los parámetros de la herramienta: todos obligatorios, «» = sin filtro. */
+function listadoParams(extra: Record<string, string> = {}) {
+  return {
+    de: "matriculas",
+    curso_id: lst.curso,
+    grupo: "",
+    estado: "",
+    avance_min: "",
+    avance_max: "",
+    con_certificado: "",
+    desde: "",
+    hasta: "",
+    orden: "",
+    ...extra,
+  };
+}
+
+async function listadoChecks() {
+  console.log("\n— Listados a la medida");
+  seedListado();
+  const scope = ownScope({ ...teacherUser, id: ids.teacher });
+  const base: ListadoFiltros = {
+    de: "matriculas",
+    courseId: null,
+    grupo: "",
+    estado: "todos",
+    avanceMin: null,
+    avanceMax: null,
+    conCertificado: "da_igual",
+    desde: null,
+    hasta: null,
+    orden: "nombre",
+  };
+  const q = (extra: Partial<ListadoFiltros>): ListadoResult => listadoQuery(scope, { ...base, ...extra, courseId: extra.courseId ?? null });
+
+  // ── Matrículas ────────────────────────────────────────────────────────────
+  const todas = q({ courseId: lst.curso });
+  check(
+    "Matrículas: las columnas exactas",
+    todas.columns.join("|") === "Alumno|Correo|Curso|Grupo|Avance|Estado|Matriculado|Completado",
+    todas.columns
+  );
+  check(
+    "Matrículas del curso zasst: las cinco sembradas",
+    todas.total === 5 && todas.rows.every((r) => r[2] === `${P} Listado`),
+    todas.rows
+  );
+  const sinFiltro = q({});
+  check("Sin filtros: salen esas y las de los demás cursos del maestro", sinFiltro.total >= 5, sinFiltro.total);
+  check("Sin filtros: el texto de la IA lo dice", sinFiltro.forModel.includes("sin filtros"), sinFiltro.forModel);
+
+  const grupo = q({ courseId: lst.curso, grupo: lst.grupo });
+  check(
+    "Filtro por grupo: solo el alumno del grupo",
+    grupo.total === 1 && grupo.rows[0][0].includes("Fito") && grupo.rows[0][3] === lst.grupo,
+    grupo.rows
+  );
+
+  const hasta50 = q({ courseId: lst.curso, avanceMax: 50 });
+  check(
+    "avance_max 50: Eva (100 %) queda fuera y Fito (50 %) entra",
+    !hasta50.rows.some((r) => r[0].includes("Eva")) && hasta50.rows.some((r) => r[0].includes("Fito") && r[4] === "50%"),
+    hasta50.rows.map((r) => [r[0], r[4]])
+  );
+  const desde100 = q({ courseId: lst.curso, avanceMin: 100 });
+  check("avance_min 100: solo quien terminó todo", desde100.total === 1 && desde100.rows[0][0].includes("Eva"), desde100.rows);
+
+  const bajas = q({ courseId: lst.curso, estado: "bajas" });
+  check(
+    "estado bajas: la dada de baja y ninguna activa",
+    bajas.total === 1 && bajas.rows[0][0].includes("Gala") && bajas.rows.every((r) => r[5] === "baja"),
+    bajas.rows
+  );
+  const completados = q({ courseId: lst.curso, estado: "completados" });
+  check(
+    "estado completados: al revés, solo la completada",
+    completados.total === 1 && completados.rows[0][0].includes("Eva") && completados.rows.every((r) => r[5] === "completado"),
+    completados.rows
+  );
+  const reprobados = q({ courseId: lst.curso, estado: "reprobados" });
+  check("estado reprobados: el mismo criterio que pendientes", reprobados.total === 1 && reprobados.rows[0][0].includes("Hugo"), reprobados.rows);
+
+  const conCert = q({ courseId: lst.curso, conCertificado: "si" });
+  check(
+    "con_certificado si: solo quien lo tiene vigente (el vencido y el revocado no cuentan)",
+    conCert.total === 1 && conCert.rows[0][0].includes("Eva"),
+    conCert.rows
+  );
+  const sinCert = q({ courseId: lst.curso, conCertificado: "no" });
+  check("con_certificado no: los otros cuatro", sinCert.total === 4 && !sinCert.rows.some((r) => r[0].includes("Eva")), sinCert.rows.map((r) => r[0]));
+
+  const porAvance = q({ courseId: lst.curso, orden: "avance" });
+  check(
+    "orden avance: de mayor a menor",
+    porAvance.rows[0][0].includes("Eva") && porAvance.rows[0][4] === "100%" && porAvance.rows.at(-1)![4] === "0%",
+    porAvance.rows.map((r) => [r[0], r[4]])
+  );
+
+  // ── Alumnos ───────────────────────────────────────────────────────────────
+  const alumnos = q({ de: "alumnos", courseId: lst.curso });
+  check(
+    "Alumnos: las columnas exactas",
+    alumnos.columns.join("|") === "Nombre|Correo|Cursos|Avance medio|Último acceso|Estado",
+    alumnos.columns
+  );
+  check(
+    "Alumnos: los cinco del curso, con sus cursos y su avance medio",
+    alumnos.total === 5 && alumnos.rows.some((r) => r[0].includes("Eva") && r[2] === "1" && r[3] === "100%" && r[5] === "activo"),
+    alumnos.rows
+  );
+  const alumnosGrupo = q({ de: "alumnos", courseId: lst.curso, grupo: lst.grupo });
+  check("Alumnos por grupo: solo el del grupo", alumnosGrupo.total === 1 && alumnosGrupo.rows[0][0].includes("Fito"), alumnosGrupo.rows);
+  const alumnosCert = q({ de: "alumnos", courseId: lst.curso, conCertificado: "si" });
+  check("Alumnos con certificado vigente: solo quien lo tiene", alumnosCert.total === 1 && alumnosCert.rows[0][0].includes("Eva"), alumnosCert.rows);
+  const alumnosBaja = q({ de: "alumnos", courseId: lst.curso, estado: "bajas" });
+  check("Alumnos dados de baja del curso: solo la baja", alumnosBaja.total === 1 && alumnosBaja.rows[0][0].includes("Gala"), alumnosBaja.rows);
+  const alumnosSinEntrar = q({ de: "alumnos", courseId: lst.curso, estado: "sin_entrar" });
+  const matriculasSinEntrar = q({ courseId: lst.curso, estado: "sin_entrar" });
+  check(
+    "Sin entrar: los tres con matrícula activa que nunca entraron (ni la completada ni la baja)",
+    alumnosSinEntrar.total === 3 && matriculasSinEntrar.total === 3 && !alumnosSinEntrar.csv.includes("Gala"),
+    [alumnosSinEntrar.rows.map((r) => r[0]), matriculasSinEntrar.rows.map((r) => r[0])]
+  );
+  const ajenos = listadoQuery(ownScope({ ...teacherUser, id: ids.admin }), { ...base, de: "alumnos" });
+  check(
+    "Alumnos: con el contexto de otro maestro no aparecen los de la prueba",
+    !ajenos.csv.includes("Eva Mora") && !ajenos.csv.includes("Fito Paz") && !ajenos.csv.includes("Ana López"),
+    ajenos.total
+  );
+
+  // ── Certificados ──────────────────────────────────────────────────────────
+  const certs = q({ de: "certificados", courseId: lst.curso });
+  check("Certificados: las columnas exactas", certs.columns.join("|") === "Alumno|Curso|Folio|Emitido|Vence|Estado", certs.columns);
+  check(
+    "Certificados: uno vigente, uno vencido y uno revocado",
+    certs.total === 3 && ["vigente", "vencido", "revocado"].every((e) => certs.rows.some((r) => r[5] === e)),
+    certs.rows.map((r) => [r[0], r[5]])
+  );
+  const estiloDe = (nombre: string) => certs.sheet.rows.find((r) => r[0].text.includes(nombre))?.[0].style;
+  check("Hoja: el vencido y el revocado, en rojo", estiloDe("Hugo") === "bad" && estiloDe("Iris") === "bad", [estiloDe("Hugo"), estiloDe("Iris")]);
+  check("Hoja: el vigente, en verde", estiloDe("Eva") === "good", estiloDe("Eva"));
+  const vigentes = q({ de: "certificados", courseId: lst.curso, estado: "activos" });
+  check("Certificados vigentes: solo el que no está ni vencido ni revocado", vigentes.total === 1 && vigentes.rows[0][5] === "vigente", vigentes.rows);
+
+  // ── Lo que ve la IA ───────────────────────────────────────────────────────
+  const resultados = [todas, sinFiltro, grupo, hasta50, bajas, completados, reprobados, conCert, alumnos, alumnosGrupo, certs, porAvance];
+  check("A la IA: nunca más de 400 caracteres", resultados.every((r) => r.forModel.length <= 400), resultados.map((r) => r.forModel.length));
+  check("A la IA: cifras y nombres, nunca correos", resultados.every((r) => !r.forModel.includes("@")), resultados.map((r) => r.forModel).slice(0, 3));
+  check("A la IA: el filtro va en palabras", grupo.forModel.includes(`grupo «${lst.grupo}»`) && hasta50.forModel.includes("avance 0–50 %"), [grupo.forModel, hasta50.forModel]);
+  check("A la IA: cuántos pasan el filtro y sobre cuántos", /: 1 de \d+\./.test(grupo.forModel), grupo.forModel);
+
+  // ── El Excel ──────────────────────────────────────────────────────────────
+  if (HAS_SOFFICE) {
+    const sheets = await readSheetRows(await buildXlsx([todas.sheet]), "listado.xlsx");
+    check("Excel: la hoja del listado y la de notas", sheets.length === 2 && sheets[0].name === "Listado de matrículas", sheets.map((s) => s.name));
+    const filas = sheets[0]?.rows ?? [];
+    check("Excel: encabezado con las mismas columnas", filas[0]?.cells.join("|") === todas.columns.join("|"), filas[0]?.cells);
+    check("Excel: una fila por matrícula", filas.length === todas.total + 1, filas.length);
+    const fila = (nombre: string) => filas.find((r) => r.cells[0].includes(nombre));
+    check("Excel: la matrícula reprobada sale en rojo", fila("Hugo")?.color === "rojo", fila("Hugo")?.color);
+    check("Excel: la baja también", fila("Gala")?.color === "rojo", fila("Gala")?.color);
+    check("Excel: la completada sale en verde", fila("Eva")?.color === "verde", fila("Eva")?.color);
+  } else {
+    console.log("  (sin LibreOffice: se omite el Excel)");
+  }
+
+  // ── La herramienta ────────────────────────────────────────────────────────
+  check("listado está en el catálogo de los dos roles", !!toolByName("listado") && ["teacher", "admin"].every((r) => toolsForRole(r as "teacher").some((t) => t.name === "listado")));
+  const user = { ...teacherUser, id: ids.teacher };
+  const conv = createConversation(ids.teacher, `${P} listado`);
+  const ctx = { ...ctxFor(user, ownScope(user)), conversationId: conv.id };
+
+  const res = await toolByName("listado")!.run(listadoParams(), ctx);
+  const descargas = (res.blocks ?? []).filter((b) => b.type === "download");
+  check("listado: tiles y tabla", (res.blocks ?? []).some((b) => b.type === "tiles") && (res.blocks ?? []).some((b) => b.type === "table"), res.blocks?.map((b) => b.type));
+  check(
+    HAS_SOFFICE ? "listado: deja las dos descargas, Excel primero" : "listado: sin LibreOffice deja solo el CSV",
+    HAS_SOFFICE
+      ? descargas.length === 2 && descargas[0].label === "Descargar Excel" && descargas[1].label === "Descargar CSV"
+      : descargas.length === 1 && descargas[0].label === "Descargar CSV" && res.forModel.includes("no se pudo generar el Excel"),
+    descargas
+  );
+  const csvBloque = descargas.find((b) => b.label === "Descargar CSV");
+  const csvId = csvBloque?.href.split("/").pop() ?? "";
+  check("listado: el CSV se guarda como texto", readExport(ids.teacher, csvId)?.mime === "text/csv", readExport(ids.teacher, csvId));
+
+  if (HAS_SOFFICE) {
+    const excelId = descargas[0].href.split("/").pop() ?? "";
+    const info = readExport(ids.teacher, excelId);
+    if (info?.fileId) testFileIds.push(info.fileId);
+    check("listado: la descarga de Excel se guarda con su tipo", info?.mime === XLSX_MIME && !!info.fileId, info);
+    check("listado: el tamaño del Excel va en el botón", /^\d+ KB · 5 filas · caduca en 24 horas$/.test(descargas[0].detail ?? ""), descargas[0].detail);
+    check("listado: los dos ids viajan a la IA", res.forModel.includes(excelId) && res.forModel.includes(csvId), res.forModel);
+    const reofrecida = await toolByName("descargar_csv")!.run({ descarga_id: excelId }, ctx);
+    check("descargar_csv de un Excel: el botón dice «Descargar Excel»", downloadOf(reofrecida.blocks)?.label === "Descargar Excel", reofrecida.blocks);
+    const reofrecidaCsv = await toolByName("descargar_csv")!.run({ descarga_id: csvId }, ctx);
+    check("descargar_csv de un CSV: sigue diciendo «Descargar CSV»", downloadOf(reofrecidaCsv.blocks)?.label === "Descargar CSV", reofrecidaCsv.blocks);
+  }
+
+  // Números como texto: lo que no sea 0–100 no filtra nada
+  const raro = await toolByName("listado")!.run(listadoParams({ avance_min: "abc", avance_max: "500" }), ctx);
+  check("listado: un avance que no es número no filtra", raro.forModel.includes(": 5 de"), raro.forModel);
+
+  const vacio = await toolByName("listado")!.run(listadoParams({ grupo: `${P} Nocturno` }), ctx);
+  check(
+    "listado sin filas: ninguna descarga y el texto dice qué dejó fuera",
+    !(vacio.blocks ?? []).some((b) => b.type === "download") && vacio.forModel.includes("Nocturno") && vacio.forModel.includes("ninguna"),
+    vacio.forModel
+  );
 }
 
 /** Las herramientas de consulta: usan lo que sembró `queryChecks`. */
@@ -1905,6 +2234,7 @@ async function main() {
     await turnoConAdjuntoChecks();
     await crearCursosChecks();
     await queryChecks();
+    await listadoChecks();
     await consultaToolChecks();
     await descargaToolChecks();
     suggestionChecks();
