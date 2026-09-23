@@ -92,6 +92,13 @@
       "when": 1790126486632,
       "tag": "0012_asistente-descargas",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1790144360297,
+      "tag": "0013_asistente-excel",
+      "breakpoints": true
     }
   ]
 }

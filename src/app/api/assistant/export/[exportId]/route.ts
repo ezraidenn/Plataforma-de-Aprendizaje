@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { apiUser } from "@/server/auth/guards";
-import { readExport } from "@/server/assistant/exports";
+import { readExportBytes } from "@/server/assistant/exports";
 
 export const runtime = "nodejs";
 
@@ -10,8 +10,14 @@ function safeName(name: string): string {
   return clean.slice(0, 80) || "descarga.csv";
 }
 
+/** El CSV lleva juego de caracteres; el Excel son bytes y no lo admite. */
+function contentType(mime: string): string {
+  return mime.startsWith("text/") ? `${mime}; charset=utf-8` : mime;
+}
+
 /**
- * GET /api/assistant/export/<id> → el CSV que dejó el asistente.
+ * GET /api/assistant/export/<id> → lo que dejó el asistente: el CSV de una
+ * consulta o el Excel con formato, según con qué se guardó.
  * Solo el dueño de la conversación y solo mientras no caduque (24 horas); los
  * alumnos no tienen asistente, así que quedan fuera. El CSV ya trae BOM.
  */
@@ -21,7 +27,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
   if (!user) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
   if (user.role === "student") return NextResponse.json({ error: "Sin acceso" }, { status: 403 });
 
-  const file = readExport(user.id, exportId);
+  const file = await readExportBytes(user.id, exportId);
   if (!file) {
     return NextResponse.json(
       { error: "Esa descarga ya no está disponible: caducó (duran 24 horas) o no es tuya. Vuelve a pedir la consulta." },
@@ -29,11 +35,12 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     );
   }
 
-  return new NextResponse(file.content, {
+  return new NextResponse(new Uint8Array(file.bytes), {
     status: 200,
     headers: {
-      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Type": contentType(file.mime),
       "Content-Disposition": `attachment; filename="${safeName(file.fileName)}"`,
+      "Content-Length": String(file.bytes.length),
       "Cache-Control": "no-store",
       "X-Content-Type-Options": "nosniff",
     },

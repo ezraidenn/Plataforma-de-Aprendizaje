@@ -54,7 +54,14 @@ import {
   recentModelText,
 } from "../src/server/services/ai-conversations";
 import { applyProposal, cancelProposal, createProposal, expireProposals, getProposal } from "../src/server/assistant/proposals";
-import { createExport, purgeExports, readExport } from "../src/server/assistant/exports";
+import {
+  XLSX_MIME,
+  createExport,
+  createFileExport,
+  purgeExports,
+  readExport,
+  readExportBytes,
+} from "../src/server/assistant/exports";
 import { buildXlsx, type SheetSpec } from "../src/server/services/xlsx";
 import {
   MAX_SUMMARY_CHARS,
@@ -66,7 +73,7 @@ import {
 } from "../src/lib/attachment-summary";
 import { readSheetRows } from "../src/server/services/sheet-colors";
 import { attachToConversation, summarizeAttachment } from "../src/server/services/attachment-intake";
-import { deleteFile, saveStream } from "../src/server/services/storage";
+import { absolutePathFor, deleteFile, getFileRecord, saveStream } from "../src/server/services/storage";
 import { peopleRows, headerIndex } from "../src/server/assistant/rows-from-attachment";
 import { toCourseDrafts } from "../src/server/services/ai-course-import";
 import { resolveUploadMime } from "../src/lib/upload-types";
@@ -238,7 +245,6 @@ function makeUser(id: string, key: string, name: string, role: "teacher" | "admi
   db.insert(users).values({ id, email: `${P}-${key}@test.local`, passwordHash: "x", fullName: `${P} ${name}`, role, createdBy }).run();
 }
 
-const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 /** Archivos que guardaron las pruebas: `cleanup()` los borra (disco y fila). */
 const testFileIds: string[] = [];
 
@@ -395,18 +401,48 @@ async function exportChecks() {
   const conv = createConversation(ids.teacher, `${P} descargas`);
   const id = createExport(conv.id, "movimientos.csv", "nombre,correo\nAna,ana@x.com\n");
   const mine = readExport(ids.teacher, id);
-  check("El dueño la lee", mine?.fileName === "movimientos.csv" && mine.content.includes("Ana"));
+  check("El dueño la lee", mine?.fileName === "movimientos.csv" && (mine.content ?? "").includes("Ana"));
+  check("El texto se sirve como CSV", mine?.mime === "text/csv" && mine.fileId === undefined, mine);
+  const csvBytes = await readExportBytes(ids.teacher, id);
+  check("Los bytes del texto son el propio CSV", csvBytes?.bytes.toString("utf8") === "nombre,correo\nAna,ana@x.com\n", csvBytes?.bytes.length);
   check("Otro usuario no", readExport(ids.admin, id) === null);
   check("Id inventado: null", readExport(ids.teacher, "no-existe") === null);
   db.update(aiExports).set({ expiresAt: new Date(Date.now() - 1000) }).where(eq(aiExports.id, id)).run();
   check("Caducada: no se lee", readExport(ids.teacher, id) === null);
-  check("Purga: se borra", purgeExports() >= 1 && db.select().from(aiExports).where(eq(aiExports.id, id)).get() === undefined);
+  check("Purga: se borra", (await purgeExports()) >= 1 && db.select().from(aiExports).where(eq(aiExports.id, id)).get() === undefined);
   check("Al borrar la conversación se va la descarga", (() => {
     const c2 = createConversation(ids.teacher, `${P} descargas 2`);
     const e2 = createExport(c2.id, "x.csv", "a,b\n");
     deleteConversation(ids.teacher, c2.id);
     return db.select().from(aiExports).where(eq(aiExports.id, e2)).get() === undefined;
   })());
+
+  // ── Descargas que son un archivo (Excel) ────────────────────────────────
+  // Sin LibreOffice no hay Excel de verdad, pero la fila, el almacenamiento y
+  // la caducidad se prueban igual con unos bytes cualquiera
+  const excel = HAS_SOFFICE
+    ? await buildXlsx([{ name: "Avance", columns: [{ title: "Alumno" }], rows: [[{ text: "Ana" }]] }])
+    : Buffer.from("PK\u0003\u0004 no es un xlsx", "utf8");
+  const fileId = await createFileExport(conv.id, `${P}-avance.xlsx`, excel, XLSX_MIME, ids.teacher);
+  const info = readExport(ids.teacher, fileId);
+  check("La descarga de archivo guarda su tipo y apunta al archivo", info?.mime === XLSX_MIME && !!info.fileId && info.content === undefined, info);
+  if (info?.fileId) testFileIds.push(info.fileId);
+  const rec = info?.fileId ? getFileRecord(info.fileId) : null;
+  const abs = rec ? absolutePathFor(rec.storedPath) : "";
+  check("El archivo quedó en el almacenamiento", rec?.kind === "assistant_export" && rec.uploadedBy === ids.teacher && existsSync(abs), rec?.storedPath);
+  const bajada = await readExportBytes(ids.teacher, fileId);
+  check("El dueño se baja los mismos bytes", bajada?.fileName === `${P}-avance.xlsx` && bajada.mime === XLSX_MIME && bajada.bytes.equals(excel), bajada?.bytes.length);
+  check("Otro usuario no se la baja", (await readExportBytes(ids.admin, fileId)) === null);
+  db.update(aiExports).set({ expiresAt: new Date(Date.now() - 1000) }).where(eq(aiExports.id, fileId)).run();
+  check("Caducada: tampoco se bajan los bytes", (await readExportBytes(ids.teacher, fileId)) === null);
+  await purgeExports();
+  check(
+    "Purga: se van la fila, la fila del archivo y el archivo del disco",
+    db.select().from(aiExports).where(eq(aiExports.id, fileId)).get() === undefined &&
+      getFileRecord(info!.fileId!) === null &&
+      !existsSync(abs),
+    { fila: db.select().from(aiExports).where(eq(aiExports.id, fileId)).get(), abs }
+  );
 }
 
 async function proposalChecks() {
@@ -557,8 +593,8 @@ async function altaAlumnosChecks() {
   const altaDl = "blocks" in applied ? downloadOf(applied.blocks) : undefined;
   check("Las contraseñas salen en un bloque de descarga", altaDl?.label === "Descargar las contraseñas" && (altaDl.detail ?? "").includes("24 horas"), altaDl);
   const altaCsv = readExport(ids.teacher, altaDl ? (altaDl.href.split("/").pop() ?? "") : "");
-  check("La descarga trae la columna de contraseña", (altaCsv?.content ?? "").includes("contrasena"), altaCsv?.content.split("\r\n")[0]);
-  check("…y una línea por cada cuenta creada", (altaCsv?.content ?? "").split("\r\n").length >= 3, altaCsv?.content.split("\r\n").length);
+  check("La descarga trae la columna de contraseña", (altaCsv?.content ?? "").includes("contrasena"), altaCsv?.content?.split("\r\n")[0]);
+  check("…y una línea por cada cuenta creada", (altaCsv?.content ?? "").split("\r\n").length >= 3, altaCsv?.content?.split("\r\n").length);
 
   // Con curso: alta + matrícula en el mismo paso
   const conv2 = createConversation(ids.teacher, `${P} altas2`);
@@ -915,7 +951,7 @@ async function consultaToolChecks() {
   );
   const movId = exportIdOf(mov.blocks);
   const guardada = readExport(ids.teacher, movId);
-  check("La descarga la abre su dueño", guardada !== null && guardada.content.includes("Alumno"), guardada?.fileName);
+  check("La descarga la abre su dueño", guardada !== null && (guardada.content ?? "").includes("Alumno"), guardada?.fileName);
   check("Nombre con la fecha del día", /^movimientos-\d{4}-\d{2}-\d{2}\.csv$/.test(guardada?.fileName ?? ""), guardada?.fileName);
   check("Otro usuario no la abre", readExport(ids.admin, movId) === null);
   check("El id de la descarga viaja a la IA", mov.forModel.includes(movId), mov.forModel);

@@ -91,6 +91,7 @@ export const files = sqliteTable(
         "attachment",
         "editor_image",
         "assistant_attachment",
+        "assistant_export",
       ],
     }).notNull(),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
@@ -806,8 +807,12 @@ export const aiExports = sqliteTable(
       .references(() => aiConversations.id, { onDelete: "cascade" }),
     /** Nombre con el que se descarga: «movimientos-2026-09-23.csv» */
     fileName: text("file_name").notNull(),
-    /** El CSV completo; se borra al caducar */
-    content: text("content").notNull(),
+    /** El CSV completo; se borra al caducar. Null si la descarga es un archivo */
+    content: text("content"),
+    /** Archivo guardado cuando la descarga es binaria (Excel); se borra al caducar */
+    fileId: text("file_id").references(() => files.id, { onDelete: "set null" }),
+    /** Tipo con el que se sirve: «text/csv» o el del Excel */
+    mime: text("mime").notNull().default("text/csv"),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .default(sql`(unixepoch() * 1000)`),
