@@ -94,8 +94,10 @@ export function AiCard({
         </CardTitle>
         <CardDescription>
           Permite a los maestros importar preguntas de examen y listas de estudiantes desde cualquier
-          archivo («Importar con IA») y usar el asistente del encabezado. El texto se envía a OpenAI
-          solo cuando un maestro lo pide; necesita que el servidor tenga internet.
+          archivo («Importar con IA») y usar el asistente del encabezado, al que también se le pueden
+          adjuntar archivos (una lista de alumnos o de cursos) para darlos de alta, de baja o crearlos
+          en lote. El texto se envía a OpenAI solo cuando un maestro lo pide; necesita que el servidor
+          tenga internet.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
