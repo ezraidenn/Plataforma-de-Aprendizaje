@@ -5,13 +5,15 @@ import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { attemptAnswers, assignmentSubmissions, users } from "@/server/db/schema";
 import { requireTeacher } from "@/server/auth/guards";
+import { getViewScope } from "@/server/auth/view-scope-cookie";
 import type { SessionUser } from "@/server/auth/sessions";
 import { getOwnedCourse } from "@/server/services/courses";
 import { getItem, type CourseItem } from "@/server/services/tree";
 import {
   attemptForGrading,
-  gradeOpenAnswer,
+  gradeOpenAnswers,
   gradeSubmission,
+  gradedRecently,
 } from "@/server/services/grading";
 import { listQuestions } from "@/server/services/exams";
 import { getAssignmentDetail, listSubmissionFiles } from "@/server/services/assignments";
@@ -149,8 +151,24 @@ export async function loadExamGradingAction(attemptId: string): Promise<LoadExam
 
 // ─── Calificar las preguntas abiertas de un intento ──────────────────────────
 
-export type GradeExamAnswersResult = { ok: true; finalized: boolean } | { error: string };
+export type GradeExamAnswersResult =
+  | {
+      ok: true;
+      finalized: boolean;
+      /** true si el intento ya tenía nota: esto fue una corrección. */
+      regraded: boolean;
+      scoreBefore: number | null;
+      scoreAfter: number | null;
+      /** El alumno ya completó el curso / tiene certificado: avisar al maestro. */
+      warning?: string;
+    }
+  | { error: string };
 
+/**
+ * Califica las preguntas abiertas de un intento. Sirve igual para corregir una
+ * nota ya publicada: el servicio recalcula, vuelve a firmar quién y cuándo y
+ * devuelve de qué nota a cuál se movió.
+ */
 export async function gradeExamAnswersAction(input: {
   attemptId: string;
   grades: { questionId: string; points: number; feedbackMd: string }[];
@@ -160,25 +178,23 @@ export async function gradeExamAnswersAction(input: {
   if (!guarded) return { error: "No encontramos este intento o no te pertenece" };
 
   if (input.grades.length === 0) return { error: "No hay preguntas por calificar" };
+  if (input.grades.some((g) => !Number.isFinite(g.points))) {
+    return { error: "Captura los puntos de todas las preguntas" };
+  }
 
   try {
-    let finalized = false;
-    for (const grade of input.grades) {
-      if (!Number.isFinite(grade.points)) {
-        return { error: "Captura los puntos de todas las preguntas" };
-      }
-      const result = gradeOpenAnswer({
-        gradedBy: user.id,
-        attemptId: input.attemptId,
-        questionId: grade.questionId,
-        points: grade.points,
-        feedbackMd: grade.feedbackMd.trim() || undefined,
-      });
-      finalized = result.finalized;
-    }
+    const result = gradeOpenAnswers({
+      gradedBy: user.id,
+      attemptId: input.attemptId,
+      grades: input.grades.map((g) => ({
+        questionId: g.questionId,
+        points: g.points,
+        feedbackMd: g.feedbackMd.trim() || undefined,
+      })),
+    });
     revalidatePath("/teach/grading");
     revalidatePath("/teach/dashboard");
-    return { ok: true, finalized };
+    return { ok: true, ...result };
   } catch (err) {
     return { error: errorMessage(err, "No se pudo guardar la calificación. Intenta de nuevo.") };
   }
@@ -271,7 +287,17 @@ export async function loadSubmissionGradingAction(
 
 // ─── Calificar o devolver una entrega ────────────────────────────────────────
 
-export type GradeSubmissionResult = { ok: true } | { error: string };
+export type GradeSubmissionResult =
+  | {
+      ok: true;
+      /** true si la entrega ya tenía nota: esto fue una corrección. */
+      regraded: boolean;
+      scoreBefore: number | null;
+      scoreAfter: number | null;
+      /** El alumno ya completó el curso / tiene certificado: avisar al maestro. */
+      warning?: string;
+    }
+  | { error: string };
 
 export async function gradeSubmissionAction(input: {
   submissionId: string;
@@ -291,7 +317,7 @@ export async function gradeSubmissionAction(input: {
   }
 
   try {
-    gradeSubmission({
+    const result = gradeSubmission({
       gradedBy: user.id,
       submissionId: input.submissionId,
       score: input.action === "grade" ? input.score : 0,
@@ -300,8 +326,55 @@ export async function gradeSubmissionAction(input: {
     });
     revalidatePath("/teach/grading");
     revalidatePath("/teach/dashboard");
-    return { ok: true };
+    return { ok: true, ...result };
   } catch (err) {
     return { error: errorMessage(err, "No se pudo guardar la calificación. Intenta de nuevo.") };
   }
+}
+
+// ─── Lo ya calificado (para volver a abrirlo y corregirlo) ───────────────────
+
+export type GradedEntry = {
+  kind: "exam" | "assignment";
+  /** Id del intento o de la entrega, según `kind`. */
+  key: string;
+  courseId: string;
+  courseTitle: string;
+  itemTitle: string;
+  studentName: string;
+  gradedAtMs: number | null;
+  score: number | null;
+  maxScore: number | null;
+  gradedByName: string | null;
+  /** «graded» o, en tareas, «returned». */
+  status: string;
+  isLate: boolean;
+};
+
+export type ListGradedResult = { ok: true; entries: GradedEntry[] } | { error: string };
+
+/** Lo calificado hace poco en el contexto de vista actual, lo más nuevo primero. */
+export async function listGradedRecentlyAction(
+  input: { limit?: number; courseId?: string } = {}
+): Promise<ListGradedResult> {
+  const user = await requireTeacher();
+  const scope = await getViewScope(user);
+  const entries = gradedRecently(scope, { limit: input.limit, courseId: input.courseId });
+  return {
+    ok: true,
+    entries: entries.map((e) => ({
+      kind: e.kind,
+      key: e.kind === "exam" ? e.attemptId : e.submissionId,
+      courseId: e.courseId,
+      courseTitle: e.courseTitle,
+      itemTitle: e.itemTitle,
+      studentName: e.studentName,
+      gradedAtMs: e.gradedAt?.getTime() ?? null,
+      score: e.score ?? null,
+      maxScore: e.maxScore ?? null,
+      gradedByName: e.gradedByName ?? null,
+      status: e.status ?? "graded",
+      isLate: e.kind === "assignment" ? e.isLate : false,
+    })),
+  };
 }

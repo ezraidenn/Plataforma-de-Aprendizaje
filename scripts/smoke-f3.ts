@@ -4,7 +4,7 @@
  *
  * Uso: NODE_OPTIONS=--conditions=react-server pnpm exec tsx scripts/smoke-f3.ts
  */
-import { cleanupSmokeNotifications, removeDemoCourses } from "./lib/smoke-cleanup";
+import { cleanupSmokeGradingAudit, cleanupSmokeNotifications, removeDemoCourses } from "./lib/smoke-cleanup";
 import { and, eq, sql } from "drizzle-orm";
 import { Readable } from "node:stream";
 
@@ -317,6 +317,7 @@ async function main() {
 
   console.log(failures === 0 ? "\n✅ TODO PASÓ (F3)" : `\n❌ ${failures} fallas`);
   // No dejar la campana de las cuentas demo llena de avisos de prueba
+  cleanupSmokeGradingAudit([course.id]);
   cleanupSmokeNotifications([course.id]);
   if (failures === 0) removeDemoCourses([TITLE], teacher.id);
   process.exit(failures === 0 ? 0 : 1);

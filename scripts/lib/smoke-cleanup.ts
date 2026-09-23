@@ -1,6 +1,14 @@
 import { and, eq, gte, inArray, or, sql } from "drizzle-orm";
 import { db } from "../../src/server/db";
-import { certificates, courseItems, courses, notifications } from "../../src/server/db/schema";
+import {
+  assignmentSubmissions,
+  auditLog,
+  certificates,
+  courseItems,
+  courses,
+  examAttempts,
+  notifications,
+} from "../../src/server/db/schema";
 import { deleteCourse } from "../../src/server/services/courses";
 import { enqueueJob } from "../../src/server/jobs/queue";
 
@@ -33,6 +41,47 @@ export function cleanupSmokeNotifications(courseIds: string[]): number {
         )
       )
     )
+    .run().changes;
+}
+
+const GRADING_ACTIONS = ["grade_exam", "regrade_exam", "grade_assignment", "regrade_assignment"];
+
+/**
+ * Calificar deja auditoría. Al borrar el curso de prueba, el intento y la
+ * entrega se van en cascada pero la fila de auditoría no: quedaría para
+ * siempre en Administración → Auditoría apuntando a la nada. Se borra ANTES de
+ * borrar el curso, mientras todavía se puede saber qué intentos eran suyos.
+ * Devuelve cuántas filas borró.
+ */
+export function cleanupSmokeGradingAudit(courseIds: string[]): number {
+  if (courseIds.length === 0) return 0;
+  const itemIds = db
+    .select({ id: courseItems.id })
+    .from(courseItems)
+    .where(inArray(courseItems.courseId, courseIds))
+    .all()
+    .map((r) => r.id);
+  if (itemIds.length === 0) return 0;
+
+  const ids = [
+    ...db
+      .select({ id: examAttempts.id })
+      .from(examAttempts)
+      .where(inArray(examAttempts.examItemId, itemIds))
+      .all()
+      .map((r) => r.id),
+    ...db
+      .select({ id: assignmentSubmissions.id })
+      .from(assignmentSubmissions)
+      .where(inArray(assignmentSubmissions.itemId, itemIds))
+      .all()
+      .map((r) => r.id),
+  ];
+  if (ids.length === 0) return 0;
+
+  return db
+    .delete(auditLog)
+    .where(and(inArray(auditLog.action, GRADING_ACTIONS), inArray(auditLog.entityId, ids)))
     .run().changes;
 }
 

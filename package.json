@@ -31,6 +31,7 @@
     "smoke:help": "tsx scripts/smoke-help.ts",
     "smoke:rules": "node --conditions=react-server --import tsx scripts/smoke-rules.ts",
     "smoke:results": "node --conditions=react-server --import tsx scripts/smoke-results.ts",
+    "smoke:regrade": "node --conditions=react-server --import tsx scripts/smoke-regrade.ts",
     "smoke:scope": "node --conditions=react-server --import tsx scripts/smoke-scope.ts",
     "smoke:guide": "tsx scripts/smoke-guide.ts",
     "smoke:ordering": "node --conditions=react-server --import tsx scripts/smoke-ordering.ts",

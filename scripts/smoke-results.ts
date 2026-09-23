@@ -5,7 +5,7 @@
  * Uso: pnpm smoke:results
  */
 import { resultsVisible, type ExamResultsMode } from "../src/lib/exam-results";
-import { cleanupSmokeNotifications, removeDemoCourses } from "./lib/smoke-cleanup";
+import { cleanupSmokeGradingAudit, cleanupSmokeNotifications, removeDemoCourses } from "./lib/smoke-cleanup";
 import { and, eq, like, sql } from "drizzle-orm";
 import { db } from "../src/server/db";
 import { courses as coursesTable, notifications, users } from "../src/server/db/schema";
@@ -184,6 +184,7 @@ async function main() {
   manualFlow();
   afterCloseFlow();
   openQuestionFlow();
+  cleanupSmokeGradingAudit(courseIds);
   cleanupSmokeNotifications(courseIds);
 
   if (failures) {

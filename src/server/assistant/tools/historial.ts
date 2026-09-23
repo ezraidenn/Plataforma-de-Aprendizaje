@@ -70,6 +70,8 @@ const ACCION: Record<string, string> = {
   download_certificates_zip: "descargó certificados",
   duplicate_item: "duplicó una lección",
   enroll_students: "matriculó alumnos",
+  grade_assignment: "calificó una tarea",
+  grade_exam: "calificó un examen",
   grant_branding: "dio permiso para cambiar la marca",
   hide_exam_results: "ocultó los resultados del examen",
   import_cohort: "copió un grupo a otro curso",
@@ -80,6 +82,8 @@ const ACCION: Record<string, string> = {
   publish_exam_results: "publicó los resultados del examen",
   purge_enrollments: "vació la papelera del curso",
   reassign_course: "cambió el dueño del curso",
+  regrade_assignment: "corrigió la calificación de una tarea",
+  regrade_exam: "corrigió la calificación de un examen",
   renew_certificate: "recertificó",
   rename_cohort: "renombró el grupo",
   reopen_cohort: "reabrió el grupo",
@@ -406,6 +410,20 @@ function sobreQueTextos(filas: Fila[]): Map<string, string> {
       case "certificate_templates": {
         const plantilla = id ? plantillas.get(id) : undefined;
         return plantilla ? `Plantilla ${plantilla.name}` : "Una plantilla de diploma";
+      }
+      // Calificar deja el id del intento o de la entrega, que no dice nada:
+      // el nombre del alumno y la lección van en el detalle del registro
+      case "exam_attempts":
+      case "assignment_submissions": {
+        const d =
+          typeof fila.detail === "object" && fila.detail !== null
+            ? (fila.detail as Record<string, unknown>)
+            : {};
+        const texto = (clave: string) => (typeof d[clave] === "string" ? (d[clave] as string) : undefined);
+        const alumno = texto("studentName");
+        const donde = texto("itemTitle") ?? texto("courseTitle");
+        if (alumno && donde) return `${alumno} en «${donde}»`;
+        return alumno ?? (donde ? `«${donde}»` : "Una calificación");
       }
       case "app_settings":
         return "Configuración de la plataforma";
