@@ -7,6 +7,7 @@
  * Uso: pnpm smoke:assistant
  */
 import { placeholderFor } from "../src/lib/assistant-placeholder";
+import { dateRange } from "../src/lib/assistant-dates";
 import { requestWithTools, type ChatItem, type ToolDef } from "../src/server/services/ai-client";
 import { and, eq, inArray, like } from "drizzle-orm";
 import { nanoid } from "nanoid";
@@ -103,6 +104,27 @@ function placeholderChecks() {
   check("Dentro de un curso", placeholderFor("/teach/courses/abc123/content") === "Habla con la IA sobre este curso");
   check("Perfil de alumno", placeholderFor("/teach/students/xyz") === "Habla con la IA sobre este alumno");
   check("Otra ruta", placeholderFor("/admin/users") === "Habla con la IA o suelta un archivo");
+}
+
+function dateRangeChecks() {
+  console.log("\n— Rangos de fecha");
+  const now = new Date("2026-09-23T15:30:00");
+  const hoy = dateRange("hoy", "", now);
+  check("Hoy: de 00:00 a 23:59", hoy.from.getDate() === 23 && hoy.from.getHours() === 0 && hoy.to.getHours() === 23, [hoy.from.toISOString(), hoy.to.toISOString()]);
+  check("Hoy: etiqueta", hoy.label === "hoy");
+  check("Ayer", dateRange("ayer", "", now).from.getDate() === 22);
+  const semana = dateRange("esta semana", "", now);
+  check("Esta semana: empieza el lunes", semana.from.getDay() === 1 && semana.from.getDate() === 21, semana.from.toISOString());
+  check("Últimos 7 días", dateRange("últimos 7 días", "", now).from.getDate() === 17, dateRange("últimos 7 días", "", now).from.toISOString());
+  const mes = dateRange("este mes", "", now);
+  check("Este mes: del 1 al 30", mes.from.getDate() === 1 && mes.to.getDate() === 30, [mes.from.toISOString(), mes.to.toISOString()]);
+  const iso = dateRange("2026-09-01", "2026-09-15", now);
+  check("Fechas exactas", iso.from.getDate() === 1 && iso.to.getDate() === 15 && iso.label.includes("1"), iso.label);
+  check("Vacío: hoy", dateRange("", "", now).label === "hoy");
+  check("Texto raro: hoy", dateRange("cuando sea", "", now).label === "hoy");
+  check("Al revés se ordena", dateRange("2026-09-15", "2026-09-01", now).from.getDate() === 1);
+  check("Sin acentos ni mayúsculas", dateRange("ULTIMOS 3 DIAS", "", now).from.getDate() === 21);
+  check("Siempre: desde muy atrás", dateRange("siempre", "", now).from.getFullYear() <= 2020);
 }
 
 /** Respuesta simulada de la Responses API: `output` tal cual. */
@@ -1154,6 +1176,7 @@ async function rowsFromAttachmentChecks() {
 
 async function main() {
   placeholderChecks();
+  dateRangeChecks();
   await clientChecks();
   attachmentSummaryChecks();
   await sheetColorChecks();
