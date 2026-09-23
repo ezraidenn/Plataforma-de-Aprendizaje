@@ -5,9 +5,11 @@ import { ArrowLeft, ArrowUp, History, Loader2, Paperclip, Plus, Search, Sparkles
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { ConversationSummary } from "@/lib/assistant-blocks";
+import { AI_ACCEPT } from "@/lib/ai-import-files";
 import { deleteConversationAction, listConversationsAction } from "@/server/actions/assistant";
 import { AssistantMessageView, UserBubble } from "./assistant-message";
-import { useAssistant } from "./assistant-provider";
+import { AttachmentChip } from "./attachment-chip";
+import { DEFAULT_ATTACHMENT_TEXT, MAX_ATTACHMENTS, useAssistant } from "./assistant-provider";
 
 const WELCOME =
   "Dime qué hacer con tus cursos y alumnos: buscar a alguien, ver cómo va, matricular, abrir una pantalla. Lo sencillo se hace al momento y se puede deshacer; lo que afecta a varios lo revisas antes en una tabla.";
@@ -78,10 +80,27 @@ function HeaderButton({ label, onClick, children }: { label: string; onClick(): 
 }
 
 function Thread() {
-  const { messages, pendingText, busy, conversationId, draft, setDraft, send } = useAssistant();
+  const {
+    messages,
+    pendingText,
+    busy,
+    conversationId,
+    draft,
+    setDraft,
+    send,
+    attachments,
+    uploading,
+    attachFiles,
+    removeAttachment,
+  } = useAssistant();
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const canSend = draft.trim().length > 0 && !busy;
+  const fileRef = useRef<HTMLInputElement>(null);
+  // Con un archivo adjunto se puede enviar sin escribir nada: en ese caso va una
+  // pregunta corta por defecto, que es lo que se quiere casi siempre
+  const canSend = (draft.trim().length > 0 || attachments.length > 0) && !busy && !uploading;
+  const full = attachments.length >= MAX_ATTACHMENTS;
+  const clipLabel = full ? `Máximo ${MAX_ATTACHMENTS} archivos por mensaje` : "Adjuntar archivo";
 
   // Al final cuando llega algo nuevo
   useEffect(() => {
@@ -93,7 +112,7 @@ function Thread() {
   }, []);
 
   const submit = () => {
-    if (canSend) void send(draft);
+    if (canSend) void send(draft.trim() || DEFAULT_ATTACHMENT_TEXT);
   };
 
   return (
@@ -122,7 +141,35 @@ function Thread() {
         }}
         className="shrink-0 border-t border-slate-200 p-3"
       >
+        {attachments.length > 0 && (
+          <div className="mb-2 flex flex-col gap-1.5">
+            {attachments.map((a) => (
+              <AttachmentChip key={a.id} name={a.name} detail={a.detail} onRemove={() => removeAttachment(a.id)} />
+            ))}
+          </div>
+        )}
+        {uploading && (
+          <p className="mb-2 flex items-center gap-2 text-[12.5px] text-slate-500" aria-live="polite">
+            <Loader2 className="size-4 animate-spin text-indigo-600" aria-hidden />
+            Leyendo el archivo…
+          </p>
+        )}
         <div className="flex items-end gap-1.5 rounded-2xl border border-slate-200 bg-white py-1.5 pl-3 pr-1.5 shadow-sm focus-within:border-indigo-300 focus-within:ring-2 focus-within:ring-indigo-100">
+          <input
+            ref={fileRef}
+            type="file"
+            hidden
+            aria-hidden
+            tabIndex={-1}
+            accept={AI_ACCEPT}
+            multiple
+            onChange={(e) => {
+              const files = e.target.files;
+              if (files?.length) void attachFiles(files);
+              // Sin esto no se puede volver a elegir el mismo archivo
+              e.target.value = "";
+            }}
+          />
           <textarea
             ref={textareaRef}
             rows={1}
@@ -141,10 +188,11 @@ function Thread() {
           />
           <button
             type="button"
-            disabled
-            title="Adjuntar archivo (próximamente)"
-            aria-label="Adjuntar archivo (próximamente)"
-            className="flex size-8 shrink-0 items-center justify-center rounded-full text-slate-400 disabled:cursor-not-allowed"
+            onClick={() => fileRef.current?.click()}
+            disabled={uploading || full}
+            title={clipLabel}
+            aria-label={clipLabel}
+            className="flex size-8 shrink-0 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-300 disabled:hover:bg-transparent"
           >
             <Paperclip className="size-4" aria-hidden />
           </button>

@@ -17,6 +17,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { AssistantBlock, AssistantMessage, LinkIcon } from "@/lib/assistant-blocks";
 import { undoAction } from "@/server/actions/assistant";
+import { AttachmentChip } from "./attachment-chip";
 import { useAssistant } from "./assistant-provider";
 import { ReviewTable } from "./review-table";
 
@@ -250,8 +251,21 @@ function Block({ block, message, conversationId }: { block: AssistantBlock; mess
 /** Un mensaje del hilo: burbuja del usuario o columna de bloques del asistente. */
 export function AssistantMessageView({ message, conversationId }: { message: AssistantMessage; conversationId: string | null }) {
   if (message.role === "user") {
-    const text = message.blocks.map((b) => ("text" in b ? b.text : "")).join("\n");
-    return <UserBubble text={text} />;
+    // Solo los bloques de texto se juntan: los demás (adjuntos) dejaban un
+    // salto de línea de más al final de la burbuja
+    const text = message.blocks.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("\n");
+    const files = message.blocks.filter((b): b is Extract<AssistantBlock, { type: "attachment" }> => b.type === "attachment");
+    return (
+      <UserBubble text={text}>
+        {files.length > 0 && (
+          <div className="mt-1.5 flex flex-col gap-1.5">
+            {files.map((f, i) => (
+              <AttachmentChip key={i} name={f.name} detail={f.detail} className="border-indigo-100" />
+            ))}
+          </div>
+        )}
+      </UserBubble>
+    );
   }
   return (
     <div className="flex max-w-[96%] flex-col gap-2">
@@ -262,10 +276,11 @@ export function AssistantMessageView({ message, conversationId }: { message: Ass
   );
 }
 
-export function UserBubble({ text }: { text: string }) {
+export function UserBubble({ text, children }: { text: string; children?: React.ReactNode }) {
   return (
-    <div className="ml-auto max-w-[88%] whitespace-pre-wrap rounded-xl rounded-br-sm bg-indigo-50 px-3 py-2 text-[13px] text-indigo-950">
-      {text}
+    <div className="ml-auto max-w-[88%] rounded-xl rounded-br-sm bg-indigo-50 px-3 py-2 text-[13px] text-indigo-950">
+      {text && <p className="whitespace-pre-wrap">{text}</p>}
+      {children}
     </div>
   );
 }
