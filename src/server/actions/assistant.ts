@@ -6,7 +6,9 @@ import { getViewScope } from "@/server/auth/view-scope-cookie";
 import { actingOwnerId } from "@/server/auth/view-scope";
 import { getAiKey, getAiSettings } from "@/server/services/ai-settings";
 import { runTurn } from "@/server/assistant/agent";
-import { applyProposal, cancelProposal } from "@/server/assistant/proposals";
+import { applyProposal, cancelProposal, expireProposals } from "@/server/assistant/proposals";
+import { rateLimitHit } from "@/server/assistant/rate-limit";
+import { platformSuggestions, type Suggestion } from "@/server/assistant/suggestions";
 import { toolByName } from "@/server/assistant/registry";
 import type { ToolCtx } from "@/server/assistant/tool-types";
 import {
@@ -42,6 +44,8 @@ export async function sendTurnAction(input: {
   attachmentIds?: string[];
 }): Promise<SendTurnResult> {
   const user = await requireTeacher();
+  // Antes que nada: un bucle de preguntas no debe llegar ni a mirar la clave
+  if (rateLimitHit(user.id)) return { error: "Espera un momento: demasiadas preguntas seguidas." };
   const key = getAiKey();
   // Solo el admin puede configurar la clave: solo a él se le manda a Configuración
   if (!key) return user.role === "admin" ? { error: NO_KEY_ADMIN, noKey: true } : { error: NO_KEY_TEACHER };
@@ -143,7 +147,15 @@ export async function listConversationsAction(input: { q?: string }): Promise<Co
 
 export async function getConversationAction(input: { id: string }): Promise<{ id: string; title: string; messages: AssistantMessage[] } | null> {
   const user = await requireTeacher();
+  // Antes de leerla: una propuesta vencida debe verse caducada, no pendiente con su botón
+  expireProposals();
   return getConversation(user.id, String(input.id ?? ""));
+}
+
+/** Lo que hace falta atender ahora mismo: se pide al abrir el panel en blanco. */
+export async function suggestionsAction(): Promise<Suggestion[]> {
+  const user = await requireTeacher();
+  return platformSuggestions(user, await getViewScope(user));
 }
 
 export async function deleteConversationAction(input: { id: string }): Promise<{ ok: boolean }> {

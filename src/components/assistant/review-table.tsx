@@ -143,7 +143,10 @@ export function ReviewTable({ block, onChange }: { block: ProposalBlock; onChang
           {shown.map((row) => (
             <tr key={row.id} className={cn("border-b border-slate-100 align-top", row.warning && "bg-amber-50")}>
               {block.columns.map((c, i) => {
-                const editable = !frozen && c.editable !== false;
+                // Una fila bloqueada solo se edita si la propuesta la va a
+                // volver a revisar; si no, corregirla no serviría de nada: se
+                // enseña en gris tachado, como las columnas de solo lectura
+                const editable = !frozen && c.editable !== false && (!row.blocked || !!block.recheckOnApply);
                 const value = row.cells[c.key] ?? "";
                 return (
                   <td key={c.key} className="px-1 py-1">

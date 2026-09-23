@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { ConversationSummary } from "@/lib/assistant-blocks";
 import { AI_ACCEPT } from "@/lib/ai-import-files";
-import { deleteConversationAction, listConversationsAction } from "@/server/actions/assistant";
+import { deleteConversationAction, listConversationsAction, suggestionsAction } from "@/server/actions/assistant";
 import { AssistantMessageView, UserBubble } from "./assistant-message";
 import { AttachmentChip } from "./attachment-chip";
 import { DEFAULT_ATTACHMENT_TEXT, MAX_ATTACHMENTS, useAssistant } from "./assistant-provider";
@@ -15,6 +15,9 @@ const WELCOME =
   "Dime qué hacer con tus cursos y alumnos: buscar a alguien, ver cómo va, matricular, abrir una pantalla. Lo sencillo se hace al momento y se puede deshacer; lo que afecta a varios lo revisas antes en una tabla.";
 
 const DATE_FMT = new Intl.DateTimeFormat("es-MX", { day: "numeric", month: "short" });
+
+/** Sin importar el tipo del servidor: el módulo es «server-only». */
+type PlatformSuggestion = Awaited<ReturnType<typeof suggestionsAction>>[number];
 
 /**
  * Panel lateral del asistente, no modal: 440 px a la derecha en escritorio y
@@ -97,6 +100,9 @@ function Thread() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  // Lo que hace falta atender: se pide UNA vez por apertura del panel en blanco
+  const [platform, setPlatform] = useState<PlatformSuggestion[]>([]);
+  const askedRef = useRef(false);
   // Con un archivo adjunto se puede enviar sin escribir nada: en ese caso va una
   // pregunta corta por defecto, que es lo que se quiere casi siempre
   const canSend = (draft.trim().length > 0 || attachments.length > 0) && !busy && !uploading;
@@ -112,6 +118,19 @@ function Thread() {
     textareaRef.current?.focus();
   }, []);
 
+  // Solo en una conversación nueva y vacía; si falla, no se pinta nada
+  useEffect(() => {
+    if (askedRef.current || conversationId || messages.length > 0) return;
+    askedRef.current = true;
+    void (async () => {
+      try {
+        setPlatform(await suggestionsAction());
+      } catch {
+        /* sin sugerencias */
+      }
+    })();
+  }, [conversationId, messages.length]);
+
   const submit = () => {
     if (canSend) void send(draft.trim() || DEFAULT_ATTACHMENT_TEXT);
   };
@@ -120,7 +139,25 @@ function Thread() {
     <>
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-4">
         {messages.length === 0 && !pendingText && (
-          <p className="rounded-xl border border-dashed border-slate-200 px-3 py-3 text-[13px] leading-relaxed text-slate-600">{WELCOME}</p>
+          <>
+            <p className="rounded-xl border border-dashed border-slate-200 px-3 py-3 text-[13px] leading-relaxed text-slate-600">{WELCOME}</p>
+            {platform.length > 0 && (
+              <div className="flex flex-col gap-1.5">
+                {platform.map((s) => (
+                  <button
+                    key={s.text}
+                    type="button"
+                    onClick={() => void send(s.text)}
+                    disabled={busy}
+                    className="flex w-full items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-left text-[12.5px] hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    <span className="min-w-0 flex-1 truncate text-slate-800">{s.text}</span>
+                    <span className="shrink-0 text-slate-500">{s.detail}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
         )}
         {messages.map((m) => (
           <AssistantMessageView key={m.id} message={m} conversationId={conversationId} />
