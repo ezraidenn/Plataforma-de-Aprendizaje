@@ -44,6 +44,7 @@ import {
   updateCourse,
 } from "../src/server/services/courses";
 import { createTemplate } from "../src/server/services/certificates";
+import { audit } from "../src/server/services/audit";
 import { createItem, getItem, getItems } from "../src/server/services/tree";
 import { createQuestion, listQuestions } from "../src/server/services/exams";
 import { verifyPassword } from "../src/server/auth/passwords";
@@ -3069,6 +3070,268 @@ async function crearMaestroChecks() {
   check("Esa contraseña es la que abre la cuenta", !!cuenta && (await verifyPassword(cuenta.passwordHash, contrasena)));
 }
 
+/** La tabla de una respuesta, o undefined si esa respuesta no pinta ninguna. */
+function tablaDe(blocks: AssistantBlock[] | undefined): Extract<AssistantBlock, { type: "table" }> | undefined {
+  return (blocks ?? []).find((b): b is Extract<AssistantBlock, { type: "table" }> => b.type === "table");
+}
+
+/** Filas de la tabla, o [] si no hay. */
+function filasDeTabla(blocks: AssistantBlock[] | undefined): string[][] {
+  return tablaDe(blocks)?.rows ?? [];
+}
+
+/** Todo el texto de los bloques `text` de una respuesta. */
+function textosDe(blocks: AssistantBlock[] | undefined): string {
+  return (blocks ?? []).filter((b) => b.type === "text").map((b) => (b.type === "text" ? b.text : "")).join("\n");
+}
+
+async function historialChecks() {
+  console.log("\n— Historial de cambios");
+  const user = { ...teacherUser, id: ids.teacher };
+  const conv = createConversation(ids.teacher, `${P} historial`);
+  const anchor = appendMessage(conv.id, "assistant", [], "");
+  const ctx = { ...ctxFor(user, ownScope(user)), conversationId: conv.id, messageId: anchor.id };
+  const admin: SessionUser = { id: ids.admin, email: "", fullName: `${P} Admin`, role: "admin" };
+  const convAdmin = createConversation(ids.admin, `${P} historial admin`);
+  const adminCtx = { ...ctxFor(admin, { kind: "all" }), conversationId: convAdmin.id, messageId: anchor.id };
+  const tool = toolByName("historial")!;
+  const params = (extra: Record<string, string> = {}) => ({ desde: "siempre", hasta: "", sobre: "", id: "", quien: "", ...extra });
+
+  // Un curso y una alumna propios; el curso se puede publicar (tiene lección)
+  const curso = createCourse({ ownerId: ids.teacher, title: `${P} Historial` }).id;
+  createItem({ courseId: curso, parentId: null, kind: "text", title: `${P} Lección del historial` });
+  const hilda = nanoid();
+  makeUser(hilda, "hilda", "Hilda Historial", "student", ids.teacher);
+
+  // Dos movimientos del asistente, los dos al momento: matricular y publicar
+  await toolByName("matricular")!.run({ alumno_ids: [hilda], curso_id: curso }, ctx);
+  await toolByName("publicar_curso")!.run({ curso_id: curso, accion: "publicar" }, ctx);
+
+  // Lo que otro maestro hizo en SU curso, y lo que el admin hizo en el del maestro
+  const cursoAjeno = createCourse({ ownerId: ids.otroMaestro, title: `${P} Curso de otro` }).id;
+  audit(ids.otroMaestro, "enroll_students", "enrollments", cursoAjeno, { count: 1 });
+  audit(ids.admin, "reassign_course", "courses", curso, { newOwnerId: ids.teacher });
+
+  const mio = await tool.run(params(), ctx);
+  const hay = (rows: string[][], que: string, sobre?: string) =>
+    rows.some((r) => r[2] === que && (sobre === undefined || r[3] === sobre));
+  check("Columnas Cuándo, Quién, Qué y Sobre", (tablaDe(mio.blocks)?.columns ?? []).join(",") === "Cuándo,Quién,Qué,Sobre", tablaDe(mio.blocks)?.columns);
+  check("Deja la descarga del CSV", (downloadOf(mio.blocks)?.href ?? "").startsWith("/api/assistant/export/"), downloadOf(mio.blocks));
+  check("Todas las filas dicen quién fue", filasDeTabla(mio.blocks).every((r) => r[1].length > 0), filasDeTabla(mio.blocks).slice(0, 3));
+
+  // Acotado a ese curso caben justo los tres cambios que lo tocaron
+  const porCurso = filasDeTabla((await tool.run(params({ sobre: "curso", id: curso }), ctx)).blocks);
+  check(
+    "La matrícula se lee en español y se nota que fue el asistente",
+    hay(porCurso, "matriculó alumnos (con el asistente)", `${P} Hilda Historial en «${P} Historial»`),
+    porCurso
+  );
+  check("Publicar el curso también queda registrado", hay(porCurso, "cambió el estado del curso (con el asistente)", `«${P} Historial»`), porCurso);
+  check("El maestro ve lo que el admin hizo en SU curso", hay(porCurso, "cambió el dueño del curso", `«${P} Historial»`), porCurso);
+  check("Quién es el nombre de la persona", porCurso.some((r) => r[1] === `${P} Admin`) && porCurso.some((r) => r[1] === `${P} Maestro`), porCurso);
+  check("Filtro por curso: solo lo de ese curso", porCurso.length === 3 && porCurso.every((r) => r[3].includes(`${P} Historial`)), porCurso);
+
+  // Permisos: lo de otro maestro sobre lo suyo no se ve; el admin sí lo ve
+  const ajenoParaElMaestro = await tool.run(params({ sobre: "curso", id: cursoAjeno }), ctx);
+  check("El maestro no ve las acciones de otro maestro sobre un curso ajeno", ajenoParaElMaestro.forModel.includes("Sin cambios"), ajenoParaElMaestro.forModel);
+  const ajenoParaElAdmin = await tool.run(params({ sobre: "curso", id: cursoAjeno }), adminCtx);
+  check(
+    "El admin sí las ve",
+    hay(filasDeTabla(ajenoParaElAdmin.blocks), "matriculó alumnos", `«${P} Curso de otro`.concat("»")),
+    filasDeTabla(ajenoParaElAdmin.blocks)
+  );
+
+  // Filtros
+  const porAlumno = filasDeTabla((await tool.run(params({ sobre: "alumno", id: hilda }), ctx)).blocks);
+  check("Filtro por alumno: su matrícula", porAlumno.length === 1 && porAlumno[0][3] === `${P} Hilda Historial en «${P} Historial»`, porAlumno);
+  const porQuien = await tool.run(params({ sobre: "curso", id: curso, quien: `${P} Admin` }), adminCtx);
+  check(
+    "Filtro por quién: solo lo que hizo esa persona",
+    filasDeTabla(porQuien.blocks).length === 1 && filasDeTabla(porQuien.blocks)[0][1] === `${P} Admin`,
+    filasDeTabla(porQuien.blocks)
+  );
+  const quienRaro = await tool.run(params({ quien: "no existe nadie asi" }), ctx);
+  check("Un «quién» que no existe: lo dice y no consulta", !quienRaro.blocks && quienRaro.forModel.includes("No encontré"), quienRaro.forModel);
+  const sinId = await tool.run(params({ sobre: "alumno" }), ctx);
+  check("«sobre» sin id: pide el id", !sinId.blocks && sinId.forModel.includes("id"), sinId.forModel);
+
+  // El rango de fechas recorta
+  const viejo = await tool.run(params({ desde: "2020-01-01", hasta: "2020-01-02" }), ctx);
+  check("Un rango sin nada: lo dice", viejo.forModel.includes("Sin cambios registrados"), viejo.forModel);
+  const hoy = await tool.run(params({ desde: "hoy" }), ctx);
+  check("Hoy sí trae los cambios de hoy", filasDeTabla(hoy.blocks).length >= 3 && hoy.forModel.includes("hoy"), hoy.forModel);
+
+  check(
+    "A la IA le llegan menos de 400 caracteres y sin correos",
+    [mio, porQuien, viejo, hoy].every((r) => r.forModel.length <= 400 && !r.forModel.includes("@")),
+    [mio, porQuien, viejo, hoy].map((r) => r.forModel.length)
+  );
+  check("Los tres últimos cambios van en el texto de la IA", mio.forModel.includes("Lo último:"), mio.forModel);
+}
+
+/** Busca un punto de la lista de revisión por su nombre. */
+function puntoDe(rows: string[][], nombre: string): string[] | undefined {
+  return rows.find((r) => r[0] === nombre);
+}
+
+async function revisarCursoChecks() {
+  console.log("\n— Revisar un curso");
+  const user = { ...teacherUser, id: ids.teacher };
+  const ctx = ctxFor(user, ownScope(user));
+  const tool = toolByName("revisar_curso")!;
+
+  // Curso vacío en borrador: varios puntos por revisar
+  const vacio = createCourse({ ownerId: ids.teacher, title: `${P} Revisión vacía` }).id;
+  const revVacio = await tool.run({ curso_id: vacio }, ctx);
+  const filasVacio = filasDeTabla(revVacio.blocks);
+  check("Curso vacío: sin ninguna lección", puntoDe(filasVacio, "Contenido")?.[1] === "falta", filasVacio);
+  check(
+    "Curso vacío: sin diploma, y dice qué significa",
+    puntoDe(filasVacio, "Diploma")?.[1] === "falta" && (puntoDe(filasVacio, "Diploma")?.[2] ?? "").includes("no recibirá certificado"),
+    filasVacio
+  );
+  check(
+    "Curso vacío: no se puede publicar, con el motivo de la plataforma",
+    puntoDe(filasVacio, "Publicar")?.[1] === "falta" && (puntoDe(filasVacio, "Publicar")?.[2] ?? "").includes("ninguna lección"),
+    filasVacio
+  );
+  check(
+    "Los tiles cuentan lo que está listo y lo que falta",
+    tileOf(revVacio.blocks, "Por revisar") === String(filasVacio.filter((r) => r[1] === "falta").length) &&
+      tileOf(revVacio.blocks, "Listo") === String(filasVacio.filter((r) => r[1] === "bien").length),
+    filasVacio
+  );
+
+  // Curso completo y publicado: nada que revisar
+  const bueno = createCourse({ ownerId: ids.teacher, title: `${P} Revisión completa` }).id;
+  createItem({ courseId: bueno, parentId: null, kind: "text", title: `${P} Lección buena` });
+  updateCourse(bueno, { certificateTemplateId: createTemplate(ids.teacher, `${P} Diploma revisión`).id });
+  publishCourse(bueno);
+  const rita = nanoid();
+  makeUser(rita, "rita", "Rita Revisión", "student", ids.teacher);
+  enrollStudents(bueno, [rita], ids.teacher);
+  const revBueno = await tool.run({ curso_id: bueno }, ctx);
+  check("Curso completo y publicado: nada por revisar", tileOf(revBueno.blocks, "Por revisar") === "0", revBueno.forModel);
+  check("Y lo dice claramente", textosDe(revBueno.blocks).includes("Todo en orden"), revBueno.blocks);
+  check(
+    "Enlaces al contenido, a los ajustes y a las plantillas",
+    (revBueno.blocks ?? []).some(
+      (b) =>
+        b.type === "links" &&
+        b.links.some((l) => l.href === `/teach/courses/${bueno}/content`) &&
+        b.links.some((l) => l.href === `/teach/courses/${bueno}/settings`) &&
+        b.links.some((l) => l.href === "/teach/templates")
+    ),
+    revBueno.blocks
+  );
+
+  // Un examen sin preguntas y sin puntaje mínimo
+  createItem({ courseId: bueno, parentId: null, kind: "exam", title: `${P} Examen vacío` });
+  const revExamen = await tool.run({ curso_id: bueno }, ctx);
+  const filasExamen = filasDeTabla(revExamen.blocks);
+  check(
+    "Un examen sin preguntas aparece como pendiente",
+    puntoDe(filasExamen, "Exámenes")?.[1] === "falta" && (puntoDe(filasExamen, "Exámenes")?.[2] ?? "").includes("sin ninguna pregunta"),
+    filasExamen
+  );
+  check("Y el examen sin puntaje mínimo también", puntoDe(filasExamen, "Puntaje mínimo")?.[1] === "falta", filasExamen);
+
+  // Una tarea sin fecha límite
+  createItem({ courseId: bueno, parentId: null, kind: "assignment", title: `${P} Tarea sin fecha` });
+  const revTarea = await tool.run({ curso_id: bueno }, ctx);
+  check("Una tarea sin fecha límite también se avisa", puntoDe(filasDeTabla(revTarea.blocks), "Fechas límite")?.[1] === "falta", filasDeTabla(revTarea.blocks));
+
+  // Publicado y sin nadie matriculado
+  const sinGente = createCourse({ ownerId: ids.teacher, title: `${P} Revisión sin gente` }).id;
+  createItem({ courseId: sinGente, parentId: null, kind: "text", title: `${P} Lección sola` });
+  publishCourse(sinGente);
+  check(
+    "Publicado y sin matriculados: se avisa",
+    puntoDe(filasDeTabla((await tool.run({ curso_id: sinGente }, ctx)).blocks), "Matriculados")?.[1] === "falta"
+  );
+
+  const otro = { ...teacherUser, id: ids.admin };
+  const ajeno = await tool.run({ curso_id: bueno }, ctxFor(otro, ownScope(otro)));
+  check("Curso ajeno: negado y sin enseñar nada", !ajeno.blocks && ajeno.forModel.includes("no te pertenece"), ajeno.forModel);
+  check(
+    "A la IA le llegan menos de 400 caracteres y sin correos",
+    [revVacio, revBueno, revExamen, revTarea].every((r) => r.forModel.length <= 400 && !r.forModel.includes("@")),
+    [revVacio, revBueno, revExamen, revTarea].map((r) => r.forModel.length)
+  );
+}
+
+async function revisarAlumnoChecks() {
+  console.log("\n— Revisar a un alumno");
+  const user = { ...teacherUser, id: ids.teacher };
+  const ctx = ctxFor(user, ownScope(user));
+  const tool = toolByName("revisar_alumno")!;
+  const completar = (enrollmentId: string, itemId: string) =>
+    db.insert(itemProgress).values({ id: nanoid(), enrollmentId, itemId, status: "completed", percent: 100, completedAt: new Date() }).run();
+  const matriculaDeCurso = (courseId: string, studentId: string) =>
+    db.select().from(enrollments).where(and(eq(enrollments.courseId, courseId), eq(enrollments.studentId, studentId))).get()!;
+
+  // A medio curso: dos lecciones requeridas, una hecha
+  const curso = createCourse({ ownerId: ids.teacher, title: `${P} Revisión alumno` }).id;
+  const uno = createItem({ courseId: curso, parentId: null, kind: "text", title: `${P} Lección uno` });
+  const dos = createItem({ courseId: curso, parentId: null, kind: "text", title: `${P} Lección dos` });
+  const rosa = nanoid();
+  makeUser(rosa, "rosa", "Rosa Media", "student", ids.teacher);
+  enrollStudents(curso, [rosa], ids.teacher);
+  const matricula = matriculaDeCurso(curso, rosa);
+  completar(matricula.id, uno.id);
+
+  const medio = await tool.run({ alumno_id: rosa, curso_id: curso }, ctx);
+  check("A medio curso: avance y lo que falta", tileOf(medio.blocks, "Avance") === "50%" && tileOf(medio.blocks, "Requeridas que faltan") === "1", medio.blocks);
+  check(
+    "La condición sale del motor de reglas, con su cuenta",
+    filasDeTabla(medio.blocks).some((r) => r[0] === "Completar todo el contenido requerido" && r[1] === "falta" && r[2].includes("1 de 2")),
+    filasDeTabla(medio.blocks)
+  );
+  check("Nombra la lección que le falta", textosDe(medio.blocks).includes(`${P} Lección dos`), textosDe(medio.blocks));
+  check("Y enlaza al perfil y al curso", (medio.blocks ?? []).some((b) => b.type === "links" && b.links.some((l) => l.href === `/teach/students/${rosa}`)), medio.blocks);
+
+  // Cumple todo, pero el curso no tiene diploma
+  completar(matricula.id, dos.id);
+  const sinDiploma = await tool.run({ alumno_id: rosa, curso_id: curso }, ctx);
+  check("Cumple todas las condiciones", filasDeTabla(sinDiploma.blocks).length > 0 && filasDeTabla(sinDiploma.blocks).every((r) => r[1] === "cumple"), filasDeTabla(sinDiploma.blocks));
+  check("Sin plantilla de diploma: explica justo eso", textosDe(sinDiploma.blocks).includes("no tiene plantilla de diploma"), textosDe(sinDiploma.blocks));
+
+  // Terminó y ya tiene su certificado
+  const listo = createCourse({ ownerId: ids.teacher, title: `${P} Revisión diploma` }).id;
+  const leccion = createItem({ courseId: listo, parentId: null, kind: "text", title: `${P} Lección lista` });
+  const tito = nanoid();
+  makeUser(tito, "tito", "Tito Terminado", "student", ids.teacher);
+  enrollStudents(listo, [tito], ids.teacher);
+  const suya = matriculaDeCurso(listo, tito);
+  completar(suya.id, leccion.id);
+  db.update(enrollments).set({ status: "completed", completedAt: new Date() }).where(eq(enrollments.id, suya.id)).run();
+  const folio = `${P}-CERT-${nanoid(8)}`;
+  db.insert(certificates)
+    .values({ id: nanoid(), folio, enrollmentId: suya.id, studentId: tito, courseId: listo, issuedAt: new Date(), verificationHash: "x" })
+    .run();
+  const conDiploma = await tool.run({ alumno_id: tito, curso_id: listo }, ctx);
+  check("Con certificado: lo dice con su folio", textosDe(conDiploma.blocks).includes(folio) && conDiploma.forModel.includes(folio), conDiploma.forModel);
+  check("Y que no vence", textosDe(conDiploma.blocks).includes("no vence"), textosDe(conDiploma.blocks));
+
+  // Sin matrícula, alumno ajeno y curso ajeno
+  const sinMatricula = await tool.run({ alumno_id: tito, curso_id: curso }, ctx);
+  check("Sin matrícula en ese curso: lo dice", sinMatricula.forModel.includes("no está matriculado"), sinMatricula.forModel);
+  const ajena = nanoid();
+  makeUser(ajena, "ajena2", "Ajena Dos", "student", ids.admin);
+  const deOtro = await tool.run({ alumno_id: ajena, curso_id: curso }, ctx);
+  check("Alumno de otro maestro: negado", !deOtro.blocks && deOtro.forModel.includes("no está entre los tuyos"), deOtro.forModel);
+  const otro = { ...teacherUser, id: ids.admin };
+  const cursoAjeno = await tool.run({ alumno_id: rosa, curso_id: curso }, ctxFor(otro, ownScope(otro)));
+  check("Curso ajeno: negado", !cursoAjeno.blocks && cursoAjeno.forModel.includes("no te pertenece"), cursoAjeno.forModel);
+
+  check(
+    "A la IA le llegan menos de 400 caracteres y sin correos",
+    [medio, sinDiploma, conDiploma, sinMatricula].every((r) => r.forModel.length <= 400 && !r.forModel.includes("@")),
+    [medio, sinDiploma, conDiploma, sinMatricula].map((r) => r.forModel.length)
+  );
+  check("Ya no se anuncian las revisiones como «aún no puedo»", !NOT_YET.join(" ").toLowerCase().includes("revis"), NOT_YET);
+}
+
 async function reactivarAlumnosChecks() {
   console.log("\n— Reactivar alumnos");
   const user = { ...teacherUser, id: ids.teacher };
@@ -3887,6 +4150,9 @@ async function main() {
     await duplicarCursoChecks();
     await reasignarCursoChecks();
     await crearMaestroChecks();
+    await historialChecks();
+    await revisarCursoChecks();
+    await revisarAlumnoChecks();
     // Al final: borrar a Dora dejaría sin alumno a las demás secciones
     await reactivarAlumnosChecks();
     await bajaAlumnosChecks();

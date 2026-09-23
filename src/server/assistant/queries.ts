@@ -108,7 +108,7 @@ function percent(score: number | null, max: number | null): number | null {
 }
 
 /** Recorta lo que ve la IA: una línea y nunca más de 400 caracteres. */
-function clampForModel(text: string): string {
+export function clampForModel(text: string): string {
   const clean = text.replace(/\s+/g, " ").trim();
   return clean.length <= MAX_FOR_MODEL ? clean : `${clean.slice(0, MAX_FOR_MODEL - 1)}…`;
 }
