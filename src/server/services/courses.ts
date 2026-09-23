@@ -32,6 +32,7 @@ import {
 } from "./cohorts";
 import { audit } from "./audit";
 import { fileIdsForCourse } from "./storage-layout";
+import { getItems } from "./tree";
 
 export type Course = typeof courses.$inferSelect;
 
@@ -97,17 +98,34 @@ export function updateCourse(
   }
 }
 
-/** Publicar exige que ningún documento esté pendiente/procesando/con error. */
-export function publishCourse(courseId: string): { ok: true } | { ok: false; blockers: string[] } {
+/**
+ * Lo que impide publicar, en frases que se enseñan tal cual (la pantalla del
+ * curso y el asistente las muestran igual):
+ *
+ * - Un curso sin una sola lección: los estudiantes lo verían vacío.
+ * - Un documento que sigue procesándose o falló: abrirían una lección en blanco.
+ */
+export function publishBlockers(courseId: string): string[] {
+  const blockers: string[] = [];
+  // Lo que el alumno abre son las lecciones; las carpetas no cuentan
+  if (!getItems(courseId).some((item) => item.kind !== "folder")) {
+    blockers.push("El curso no tiene ninguna lección: agrega contenido antes de publicarlo.");
+  }
   const pending = db
-    .select({ title: courseItems.title, status: itemDocuments.processingStatus })
+    .select({ title: courseItems.title })
     .from(itemDocuments)
     .innerJoin(courseItems, eq(itemDocuments.itemId, courseItems.id))
     .where(and(eq(courseItems.courseId, courseId), sql`${itemDocuments.processingStatus} != 'ready'`))
     .all();
+  for (const p of pending) blockers.push(`«${p.title}»: el documento sigue procesándose o falló.`);
+  return blockers;
+}
 
-  if (pending.length > 0) {
-    return { ok: false, blockers: pending.map((p) => p.title) };
+/** Publicar exige que no quede ningún bloqueo (ver `publishBlockers`). */
+export function publishCourse(courseId: string): { ok: true } | { ok: false; blockers: string[] } {
+  const blockers = publishBlockers(courseId);
+  if (blockers.length > 0) {
+    return { ok: false, blockers };
   }
   db.update(courses)
     .set({ status: "published", updatedAt: new Date() })

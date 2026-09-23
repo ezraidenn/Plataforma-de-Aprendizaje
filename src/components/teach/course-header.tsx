@@ -38,7 +38,7 @@ type CourseHeaderProps = {
     status: "draft" | "published" | "archived";
     coverFileId?: string | null;
   };
-  /** Títulos de documentos sin procesar que bloquean la publicación. */
+  /** Lo que impide publicar (curso sin lecciones, documentos sin procesar). */
   publishBlockers: string[];
 };
 
@@ -75,7 +75,7 @@ export function CourseHeader({ course, publishBlockers }: CourseHeaderProps) {
       if ("error" in result) {
         toast.error(result.error);
       } else if (!result.ok) {
-        toast.error("Aún no puedes publicar: hay documentos sin procesar", {
+        toast.error("Aún no puedes publicar", {
           description: result.blockers.join(" · "),
           duration: 8000,
         });
@@ -203,8 +203,8 @@ export function CourseHeader({ course, publishBlockers }: CourseHeaderProps) {
                     <span className="flex items-center gap-1 text-xs text-warning">
                       <TriangleAlert className="size-3" aria-hidden />
                       {publishBlockers.length === 1
-                        ? "1 documento sin procesar"
-                        : `${publishBlockers.length} documentos sin procesar`}
+                        ? "Falta 1 cosa por resolver"
+                        : `Faltan ${publishBlockers.length} cosas por resolver`}
                     </span>
                   )}
                 </span>

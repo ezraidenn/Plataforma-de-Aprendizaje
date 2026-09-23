@@ -1,7 +1,6 @@
 import "server-only";
 import { audit } from "@/server/services/audit";
 import { getOwnedCourse, publishCourse, setCourseStatus, type Course } from "@/server/services/courses";
-import { getItems } from "@/server/services/tree";
 import type { AssistantBlock } from "@/lib/assistant-blocks";
 import { schema, str, strEnum, param, type AssistantTool, type ToolCtx, type ToolResult } from "../tool-types";
 
@@ -9,10 +8,10 @@ import { schema, str, strEnum, param, type AssistantTool, type ToolCtx, type Too
  * Publicar, archivar o devolver a borrador un curso. Es lo mismo que los
  * botones de la cabecera del curso:
  *
- * - Publicar pasa por `publishCourse`, que NO publica si algún documento
- *   sigue procesándose (el alumno abriría una lección vacía). Aquí se suma una
- *   comprobación previa: un curso sin nada dentro tampoco se publica, porque
- *   los estudiantes lo verían sin una sola lección.
+ * - Publicar pasa por `publishCourse`, que NO publica si el curso no tiene
+ *   ninguna lección (los estudiantes lo verían vacío) o si algún documento
+ *   sigue procesándose (abrirían una lección en blanco). Los motivos vienen
+ *   ya escritos de ahí: aquí solo se enseñan.
  * - Archivar lo saca de la vista de los estudiantes sin borrar nada.
  * - Borrador lo devuelve a edición.
  *
@@ -43,11 +42,6 @@ function enlaces(courseId: string): AssistantBlock {
       { label: "Ver el contenido del curso", href: `/teach/courses/${courseId}/content`, icon: "page" },
     ],
   };
-}
-
-/** Lo que el alumno vería: las lecciones del curso (las carpetas no cuentan). */
-function tieneContenido(courseId: string): boolean {
-  return getItems(courseId).some((item) => item.kind !== "folder");
 }
 
 /** Respuesta cuando no se puede publicar: qué falta y dónde arreglarlo. */
@@ -101,17 +95,8 @@ export const publicarCurso: AssistantTool = {
     }
 
     if (accion === "publicar") {
-      // Antes de llamar a publishCourse: si publica, ya no hay vuelta atrás sin otro cambio
-      if (!tieneContenido(course.id)) {
-        return conBloqueos(course, ["No tiene ninguna lección todavía: agrega contenido antes de publicarlo."]);
-      }
       const result = publishCourse(course.id);
-      if (!result.ok) {
-        return conBloqueos(
-          course,
-          result.blockers.map((titulo) => `«${titulo}»: el documento sigue procesándose o falló.`)
-        );
-      }
+      if (!result.ok) return conBloqueos(course, result.blockers);
     } else {
       setCourseStatus(course.id, destino);
     }

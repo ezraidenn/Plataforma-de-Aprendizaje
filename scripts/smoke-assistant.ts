@@ -32,7 +32,14 @@ import {
   notifications,
   users,
 } from "../src/server/db/schema";
-import { createCourse, enrollStudents, setStudentActive, unenrollStudent } from "../src/server/services/courses";
+import {
+  createCourse,
+  enrollStudents,
+  publishCourse,
+  setCourseStatus,
+  setStudentActive,
+  unenrollStudent,
+} from "../src/server/services/courses";
 import { createTemplate } from "../src/server/services/certificates";
 import { createItem, getItem } from "../src/server/services/tree";
 import { listQuestions } from "../src/server/services/exams";
@@ -2565,6 +2572,18 @@ async function publicarCursoChecks() {
   const anchor = appendMessage(conv.id, "assistant", [], "");
   const ctx = { ...ctxFor(user, ownScope(user)), conversationId: conv.id, messageId: anchor.id };
   const tool = toolByName("publicar_curso")!;
+
+  // El bloqueo vive en la plataforma, no en la herramienta: se publique desde
+  // donde se publique, un curso vacío no llega a los alumnos
+  const raiz = publishCourse(ids.e5Vacio);
+  check(
+    "publishCourse: un curso sin lecciones no se publica",
+    !raiz.ok && raiz.blockers.some((b) => b.includes("ninguna lección")) && estadoDe(ids.e5Vacio) === "draft",
+    raiz
+  );
+  const conLeccion = publishCourse(ids.e5Course);
+  check("publishCourse: con lecciones sí publica", conLeccion.ok && estadoDe(ids.e5Course) === "published", conLeccion);
+  setCourseStatus(ids.e5Course, "draft"); // como estaba, para las pruebas de la herramienta
 
   const vacio = await tool.run({ curso_id: ids.e5Vacio, accion: "publicar" }, ctx);
   check(

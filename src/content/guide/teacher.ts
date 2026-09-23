@@ -51,7 +51,7 @@ export const TEACHER_GUIDE: RoleGuide = {
         },
         {
           title: "Publicar",
-          text: "Mientras está en borrador, los alumnos no lo ven. Cuando el contenido esté listo, abre el menú de estado en el encabezado del curso y pulsa «Publicar». Si hay documentos sin procesar, la plataforma te lo indica antes.",
+          text: "Mientras está en borrador, los alumnos no lo ven. Cuando el contenido esté listo, abre el menú de estado en el encabezado del curso y pulsa «Publicar». Si el curso no tiene ninguna lección o hay documentos sin procesar, la plataforma te lo indica antes.",
           scene: "teacher-curso-3",
           ui: ["Borrador", "Publicado", "Archivado"],
         },
