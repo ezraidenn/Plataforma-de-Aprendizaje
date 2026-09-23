@@ -12,11 +12,27 @@ import { requestWithTools, type ChatItem, type ToolDef } from "../src/server/ser
 import { and, eq, inArray, like } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { db } from "../src/server/db";
-import { aiConversations, aiExports, aiProposals, auditLog, courses as coursesTable, enrollments, files, users } from "../src/server/db/schema";
+import {
+  aiConversations,
+  aiExports,
+  aiProposals,
+  assignmentSubmissions,
+  auditLog,
+  certificates,
+  courseItems,
+  courses as coursesTable,
+  enrollments,
+  examAttempts,
+  exams,
+  files,
+  itemAssignments,
+  users,
+} from "../src/server/db/schema";
 import { createCourse, enrollStudents, setStudentActive, unenrollStudent } from "../src/server/services/courses";
 import { ownScope, type ViewScope } from "../src/server/auth/view-scope";
 import type { SessionUser } from "../src/server/auth/sessions";
 import { toolsForRole, toolByName, toolDefsForRole } from "../src/server/assistant/registry";
+import { certificadosQuery, movimientosQuery, panoramaQuery, pendientesQuery } from "../src/server/assistant/queries";
 import { runTurn } from "../src/server/assistant/agent";
 import { systemPrompt } from "../src/server/assistant/prompt";
 import type { ToolCtx } from "../src/server/assistant/tool-types";
@@ -258,9 +274,24 @@ async function cleanup() {
     for (const id of courseIds) {
       // Cubre assistant_matricular y assistant_matricular_undo
       db.delete(auditLog).where(and(eq(auditLog.entity, "enrollment"), like(auditLog.entityId, `${id}:%`))).run();
+      // Lo que dejó queryChecks. Los certificados NO cuelgan del curso (su FK
+      // no borra en cascada, ni la de la matrícula ni la del alumno): van
+      // primero o el borrado del curso falla. Lo de abajo sí caería en cascada
+      // con el curso, pero se borra a mano para no depender de ella.
+      db.delete(certificates).where(eq(certificates.courseId, id)).run();
+      const itemIds = db.select({ id: courseItems.id }).from(courseItems).where(eq(courseItems.courseId, id)).all().map((i) => i.id);
+      if (itemIds.length) {
+        db.delete(examAttempts).where(inArray(examAttempts.examItemId, itemIds)).run();
+        db.delete(assignmentSubmissions).where(inArray(assignmentSubmissions.itemId, itemIds)).run();
+        db.delete(exams).where(inArray(exams.itemId, itemIds)).run();
+        db.delete(itemAssignments).where(inArray(itemAssignments.itemId, itemIds)).run();
+        db.delete(courseItems).where(inArray(courseItems.id, itemIds)).run();
+      }
       db.delete(enrollments).where(eq(enrollments.courseId, id)).run();
       db.delete(coursesTable).where(eq(coursesTable.id, id)).run();
     }
+    // Por si alguna prueba dejó un certificado de una cuenta zasst en otro curso
+    db.delete(certificates).where(inArray(certificates.studentId, userIds)).run();
     for (const id of userIds) db.delete(users).where(eq(users.id, id)).run();
   });
 }
@@ -650,6 +681,121 @@ async function crearCursosChecks() {
     "…y existe en la base",
     db.select().from(coursesTable).where(like(coursesTable.title, `${P} Espacios%`)).all().length === 1
   );
+}
+
+/**
+ * Movimientos de HOY en el curso zasst para que las consultas tengan qué leer:
+ * una tarea entregada, un examen calificado por debajo del mínimo, el curso
+ * completado y un certificado que vence en 10 días. Lo borra `cleanup()`.
+ */
+function seedMovimientos() {
+  const now = new Date();
+  // Ratos distintos del MISMO día (así se comprueba el orden por fecha), sin
+  // salirse de «hoy» aunque la prueba corra recién pasada la medianoche
+  const inicioDia = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const antes = (minutos: number) => new Date(Math.max(inicioDia + 1000, now.getTime() - minutos * 60_000));
+  const entregaAt = antes(30);
+  const examenAt = antes(15);
+
+  const enrollment = db
+    .select({ id: enrollments.id })
+    .from(enrollments)
+    .where(and(eq(enrollments.courseId, ids.course), eq(enrollments.studentId, ids.s1)))
+    .get()!;
+
+  const tareaId = nanoid();
+  db.insert(courseItems).values({ id: tareaId, courseId: ids.course, position: 0, kind: "assignment", title: `${P} Tarea 1` }).run();
+  db.insert(itemAssignments).values({ itemId: tareaId }).run();
+  db.insert(assignmentSubmissions)
+    .values({ id: nanoid(), itemId: tareaId, enrollmentId: enrollment.id, studentId: ids.s1, submittedAt: entregaAt })
+    .run();
+
+  const examenId = nanoid();
+  db.insert(courseItems).values({ id: examenId, courseId: ids.course, position: 1, kind: "exam", title: `${P} Examen final` }).run();
+  db.insert(exams).values({ itemId: examenId, passScore: 80 }).run();
+  db.insert(examAttempts)
+    .values({
+      id: nanoid(),
+      examItemId: examenId,
+      studentId: ids.s1,
+      enrollmentId: enrollment.id,
+      attemptNumber: 1,
+      startedAt: entregaAt,
+      submittedAt: examenAt,
+      finalScore: 6,
+      maxScoreSnapshot: 10, // 60 %: por debajo del mínimo de 80
+      status: "graded",
+    })
+    .run();
+
+  db.update(enrollments).set({ status: "completed", completedAt: now }).where(eq(enrollments.id, enrollment.id)).run();
+
+  db.insert(certificates)
+    .values({
+      id: nanoid(),
+      folio: `${P}-CERT-${nanoid(8)}`,
+      enrollmentId: enrollment.id,
+      studentId: ids.s1,
+      courseId: ids.course,
+      issuedAt: now,
+      expiresAt: new Date(now.getTime() + 10 * 86_400_000),
+      verificationHash: "x",
+    })
+    .run();
+}
+
+async function queryChecks() {
+  console.log("\n— Consultas");
+  seedMovimientos();
+  const scope = ownScope({ ...teacherUser, id: ids.teacher });
+  const hoy = dateRange("hoy", "");
+
+  const mov = movimientosQuery(scope, hoy, null);
+  check("Movimientos: cuatro tiles con cifras", mov.tiles.length === 4 && mov.tiles.every((t) => /^\d+$/.test(t.value)), mov.tiles);
+  check("Movimientos: aparece lo de hoy", mov.rows.some((r) => r.join(" ").includes(`${P}`)), mov.rows.slice(0, 3));
+  check("Movimientos: CSV con encabezado y BOM", mov.csv.startsWith("﻿") && mov.csv.split("\n").length >= 2);
+  check("Movimientos: a la IA van cifras, no la lista", mov.forModel.length <= 400, mov.forModel.length);
+  check("Movimientos: máximo 20 filas mostradas", mov.rows.length <= 20);
+  const ajeno = movimientosQuery(ownScope({ ...teacherUser, id: ids.admin }), hoy, null);
+  check("Otro maestro no ve estos movimientos", !ajeno.rows.some((r) => r.join(" ").includes(`${P}`)), ajeno.rows.slice(0, 3));
+  check("Filtrar por curso ajeno no da nada", movimientosQuery(scope, hoy, "no-existe").total === 0);
+
+  const sinEntrar = pendientesQuery(scope, "sin_entrar", null);
+  check("Pendientes: columnas de sin_entrar", sinEntrar.columns.join("|") === "Alumno|Curso|Último acceso", sinEntrar.columns);
+  check("Pendientes: tipo desconocido no revienta", pendientesQuery(scope, "lo-que-sea" as never, null).columns.length === 3);
+  check("Pendientes: sin entregar", pendientesQuery(scope, "sin_entregar", null).columns.includes("Tarea"));
+  check("Pendientes: reprobados", pendientesQuery(scope, "reprobados", null).columns.includes("Examen"));
+
+  const emitidos = certificadosQuery(scope, "emitidos", null, 30);
+  check("Certificados emitidos: el de la prueba está", emitidos.total >= 1 && emitidos.columns.includes("Folio"));
+  const porVencer = certificadosQuery(scope, "por_vencer", null, 30);
+  check("Por vencer: dice los días", porVencer.forModel.includes("30"), porVencer.forModel);
+  check("Vencidos: no incluye los que no vencen", certificadosQuery(scope, "vencidos", null, 30).rows.every((r) => !r.join(" ").includes("no vence")));
+
+  const pan = panoramaQuery();
+  check("Panorama: una fila por maestro", pan.columns[0] === "Maestro" && pan.rows.length >= 1, pan.columns);
+  check("Panorama: el maestro de prueba aparece con sus cifras", pan.rows.some((r) => r[0].includes(`${P}`)), pan.rows.slice(0, 3));
+  check("Panorama: tiles totales", pan.tiles.length === 4);
+
+  // Extras: lo que la prueba sembró se ve tal cual
+  check("Movimientos: entrega, examen, aprobado y certificado", mov.tiles.every((t) => Number(t.value) >= 1), mov.tiles);
+  check("Movimientos: el examen lleva puntaje sobre el máximo", mov.rows.some((r) => r[2].includes("6 / 10")), mov.rows.map((r) => r[2]).slice(0, 5));
+  check("Movimientos: el total es la suma de los tiles", mov.total === mov.tiles.reduce((s, t) => s + Number(t.value), 0), [mov.total, mov.tiles]);
+  const queHaPasado = mov.rows.map((r) => r[2]);
+  check(
+    "Movimientos: lo más nuevo primero",
+    queHaPasado.findIndex((w) => w.startsWith("Certificado")) < queHaPasado.findIndex((w) => w.startsWith("Entregó")),
+    queHaPasado
+  );
+  const reprobados = pendientesQuery(scope, "reprobados", null);
+  check("Reprobados: Ana con 60 % y el mínimo de 80", reprobados.rows.some((r) => r[0].includes("Ana") && r[3].includes("60") && r[3].includes("80")), reprobados.rows);
+  const sinEntregarRows = pendientesQuery(scope, "sin_entregar", null);
+  check("Sin entregar: Beto, que no entregó la tarea", sinEntregarRows.rows.some((r) => r[0].includes("Beto") && r[2].includes("Tarea 1")), sinEntregarRows.rows);
+  check("Por vencer: el certificado de la prueba (vence en 10 días)", porVencer.rows.some((r) => r[2].startsWith(`${P}-CERT-`)), porVencer.rows);
+  check("Certificados: «no vence» cuando es vitalicio o la fecha si vence", emitidos.rows.every((r) => r[4].length > 0), emitidos.rows.slice(0, 3));
+  check("El CSV lleva todas las filas, no solo las 20", certificadosQuery(scope, "emitidos", null, 30).csv.split("\r\n").length === emitidos.total + 1, emitidos.total);
+  check("Días fuera de rango: se recorta a 365", certificadosQuery(scope, "por_vencer", null, 9999).forModel.includes("365"));
+  check("Días en cero: vuelve a 30", certificadosQuery(scope, "por_vencer", null, 0).forModel.includes("30"));
 }
 
 async function bajaAlumnosChecks() {
@@ -1194,6 +1340,7 @@ async function main() {
     await agentChecks();
     await turnoConAdjuntoChecks();
     await crearCursosChecks();
+    await queryChecks();
     // Al final: borrar a Dora dejaría sin alumno a las demás secciones
     await bajaAlumnosChecks();
   } finally {
