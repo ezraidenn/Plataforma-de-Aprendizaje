@@ -23,7 +23,9 @@ export type NotificationDto = {
   type: NotificationType;
   /** Título en español, armado con el payload (nombres ya resueltos). */
   title: string;
-  /** Destino al que navega el clic, según tipo y rol. */
+  /** Segunda línea: hoy solo la tienen los avisos del maestro (el cuerpo, recortado). */
+  description?: string;
+  /** Destino al que navega el clic, según tipo y rol. «» = no lleva a ningún sitio. */
   href: string;
   createdAtMs: number;
   read: boolean;
@@ -46,7 +48,14 @@ type Payload = {
   studentId: string | null;
   attemptId: string | null;
   submissionId: string | null;
+  /** Solo en los avisos del maestro: lo que escribió y quién lo manda */
+  noticeTitle: string | null;
+  noticeBody: string | null;
+  from: string | null;
 };
+
+/** Lo que se enseña del cuerpo del aviso en la campana; el resto se recorta. */
+const NOTICE_PREVIEW = 140;
 
 function str(v: unknown): string | null {
   return typeof v === "string" && v.length > 0 ? v : null;
@@ -65,7 +74,18 @@ function readPayload(n: Notification): Payload {
     studentId: str(p.studentId),
     attemptId: str(p.attemptId),
     submissionId: str(p.submissionId),
+    noticeTitle: str(p.title),
+    noticeBody: str(p.body),
+    from: str(p.from),
   };
+}
+
+/** Segunda línea del aviso del maestro: su cuerpo, recortado para la campana. */
+function buildDescription(n: Notification, p: Payload): string | undefined {
+  if (n.type !== "teacher_notice" || !p.noticeBody) return undefined;
+  const clean = p.noticeBody.replace(/\s+/g, " ").trim();
+  if (!clean) return undefined;
+  return clean.length <= NOTICE_PREVIEW ? clean : `${clean.slice(0, NOTICE_PREVIEW - 1)}…`;
 }
 
 const q = (s: string) => `«${s}»`;
@@ -123,6 +143,9 @@ function buildTitle(
       return itemOrCourse
         ? `Tus resultados de ${q(itemOrCourse)} ya están disponibles`
         : "Tus resultados ya están disponibles";
+    case "teacher_notice":
+      // Lo escribió una persona: su título va tal cual
+      return p.noticeTitle ?? (p.from ? `Aviso de ${p.from}` : "Aviso de tu maestro");
   }
 }
 
@@ -146,6 +169,10 @@ function buildHref(n: Notification, p: Payload, user: SessionUser): string {
     case "submission_returned":
     case "deadline_reminder":
       return p.courseId && p.itemId ? `/courses/${p.courseId}/items/${p.itemId}` : "/dashboard";
+    case "teacher_notice":
+      // Sin curso no hay a dónde ir: el aviso se lee ahí mismo y el clic no navega
+      if (!p.courseId) return "";
+      return user.role === "student" ? `/courses/${p.courseId}` : `/teach/courses/${p.courseId}/students`;
   }
 }
 
@@ -206,6 +233,7 @@ export async function getNotificationsAction(): Promise<NotificationsResult> {
       id: n.id,
       type: n.type,
       title: buildTitle(n, p, user, studentNames),
+      description: buildDescription(n, p),
       href: buildHref(n, p, user),
       createdAtMs: n.createdAt.getTime(),
       read: n.readAt !== null,

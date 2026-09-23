@@ -42,6 +42,7 @@ const TYPE_ICONS: Record<NotificationDto["type"], LucideIcon> = {
   submission_returned: RotateCcw,
   grade_published: FileCheck,
   results_available: Megaphone,
+  teacher_notice: Megaphone,
 };
 
 const OLD_DATE_FMT = new Intl.DateTimeFormat("es-MX", {
@@ -149,8 +150,12 @@ export function NotificationsBell({ tone = "light" }: { tone?: "light" | "onColo
 
   const handleItemClick = (n: NotificationDto) => {
     setOpen(false);
+    // Sin destino (un aviso suelto del maestro) solo se marca como leído
+    const go = () => {
+      if (n.href) router.push(n.href);
+    };
     if (n.read) {
-      router.push(n.href);
+      go();
       return;
     }
     // Optimista: el contador y el fondo se actualizan al instante. Se navega
@@ -159,9 +164,7 @@ export function NotificationsBell({ tone = "light" }: { tone?: "light" | "onColo
       prev ? prev.map((x) => (x.id === n.id ? { ...x, read: true } : x)) : prev
     );
     setUnread((u) => Math.max(0, u - 1));
-    void markReadAction(n.id)
-      .catch(() => {})
-      .finally(() => router.push(n.href));
+    void markReadAction(n.id).catch(() => {}).finally(go);
   };
 
   const handleDelete = (n: NotificationDto) => {
@@ -332,6 +335,11 @@ export function NotificationsBell({ tone = "light" }: { tone?: "light" | "onColo
                       >
                         {n.title}
                       </span>
+                      {n.description && (
+                        <span className="mt-0.5 block line-clamp-2 text-xs text-muted-foreground">
+                          {n.description}
+                        </span>
+                      )}
                       <span className="mt-0.5 block text-xs text-muted-foreground">
                         {relativeTime(n.createdAtMs, nowMs)}
                       </span>

@@ -353,6 +353,20 @@ export function sinEntrarCount(scope: ViewScope): number {
   );
 }
 
+/**
+ * «Sin entregar»: no hay entrega de ese alumno en esa tarea. UNA sola
+ * definición para `pendientes` y para `avisar`: si cambia el criterio, cambia
+ * en los dos sitios a la vez.
+ *
+ * Requiere `course_items` (la tarea) y `enrollments` (el alumno) en la consulta.
+ */
+export function sinEntregarCondition(): SQL {
+  return sql`NOT EXISTS (
+    SELECT 1 FROM assignment_submissions s
+     WHERE s.item_id = ${courseItems.id} AND s.student_id = ${enrollments.studentId}
+  )`;
+}
+
 /** Pares alumno/tarea sin entrega, con la matrícula activa. */
 function sinEntregar(scope: ViewScope, courseId: string | null): QueryResult {
   const rows = db
@@ -367,14 +381,7 @@ function sinEntregar(scope: ViewScope, courseId: string | null): QueryResult {
     .innerJoin(courseItems, and(eq(courseItems.courseId, courses.id), eq(courseItems.kind, "assignment")))
     .innerJoin(users, eq(enrollments.studentId, users.id))
     .where(
-      and(
-        eq(enrollments.status, "active"),
-        sql`NOT EXISTS (
-          SELECT 1 FROM assignment_submissions s
-           WHERE s.item_id = ${courseItems.id} AND s.student_id = ${enrollments.studentId}
-        )`,
-        ...courseFilters(scope, courseId)
-      )
+      and(eq(enrollments.status, "active"), sinEntregarCondition(), ...courseFilters(scope, courseId))
     )
     .orderBy(asc(users.fullName), asc(courses.title), asc(courseItems.position))
     .all();

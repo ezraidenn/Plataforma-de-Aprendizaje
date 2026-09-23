@@ -650,6 +650,8 @@ export const notifications = sqliteTable(
         "submission_returned",
         "grade_published",
         "results_available",
+        // El único que escribe una persona: el aviso que el maestro manda a sus alumnos
+        "teacher_notice",
       ],
     }).notNull(),
     payload: text("payload", { mode: "json" }).notNull().default("{}"),

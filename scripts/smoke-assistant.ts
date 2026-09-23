@@ -28,6 +28,7 @@ import {
   files,
   itemAssignments,
   itemProgress,
+  notifications,
   users,
 } from "../src/server/db/schema";
 import { createCourse, enrollStudents, setStudentActive, unenrollStudent } from "../src/server/services/courses";
@@ -35,6 +36,8 @@ import { createItem, getItem } from "../src/server/services/tree";
 import { listQuestions } from "../src/server/services/exams";
 import { detectFormat } from "../src/lib/excel-formats";
 import { assignEnrollmentsToCohort, cohortOptions, createCohort, findCohortByName, getCohort } from "../src/server/services/cohorts";
+import { unreadCount } from "../src/server/services/notifications";
+import { MAX_DESTINATARIOS, MAX_MENSAJE, MAX_TITULO } from "../src/server/assistant/tools/avisar";
 import { ownScope, type ViewScope } from "../src/server/auth/view-scope";
 import type { SessionUser } from "../src/server/auth/sessions";
 import { NOT_YET, toolsForRole, toolByName, toolDefsForRole } from "../src/server/assistant/registry";
@@ -250,8 +253,13 @@ const ids = {
   g1: nanoid(),
   g2: nanoid(),
   g3: nanoid(),
+  // Lo mismo para los avisos: tres matriculados solo para esa sección
+  a1: nanoid(),
+  a2: nanoid(),
+  a3: nanoid(),
   course: "",
   grupoCourse: "",
+  avisoCourse: "",
 };
 
 function makeUser(id: string, key: string, name: string, role: "teacher" | "admin" | "student", createdBy: string | null) {
@@ -337,6 +345,8 @@ async function cleanup() {
     }
     // Por si alguna prueba dejó un certificado de una cuenta zasst en otro curso
     db.delete(certificates).where(inArray(certificates.studentId, userIds)).run();
+    // Los avisos que mandaron las pruebas (la campana de los alumnos zasst)
+    db.delete(notifications).where(inArray(notifications.userId, userIds)).run();
     for (const id of userIds) db.delete(users).where(eq(users.id, id)).run();
   });
 }
@@ -2194,6 +2204,227 @@ async function restaurarChecks() {
   check("Curso ajeno: negado", !ajeno.proposalId && ajeno.forModel.includes("no te pertenece"), ajeno.forModel);
 }
 
+/** Los avisos del maestro que le llegaron a esos alumnos, con su contenido. */
+type Aviso = { userId: string; title: string; body: string; from: string; courseId: string | null };
+function avisosDe(studentIds: string[]): Aviso[] {
+  return db
+    .select()
+    .from(notifications)
+    .where(and(eq(notifications.type, "teacher_notice"), inArray(notifications.userId, studentIds)))
+    .all()
+    .map((n) => {
+      const p = (typeof n.payload === "object" && n.payload !== null ? n.payload : {}) as Record<string, unknown>;
+      return {
+        userId: n.userId,
+        title: String(p.title ?? ""),
+        body: String(p.body ?? ""),
+        from: String(p.from ?? ""),
+        courseId: typeof p.courseId === "string" ? p.courseId : null,
+      };
+    });
+}
+
+async function avisarChecks() {
+  console.log("\n— Avisar a los alumnos");
+  const user = { ...teacherUser, id: ids.teacher };
+  const conv = createConversation(ids.teacher, `${P} avisar`);
+  const anchor = appendMessage(conv.id, "assistant", [], "");
+  const ctx = { ...ctxFor(user, ownScope(user)), conversationId: conv.id, messageId: anchor.id };
+  const tool = toolByName("avisar")!;
+  const params = (extra: Record<string, unknown>) => ({
+    titulo: "",
+    mensaje: "",
+    curso_id: "",
+    a_quien: "curso",
+    alumno_ids: [] as string[],
+    grupo: "",
+    ...extra,
+  });
+
+  // Curso y alumnos propios de esta sección: tres matriculados que no tocan nada más
+  ids.avisoCourse = createCourse({ ownerId: ids.teacher, title: `${P} Avisos` }).id;
+  makeUser(ids.a1, "a1", "Aída Uno", "student", ids.teacher);
+  makeUser(ids.a2, "a2", "Abel Dos", "student", ids.teacher);
+  makeUser(ids.a3, "a3", "Alma Tres", "student", ids.teacher);
+  enrollStudents(ids.avisoCourse, [ids.a1, ids.a2, ids.a3], ids.teacher);
+  const curso = ids.avisoCourse;
+
+  check("Los recordatorios ya no se anuncian como «aún no puedo»", !NOT_YET.join(" ").toLowerCase().includes("recordatorio"), NOT_YET);
+
+  // Falta lo básico: no se propone nada
+  const sinTitulo = await tool.run(params({ curso_id: curso, titulo: "   ", mensaje: "Hola" }), ctx);
+  check("Título vacío: lo dice y no propone", !sinTitulo.proposalId && sinTitulo.forModel.includes("Falta el título"), sinTitulo.forModel);
+  const sinMensaje = await tool.run(params({ curso_id: curso, titulo: "Aviso", mensaje: " \n  \n " }), ctx);
+  check("Mensaje vacío: lo dice y no propone", !sinMensaje.proposalId && sinMensaje.forModel.includes("Falta el mensaje"), sinMensaje.forModel);
+  const sinCurso = await tool.run(params({ titulo: "Aviso", mensaje: "Hola a todos" }), ctx);
+  check("Sin curso (y sin ids): lo pide y no propone", !sinCurso.proposalId && sinCurso.forModel.includes("Falta curso_id"), sinCurso.forModel);
+
+  // A todo el curso
+  const todos = await tool.run(params({ curso_id: curso, titulo: "  Examen   el viernes  ", mensaje: "Traigan su credencial." }), ctx);
+  const pTodos = getProposal(todos.proposalId!)!;
+  check("Curso: una fila por matriculado, con su motivo", pTodos.rows.length === 3 && pTodos.rows.every((r) => r.cells.motivo === "matriculado" && !r.blocked), pTodos.rows);
+  check(
+    "Columnas Alumno, Correo y Motivo, no editables",
+    pTodos.draft.columns.map((c) => c.key).join(",") === "alumno,correo,motivo" && pTodos.draft.columns.every((c) => c.editable === false),
+    pTodos.draft.columns
+  );
+  check("El título de la revisión es el del aviso, ya limpio", pTodos.draft.title === "Examen el viernes", pTodos.draft.title);
+  check(
+    "Antes de la tabla va la vista previa de lo que verán",
+    (todos.blocks ?? []).some((b) => b.type === "text" && b.text === "Así lo verán: **Examen el viernes** — Traigan su credencial."),
+    todos.blocks
+  );
+  check("Nunca es instantáneo: siempre propuesta", !!todos.proposalId && !todos.undo, todos.forModel);
+  check("La IA no recibe correos", !todos.forModel.includes("@test.local"), todos.forModel);
+
+  const antes = unreadCount(ids.a1);
+  const aplicada = await applyProposal(todos.proposalId!, pTodos.rows, ctx, "");
+  const llegadas = avisosDe([ids.a1, ids.a2, ids.a3]);
+  check(
+    "Al aplicar le llega a los tres, con su título, su cuerpo, de quién y el curso",
+    "text" in aplicada &&
+      aplicada.text.startsWith("El aviso le llegó a 3 alumno(s)") &&
+      llegadas.length === 3 &&
+      llegadas.every((n) => n.title === "Examen el viernes" && n.body === "Traigan su credencial." && n.from === `${P} Maestro` && n.courseId === curso),
+    [aplicada, llegadas]
+  );
+  check("La campana del alumno sube", unreadCount(ids.a1) === antes + 1);
+  check(
+    "El resultado deja el enlace a los alumnos del curso",
+    "text" in aplicada && (aplicada.blocks ?? []).some((b) => b.type === "links" && b.links.some((l) => l.href.includes(curso))),
+    "text" in aplicada ? aplicada.blocks : aplicada
+  );
+  check(
+    "Auditoría del aviso, con el curso y el conteo",
+    db
+      .select()
+      .from(auditLog)
+      .where(and(eq(auditLog.action, "assistant_avisar"), eq(auditLog.entity, "courses"), eq(auditLog.entityId, curso)))
+      .all()
+      .some((r) => (r.detail as { alumnos?: number } | null)?.alumnos === 3)
+  );
+
+  // A un grupo, creado con la herramienta de grupos
+  const gTool = toolByName("grupos")!;
+  const gParams = (extra: Record<string, unknown>) => ({ accion: "", curso_id: curso, grupo: "", nombre_nuevo: "", alumno_ids: [] as string[], ...extra });
+  await gTool.run(gParams({ accion: "mover", grupo: "Matutino", alumno_ids: [ids.a1] }), ctx);
+  await gTool.run(gParams({ accion: "mover", grupo: "Matutino", alumno_ids: [ids.a2] }), ctx);
+  const aGrupo = await tool.run(params({ curso_id: curso, a_quien: "grupo", grupo: "Matutino", titulo: "Solo el matutino", mensaje: "Nos vemos a las 7." }), ctx);
+  const pGrupo = getProposal(aGrupo.proposalId!)!;
+  check(
+    "Grupo: solo los de ese grupo, con el motivo",
+    pGrupo.rows.length === 2 && pGrupo.rows.every((r) => r.cells.motivo === "grupo «Matutino»") && !pGrupo.rows.some((r) => r.cells.alumno.includes("Alma")),
+    pGrupo.rows
+  );
+  cancelProposal(aGrupo.proposalId!, ids.teacher);
+  const grupoRaro = await tool.run(params({ curso_id: curso, a_quien: "grupo", grupo: "Nocturno", titulo: "Aviso", mensaje: "Hola" }), ctx);
+  check("Grupo que no existe: lo dice y no propone", !grupoRaro.proposalId && grupoRaro.forModel.includes("No hay ningún grupo"), grupoRaro.forModel);
+  await gTool.run(gParams({ accion: "crear", grupo: "Vespertino" }), ctx);
+  const grupoVacio = await tool.run(params({ curso_id: curso, a_quien: "grupo", grupo: "Vespertino", titulo: "Aviso", mensaje: "Hola" }), ctx);
+  check("Grupo sin nadie: lo dice y no propone", !grupoVacio.proposalId && grupoVacio.forModel.includes("No hay a quién"), grupoVacio.forModel);
+
+  // Sin entrar: exactamente lo que devuelve «pendientes»
+  const sinEntrar = await tool.run(params({ curso_id: curso, a_quien: "sin_entrar", titulo: "¿Todo bien?", mensaje: "Hace días que no te vemos." }), ctx);
+  const pSinEntrar = getProposal(sinEntrar.proposalId!)!;
+  const esperados = pendientesQuery(ownScope(user), "sin_entrar", curso).allRows.map((f) => f[0]).sort();
+  check(
+    "sin_entrar: los mismos que lista pendientes",
+    JSON.stringify(pSinEntrar.rows.map((r) => r.cells.alumno).sort()) === JSON.stringify(esperados),
+    [pSinEntrar.rows.map((r) => r.cells.alumno), esperados]
+  );
+  check("…y el motivo lo explica", pSinEntrar.rows.every((r) => r.cells.motivo.includes("entrado")), pSinEntrar.rows);
+  cancelProposal(sinEntrar.proposalId!, ids.teacher);
+
+  // Sin entregar: una tarea que solo entregó Alma
+  const tareaId = nanoid();
+  db.insert(courseItems).values({ id: tareaId, courseId: curso, position: 0, kind: "assignment", title: `${P} Tarea 2` }).run();
+  db.insert(itemAssignments).values({ itemId: tareaId }).run();
+  const matriculaA3 = db
+    .select({ id: enrollments.id })
+    .from(enrollments)
+    .where(and(eq(enrollments.courseId, curso), eq(enrollments.studentId, ids.a3)))
+    .get()!;
+  db.insert(assignmentSubmissions)
+    .values({ id: nanoid(), itemId: tareaId, enrollmentId: matriculaA3.id, studentId: ids.a3, submittedAt: new Date() })
+    .run();
+  const sinEntregar = await tool.run(params({ curso_id: curso, a_quien: "sin_entregar", titulo: "Falta tu tarea", mensaje: "Entrégala esta semana." }), ctx);
+  const pSinEntregar = getProposal(sinEntregar.proposalId!)!;
+  check(
+    "sin_entregar: solo quien debe, con la tarea en el motivo",
+    pSinEntregar.rows.length === 2 && pSinEntregar.rows.every((r) => r.cells.motivo === `no entregó ${P} Tarea 2`) && !pSinEntregar.rows.some((r) => r.cells.alumno.includes("Alma")),
+    pSinEntregar.rows
+  );
+  cancelProposal(sinEntregar.proposalId!, ids.teacher);
+
+  // Un alumno de otro maestro: bloqueado, y ni forzando la fila le llega
+  const ajeno = await tool.run(params({ curso_id: curso, a_quien: "ids", alumno_ids: [ids.a1, ids.s3], titulo: "Aviso suelto", mensaje: "Para los dos." }), ctx);
+  const pAjeno = getProposal(ajeno.proposalId!)!;
+  check(
+    "Carla (de otro maestro): bloqueada «No es uno de tus alumnos»",
+    pAjeno.rows.find((r) => r.id === ids.s3)?.blocked === true && pAjeno.rows.find((r) => r.id === ids.s3)?.warning === "No es uno de tus alumnos",
+    pAjeno.rows
+  );
+  const forzado = await applyProposal(
+    ajeno.proposalId!,
+    pAjeno.rows.map((r) => ({ ...r, blocked: false, warning: undefined })),
+    ctx,
+    ""
+  );
+  check(
+    "Aunque se mande «desbloqueada», al ajeno no le llega nada",
+    "text" in forzado && forzado.text.startsWith("El aviso le llegó a 1 alumno(s)") && avisosDe([ids.s3]).length === 0,
+    [forzado, avisosDe([ids.s3])]
+  );
+
+  // Se sanea lo que escribe la IA: saltos de sobra fuera y tope duro de caracteres
+  const raro = await tool.run(params({ curso_id: curso, a_quien: "ids", alumno_ids: [ids.a2], titulo: "Junta", mensaje: "Uno.\n\n\n\nDos.   Tres.  " }), ctx);
+  const pRaro = getProposal(raro.proposalId!)!;
+  check("Los saltos repetidos y los espacios de sobra se van", pRaro.payload.mensaje === "Uno.\n\nDos. Tres.", pRaro.payload.mensaje);
+  cancelProposal(raro.proposalId!, ids.teacher);
+
+  const largo = await tool.run(
+    params({
+      curso_id: curso,
+      a_quien: "ids",
+      alumno_ids: [ids.a3],
+      titulo: `Recordatorio ${"muy ".repeat(40)}largo`,
+      mensaje: `Aviso larguísimo. ${"Traigan todo. ".repeat(80)}`,
+    }),
+    ctx
+  );
+  const pLargo = getProposal(largo.proposalId!)!;
+  check(
+    "Título y mensaje se recortan al proponer",
+    pLargo.draft.title.length <= MAX_TITULO && pLargo.draft.title.endsWith("…") && String(pLargo.payload.mensaje).length <= MAX_MENSAJE && String(pLargo.payload.mensaje).endsWith("…"),
+    [pLargo.draft.title.length, String(pLargo.payload.mensaje).length]
+  );
+  await applyProposal(largo.proposalId!, pLargo.rows, ctx, "");
+  const guardado = avisosDe([ids.a3]).find((n) => n.title.startsWith("Recordatorio"));
+  check(
+    "…y lo que se guarda en la notificación ya viene recortado",
+    guardado !== undefined && guardado.title.length <= MAX_TITULO && guardado.body.length <= MAX_MENSAJE && guardado.body.endsWith("…"),
+    guardado
+  );
+
+  // Tope de destinatarios
+  const muchos = Array.from({ length: MAX_DESTINATARIOS + 1 }, () => nanoid());
+  const tope = await tool.run(params({ curso_id: curso, a_quien: "ids", alumno_ids: muchos, titulo: "A todos", mensaje: "Hola." }), ctx);
+  check(
+    "Más de 500 destinatarios: no propone y lo dice",
+    !tope.proposalId && tope.forModel.includes(String(MAX_DESTINATARIOS + 1)) && tope.forModel.includes(String(MAX_DESTINATARIOS)),
+    tope.forModel
+  );
+
+  // Curso ajeno
+  const otro = { ...teacherUser, id: ids.admin };
+  const cursoAjeno = await tool.run(params({ curso_id: curso, titulo: "Aviso", mensaje: "Hola" }), {
+    ...ctxFor(otro, ownScope(otro)),
+    conversationId: conv.id,
+    messageId: anchor.id,
+  });
+  check("Curso ajeno: negado y sin propuesta", !cursoAjeno.proposalId && cursoAjeno.forModel.includes("no te pertenece"), cursoAjeno.forModel);
+}
+
 async function reactivarAlumnosChecks() {
   console.log("\n— Reactivar alumnos");
   const user = { ...teacherUser, id: ids.teacher };
@@ -3003,6 +3234,7 @@ async function main() {
     await detallesChecks();
     await gruposChecks();
     await restaurarChecks();
+    await avisarChecks();
     // Al final: borrar a Dora dejaría sin alumno a las demás secciones
     await reactivarAlumnosChecks();
     await bajaAlumnosChecks();
