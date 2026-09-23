@@ -4,7 +4,7 @@ import { db } from "@/server/db";
 import { users } from "@/server/db/schema";
 import { getOwnedCourse, type Course } from "@/server/services/courses";
 import { getItem } from "@/server/services/tree";
-import { getExam } from "@/server/services/exams";
+import { getExam, listQuestions } from "@/server/services/exams";
 import { audit } from "@/server/services/audit";
 import { BOM, csvLine } from "@/server/services/csv-core";
 import { validateRosterCsv, importRosterCsv } from "@/server/services/bulk-roster";
@@ -30,9 +30,22 @@ import { schema, str, strEnum, param, type AssistantTool, type ToolCtx } from ".
  * El CSV que se valida se guarda en la propuesta: al aplicar no se vuelve a
  * leer el archivo (salvo que sea enorme) y se revalida con las MISMAS reglas
  * de la pantalla de operaciones masivas.
+ *
+ * El examen tiene los dos modos de la pantalla de importar (reemplazar o
+ * agregar) y no se adivina ninguno: sin `modo` no se crea propuesta y se pide
+ * preguntárselo al usuario.
  */
 
 const FORMATOS = ["", "alumnos", "cursos", "matricula", "lecciones", "examen"] as const;
+
+/**
+ * Solo para el formato de examen: si las preguntas del archivo sustituyen a
+ * las que ya hay o se suman al final. Vacío = todavía no se sabe y hay que
+ * preguntarlo (el caso natural —bajar el formato del examen, corregir dos
+ * preguntas y devolverlo— acaba en preguntas duplicadas si se agrega).
+ */
+const MODOS = ["", "agregar", "reemplazar"] as const;
+type Modo = "agregar" | "reemplazar";
 
 /** Las listas reales traen título arriba: el encabezado se busca un poco más abajo. */
 const HEADER_SEARCH_ROWS = 5;
@@ -180,18 +193,19 @@ function lessonRows(courseId: string, csv: string): { rows: ProposalRow[]; resum
   return { rows: proposalRows, resumen: partes.join(", ") };
 }
 
-function examRows(csv: string): { rows: ProposalRow[]; resumen: string } {
+function examRows(csv: string, modo: Modo): { rows: ProposalRow[]; resumen: string } {
   const { rows, ok, invalid } = validateExamCsv(csv);
+  const reemplaza = modo === "reemplazar";
   const proposalRows = rows.map((r): ProposalRow => {
     const cells = {
       pregunta: r.preview || "—",
       tipo: r.typeLabel,
       puntos: r.input ? String(r.input.points) : "",
-      estado: r.status === "ok" ? "Se agregará" : r.message,
+      estado: r.status === "ok" ? (reemplaza ? "Quedará en el examen" : "Se agregará") : r.message,
     };
     return r.status === "ok" ? { id: rowId(r.line), cells } : { id: rowId(r.line), cells, warning: r.message, blocked: true };
   });
-  const partes = [`${ok} por agregar`];
+  const partes = [reemplaza ? `${ok} que reemplazan a las actuales` : `${ok} por agregar`];
   if (invalid > 0) partes.push(`${invalid} con problema`);
   return { rows: proposalRows, resumen: partes.join(", ") };
 }
@@ -205,13 +219,17 @@ async function sheetsOf(adjunto: StoredAttachment): Promise<SheetData[]> {
 export const aplicarExcel: AssistantTool = {
   name: "aplicar_excel",
   description:
-    "Aplica el Excel adjunto que el usuario llenó o editó (el que dio formato_excel, o el que bajó de Operaciones masivas): reconoce por sus encabezados si es matrícula, lecciones o preguntas de examen y deja una tabla para revisar antes de aplicar. Si el archivo resulta ser una lista de alumnos o de cursos, te lo dice para que uses alta_alumnos o crear_cursos.",
+    "Aplica el Excel adjunto que el usuario llenó o editó (el que dio formato_excel, o el que bajó de Operaciones masivas): reconoce por sus encabezados si es matrícula, lecciones o preguntas de examen y deja una tabla para revisar antes de aplicar. Con preguntas de examen hace falta el modo (reemplazar o agregar). Si el archivo resulta ser una lista de alumnos o de cursos, te lo dice para que uses alta_alumnos o crear_cursos.",
   parameters: schema({
     curso_id: str("Id del curso al que se aplica, de buscar_curso. Hace falta en matrícula y lecciones («» si no se sabe todavía)"),
     item_id: str("Id del examen al que van las preguntas («» si el archivo no es de examen)"),
     formato: strEnum(
       "Déjalo en «» para que el servidor lo reconozca por los encabezados. Solo dilo si el usuario fue explícito: «alumnos», «cursos», «matricula», «lecciones» o «examen»",
       [...FORMATOS]
+    ),
+    modo: strEnum(
+      'SOLO para preguntas de examen: «reemplazar» borra las preguntas que tiene el examen y deja las del archivo; «agregar» las suma al final. Déjalo en «» la primera vez: el servidor te dirá que se lo preguntes al usuario',
+      [...MODOS]
     ),
   }),
   roles: ["admin", "teacher"],
@@ -261,6 +279,9 @@ export const aplicarExcel: AssistantTool = {
     const csv = csvOf(hoja);
     const cursoId = param(params, "curso_id");
     const itemId = param(params, "item_id");
+    // Lo que no esté en el enum se trata como «todavía no se sabe»: se pregunta
+    const pedidoModo = param(params, "modo");
+    const modo: Modo | "" = pedidoModo === "agregar" || pedidoModo === "reemplazar" ? pedidoModo : "";
     const curso = cursoDe(cursoId, ctx);
     const examen = examenDe(itemId, ctx);
 
@@ -278,9 +299,19 @@ export const aplicarExcel: AssistantTool = {
               : `Ese archivo trae preguntas de examen, pero necesito saber a qué examen van (item_id): busca el curso con buscar_curso y pregunta al usuario a qué examen. No se aplicó nada.${discrepa}`,
           };
         }
-        title = `Agregar preguntas a ${examen.title}`;
-        ({ rows, resumen } = examRows(csv));
+        // Sin modo no se propone nada: agregar cuando el archivo salió del
+        // propio examen deja las preguntas duplicadas, y eso no se deshace
+        // desde aquí. Lo decide el usuario, no la IA.
+        if (!modo) {
+          const actuales = listQuestions(examen.id).length;
+          return {
+            forModel: `Ese archivo trae ${hoja.rows.length} pregunta(s) para ${examen.title}, que ahora tiene ${actuales}. No propuse nada todavía: pregúntale al usuario, con estas dos opciones, qué hacer — «reemplazar todas las preguntas del examen» (modo "reemplazar") o «agregarlas a las que ya hay» (modo "agregar"). Si el archivo salió de ese mismo examen, lo normal es reemplazar: agregar las dejaría duplicadas. Vuelve a llamar a aplicar_excel con el modo que elija.${discrepa}`,
+          };
+        }
+        title = modo === "reemplazar" ? `Reemplazar las preguntas de ${examen.title}` : `Agregar preguntas a ${examen.title}`;
+        ({ rows, resumen } = examRows(csv, modo));
         payload.itemId = examen.id;
+        payload.modo = modo;
       } else {
         if (!curso) {
           return {
@@ -353,22 +384,29 @@ export const aplicarExcel: AssistantTool = {
         const { rows: revisadas } = validateExamCsv(filtrado);
         const inputs = revisadas.flatMap((r) => (r.status === "ok" && r.input ? [r.input] : []));
         if (inputs.length === 0) return { text: "Ninguna de esas preguntas pasó la revisión; el examen quedó igual." };
+        // El modo lo eligió el usuario al crear la propuesta; las de antes de
+        // que existiera el parámetro se aplican como siempre (agregar)
+        const reemplaza = payload.modo === "reemplazar";
+        const antes = reemplaza ? listQuestions(examen.id).length : 0;
         const { imported, skipped } = importQuestionInputs({
           actorId: ctx.user.id,
           examItemId: examen.id,
           inputs,
-          // Se agregan al final: reemplazar el examen entero se hace desde su pantalla
-          mode: "append",
+          // «replace» borra las anteriores dentro de la misma transacción: ese
+          // borrado no se reescribe aquí
+          mode: reemplaza ? "replace" : "append",
           source: "csv",
           alreadySkipped: revisadas.length - inputs.length,
         });
-        audit(ctx.user.id, "assistant_aplicar_excel", "exams", examen.id, { formato, imported, skipped });
+        audit(ctx.user.id, "assistant_aplicar_excel", "exams", examen.id, { formato, modo: reemplaza ? "replace" : "append", imported, skipped });
         blocks.push({
           type: "links",
           links: [{ label: `Ver ${examen.title}`, href: `/teach/courses/${examen.courseId}/items/${examen.id}/edit`, icon: "page" }],
         });
         return {
-          text: `${imported} pregunta(s) agregada(s) al final de ${examen.title}${skipped > 0 ? `; ${skipped} omitida(s)` : ""}.`,
+          text: reemplaza
+            ? `${examen.title} quedó con ${imported} pregunta(s): las del archivo reemplazaron a las ${antes} que tenía${skipped > 0 ? `; ${skipped} omitida(s)` : ""}.`
+            : `${imported} pregunta(s) agregada(s) al final de ${examen.title}${skipped > 0 ? `; ${skipped} omitida(s)` : ""}.`,
           blocks,
         };
       }

@@ -945,19 +945,45 @@ async function aplicarExcelChecks() {
   check("Lecciones: el título cambia de verdad", getItem(fmt.leccion)?.title === `${P} Bienvenida`, getItem(fmt.leccion)?.title);
   check("Lecciones: el resultado lo dice", "text" in aplL && aplL.text.includes("1 lección"), aplL);
 
-  // ── Examen: una pregunta nueva ──
+  // ── Examen: agregar o reemplazar, nunca a ciegas ──
   const cabE = ["tipo", "pregunta", "puntos", "opcion_1", "opcion_2", "correctas"];
   const filaE = ["opcion_unica", `${P} ¿Qué extintor va en fuego eléctrico?`, "2", "Agua", "CO2", "2"];
   const adjE = await adjuntar(conv.id, await xlsxDeFilas("Preguntas", cabE, [filaE]), `${P}-examen.xlsx`);
   const ctxE = { ...base, attachments: [adjE] };
-  const sinItem = await tool.run({ curso_id: fmt.curso, item_id: "", formato: "" }, ctxE);
+  const sinItem = await tool.run({ curso_id: fmt.curso, item_id: "", formato: "", modo: "" }, ctxE);
   check("Examen sin item_id: lo pide y no aplica nada", !sinItem.proposalId && sinItem.forModel.includes("item_id"), sinItem.forModel);
-  const propE = await tool.run({ curso_id: "", item_id: fmt.examen, formato: "" }, ctxE);
+  const sinModo = await tool.run({ curso_id: "", item_id: fmt.examen, formato: "", modo: "" }, ctxE);
+  check(
+    "Examen sin modo: pregunta con las dos opciones y no propone nada",
+    !sinModo.proposalId && sinModo.forModel.includes("reemplazar") && sinModo.forModel.includes("agregar") && sinModo.forModel.includes("duplicadas"),
+    sinModo.forModel
+  );
+  const propE = await tool.run({ curso_id: "", item_id: fmt.examen, formato: "", modo: "agregar" }, ctxE);
   const pE = getProposal(propE.proposalId!)!;
   check("Examen: la pregunta sale con su tipo y sus puntos", pE.rows.length === 1 && pE.rows[0].cells.tipo === "Opción única" && pE.rows[0].cells.puntos === "2", pE.rows[0]?.cells);
+  check("Examen: el título dice que se agregan", pE.draft.title === `Agregar preguntas a ${P} Evaluación`, pE.draft.title);
+  const antesDeAgregar = listQuestions(fmt.examen).length;
   const aplE = await applyProposal(propE.proposalId!, pE.rows, ctxE, "");
-  check("Examen: la pregunta queda en el examen", listQuestions(fmt.examen).length === 1, listQuestions(fmt.examen).map((q) => q.promptMd));
+  check("Examen: la pregunta se suma a las que ya había", listQuestions(fmt.examen).length === antesDeAgregar + 1, listQuestions(fmt.examen).map((q) => q.promptMd));
   check("Examen: el resultado lo dice", "text" in aplE && aplE.text.includes("1 pregunta"), aplE);
+
+  // Reemplazar: es el caso natural (el archivo salió del propio examen)
+  const filaR = ["opcion_unica", `${P} Cada cuanto se revisa un extintor`, "3", "Cada mes", "Cada ano", "2"];
+  const adjR = await adjuntar(conv.id, await xlsxDeFilas("Preguntas", cabE, [filaR]), `${P}-examen-2.xlsx`);
+  const ctxR = { ...base, attachments: [adjR] };
+  const propR = await tool.run({ curso_id: "", item_id: fmt.examen, formato: "", modo: "reemplazar" }, ctxR);
+  const pR = getProposal(propR.proposalId!)!;
+  check("Reemplazar: el título de la propuesta lo dice", pR.draft.title === `Reemplazar las preguntas de ${P} Evaluación`, pR.draft.title);
+  check("Reemplazar: la fila no dice «se agregará»", pR.rows[0]?.cells.estado === "Quedará en el examen", pR.rows[0]?.cells);
+  const antesDeReemplazar = listQuestions(fmt.examen).length;
+  const aplR = await applyProposal(propR.proposalId!, pR.rows, ctxR, "");
+  const quedan = listQuestions(fmt.examen);
+  check(
+    "Reemplazar: el examen queda SOLO con la del archivo",
+    antesDeReemplazar === 1 && quedan.length === 1 && quedan[0].promptMd.includes("revisa un extintor"),
+    [antesDeReemplazar, quedan.map((q) => q.promptMd)]
+  );
+  check("Reemplazar: el resultado dice a cuántas sustituyó", "text" in aplR && aplR.text.includes("reemplazaron a las 1"), aplR);
 
   // ── Lo que no es de nadie y lo que ya tiene herramienta ──
   const adjRaro = await adjuntar(conv.id, await xlsxDeFilas("Hoja", ["cosa", "otra"], [["1", "2"]]), `${P}-raro.xlsx`);
