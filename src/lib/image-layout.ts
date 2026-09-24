@@ -171,3 +171,101 @@ export function alphaBounds(data: Uint8ClampedArray | Uint8Array, width: number,
   }
   return maxX < 0 ? null : { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
 }
+
+export type Guide = { axis: "x" | "y"; at: number };
+
+const EPS = 1e-9;
+const r9 = (n: number) => Math.round(n * 1e9) / 1e9;
+
+/**
+ * Imán: cuánto mover `moving` para que su borde o centro (en cada eje) se pegue
+ * al borde o centro más cercano de otra caja o de la foto (0, 0.5, 1), dentro
+ * de los umbrales (en coordenadas de la foto). Devuelve el desplazamiento y las
+ * guías que se ven tras pegar.
+ */
+export function snapMove(moving: Bounds, others: Bounds[], opts: { tx: number; ty: number; grid?: number | null }): { dx: number; dy: number; guides: Guide[] } {
+  const lines = (axis: "x" | "y") => {
+    const out = [0, 0.5, 1];
+    for (const o of others) out.push(...(axis === "x" ? [o.left, (o.left + o.right) / 2, o.right] : [o.top, (o.top + o.bottom) / 2, o.bottom]));
+    if (opts.grid) for (let v = opts.grid; v < 1 - EPS; v += opts.grid) out.push(r9(v));
+    return out;
+  };
+  const best = (anchors: number[], targets: number[], t: number) => {
+    let delta = 0;
+    let dist = Infinity;
+    for (const a of anchors) for (const g of targets) {
+      const d = g - a;
+      if (Math.abs(d) <= t && Math.abs(d) < dist) {
+        dist = Math.abs(d);
+        delta = d;
+      }
+    }
+    return dist === Infinity ? null : r9(delta);
+  };
+  const xs = lines("x");
+  const ys = lines("y");
+  const ax = [moving.left, (moving.left + moving.right) / 2, moving.right];
+  const ay = [moving.top, (moving.top + moving.bottom) / 2, moving.bottom];
+  const dx = best(ax, xs, opts.tx) ?? 0;
+  const dy = best(ay, ys, opts.ty) ?? 0;
+  const guides: Guide[] = [];
+  const seen = new Set<string>();
+  const add = (axis: "x" | "y", at: number) => {
+    const k = `${axis}${r9(at)}`;
+    if (!seen.has(k)) {
+      seen.add(k);
+      guides.push({ axis, at: r9(at) });
+    }
+  };
+  if (dx !== 0 || xs.some((g) => ax.some((a) => Math.abs(g - a) < EPS)))
+    for (const a of ax) for (const g of xs) if (Math.abs(a + dx - g) < 1e-7) add("x", g);
+  if (dy !== 0 || ys.some((g) => ay.some((a) => Math.abs(g - a) < EPS)))
+    for (const a of ay) for (const g of ys) if (Math.abs(a + dy - g) < 1e-7) add("y", g);
+  return { dx, dy, guides };
+}
+
+/** Centro pegado a la línea de cuadrícula más cercana. */
+export function snapToGrid(p: Point, grid: number): Point {
+  return { x: r9(Math.round(p.x / grid) * grid), y: r9(Math.round(p.y / grid) * grid) };
+}
+
+export type AlignMode = "left" | "hcenter" | "right" | "top" | "vcenter" | "bottom";
+
+/** Desplazamiento de cada caja para alinearlas con el borde o centro del conjunto. */
+export function alignDeltas(boxes: Bounds[], mode: AlignMode): { dx: number; dy: number }[] {
+  const L = Math.min(...boxes.map((b) => b.left));
+  const R = Math.max(...boxes.map((b) => b.right));
+  const T = Math.min(...boxes.map((b) => b.top));
+  const B = Math.max(...boxes.map((b) => b.bottom));
+  return boxes.map((b) => {
+    switch (mode) {
+      case "left": return { dx: r9(L - b.left), dy: 0 };
+      case "right": return { dx: r9(R - b.right), dy: 0 };
+      case "hcenter": return { dx: r9((L + R) / 2 - (b.left + b.right) / 2), dy: 0 };
+      case "top": return { dx: 0, dy: r9(T - b.top) };
+      case "bottom": return { dx: 0, dy: r9(B - b.bottom) };
+      case "vcenter": return { dx: 0, dy: r9((T + B) / 2 - (b.top + b.bottom) / 2) };
+    }
+  });
+}
+
+/**
+ * Repartir: los extremos se quedan; los de en medio, en su orden, con el mismo
+ * espacio libre entre cajas. `gap` es ese espacio (para mostrarlo un momento).
+ */
+export function distributeDeltas(boxes: Bounds[], axis: "x" | "y"): { deltas: { dx: number; dy: number }[]; gap: number } {
+  const lo = (b: Bounds) => (axis === "x" ? b.left : b.top);
+  const hi = (b: Bounds) => (axis === "x" ? b.right : b.bottom);
+  const order = boxes.map((b, i) => ({ b, i })).sort((p, q) => lo(p.b) - lo(q.b));
+  const span = hi(order[order.length - 1].b) - lo(order[0].b);
+  const sizes = order.reduce((s, p) => s + hi(p.b) - lo(p.b), 0);
+  const gap = r9((span - sizes) / (order.length - 1));
+  const deltas = boxes.map(() => ({ dx: 0, dy: 0 }));
+  let cursor = lo(order[0].b);
+  for (const p of order) {
+    const d = r9(cursor - lo(p.b));
+    deltas[p.i] = axis === "x" ? { dx: d, dy: 0 } : { dx: 0, dy: d };
+    cursor += hi(p.b) - lo(p.b) + gap;
+  }
+  return { deltas, gap };
+}

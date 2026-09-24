@@ -53,9 +53,11 @@ import { initialImageValue, shapedImageValue } from "../src/lib/image-editor-val
 import {
   DEFAULT_ICON_SIZE,
   DEFAULT_TEXT_SIZE,
+  alignDeltas,
   alphaBounds,
   boxBounds,
   boxesOverlap,
+  distributeDeltas,
   elementBox,
   elementRatio,
   elementSize,
@@ -64,8 +66,11 @@ import {
   iconSizeRange,
   normalizeRotation,
   shownAtMinimum,
+  snapMove,
   snapRadiusFor,
+  snapToGrid,
   textPx,
+  type Bounds,
 } from "../src/lib/image-layout";
 
 let failures = 0;
@@ -277,6 +282,36 @@ function layoutChecks() {
   check("Letra fuera de rango", imageDragProblem({ ...clean, elements: [...clean.elements, { id: "t", kind: "text", text: "x", size: 0.2 }] }, true) === "Hay un elemento demasiado grande o demasiado chico");
   check("Proporción de ícono inválida", imageDragProblem({ ...clean, elements: [{ ...clean.elements[0], ratio: 50 }] }, true) === "Vuelve a subir un ícono");
   check("Pregunta vieja con iconSize sigue válida", imageDragProblem(DRAG, true) === null);
+}
+
+function canvasChecks() {
+  console.log("\n— Guías, imán, alinear y repartir");
+  const a: Bounds = { left: 0.1, right: 0.2, top: 0.1, bottom: 0.2 };
+  // Centro en 0.51: lo más cercano es el centro de la foto (0.5); los bordes quedan lejos
+  const b: Bounds = { left: 0.4, right: 0.62, top: 0.4, bottom: 0.5 };
+  const s1 = snapMove(b, [a], { tx: 0.06, ty: 0.06 });
+  check("Imán al centro de la foto", Math.abs(s1.dx - -0.01) < 1e-9 && s1.guides.some((g) => g.axis === "x" && g.at === 0.5), s1);
+  const s2 = snapMove({ left: 0.105, right: 0.205, top: 0.7, bottom: 0.8 }, [a], { tx: 0.01, ty: 0.01 });
+  check("Imán al borde izquierdo de otro lugar", Math.abs(s2.dx - -0.005) < 1e-9 && s2.guides.some((g) => g.axis === "x" && g.at === 0.1), s2);
+  const s3 = snapMove({ left: 0.3, right: 0.35, top: 0.3, bottom: 0.35 }, [a], { tx: 0.001, ty: 0.001 });
+  check("Lejos de todo: no se mueve ni hay guías", s3.dx === 0 && s3.dy === 0 && s3.guides.length === 0, s3);
+  check("Cuadrícula de 10 %: pega el centro a la línea más cercana", JSON.stringify(snapToGrid({ x: 0.43, y: 0.58 }, 0.1)) === JSON.stringify({ x: 0.4, y: 0.6 }));
+
+  const boxes: Bounds[] = [
+    { left: 0.1, right: 0.2, top: 0.1, bottom: 0.2 },
+    { left: 0.4, right: 0.6, top: 0.3, bottom: 0.5 },
+  ];
+  const left = alignDeltas(boxes, "left");
+  check("Alinear a la izquierda", left[0].dx === 0 && Math.abs(left[1].dx - -0.3) < 1e-9 && left[1].dy === 0, left);
+  const mid = alignDeltas(boxes, "vcenter");
+  check("Alinear al medio (vertical)", Math.abs(mid[0].dy - 0.15) < 1e-9 && Math.abs(mid[1].dy - -0.1) < 1e-9, mid);
+  const three: Bounds[] = [
+    { left: 0.0, right: 0.1, top: 0, bottom: 0.1 },
+    { left: 0.15, right: 0.25, top: 0, bottom: 0.1 },
+    { left: 0.8, right: 0.9, top: 0, bottom: 0.1 },
+  ];
+  const d = distributeDeltas(three, "x");
+  check("Repartir: el del medio queda con el mismo espacio a los lados", Math.abs(d.deltas[1].dx - 0.25) < 1e-9 && d.deltas[0].dx === 0 && d.deltas[2].dx === 0 && Math.abs(d.gap - 0.3) < 1e-9, d);
 }
 
 function sanitizeChecks() {
@@ -765,6 +800,7 @@ async function main() {
   mathChecks();
   validationChecks();
   layoutChecks();
+  canvasChecks();
   sanitizeChecks();
   previewChecks();
   await endToEnd();
