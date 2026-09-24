@@ -1,7 +1,8 @@
 "use client";
 
 import { Check, X } from "lucide-react";
-import { BoardSpot, ImageBoard, ItemFace, SpotArea, useElementWidth } from "@/components/exam/image-board";
+import { BoardSpot, ImageBoard, SpotArea, useElementWidth } from "@/components/exam/image-board";
+import { ItemFace } from "@/components/exam/image-pieces";
 import type { ReviewBoard } from "@/components/student/types";
 import { fileUrl, iconNumbers, imageItemName, readingOrder } from "@/lib/image-questions";
 import { cn } from "@/lib/utils";

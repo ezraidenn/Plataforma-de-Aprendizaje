@@ -1,6 +1,7 @@
 "use client";
 
-import { BoardSpot, LabelPill, SpotArea, ZoneShadow } from "@/components/exam/image-board";
+import { BoardSpot, SpotArea } from "@/components/exam/image-board";
+import { LabelPill, ZoneShadow } from "@/components/exam/image-pieces";
 import { PRECISION_RADIUS } from "@/lib/image-questions";
 import type { ElementView } from "@/lib/image-layout";
 import { cn } from "@/lib/utils";

@@ -441,6 +441,11 @@ async function endToEnd() {
     check("Arrastrar: fichas opacas y distintas", new Set([...rd.imageDrag!.zones, ...rd.imageDrag!.items].map((t) => t.token)).size === 9 &&
       [...rd.imageDrag!.zones, ...rd.imageDrag!.items].every((t) => /^[0-9a-f]{16}$/.test(t.token)));
     check("Arrastrar: los lugares no traen tamaño ni elemento", rd.imageDrag!.zones.every((z) => Object.keys(z).sort().join() === "token,x,y"));
+    // Lista blanca: una clave nueva en las fichas debe pensarse (¿delata algo?) y agregarse aquí
+    check("Arrastrar: cada ficha trae solo su cara (token, tipo, archivo o texto, tamaño, proporción y giro)",
+      rd.imageDrag!.items.every((it) => Object.keys(it).sort().join() ===
+        (it.kind === "icon" ? "fileId,kind,ratio,rotation,size,token" : "kind,ratio,rotation,size,text,token")),
+      rd.imageDrag!.items.map((it) => Object.keys(it).sort().join()));
     check("Señalar: solo la foto y cuántas marcas", rc.image === photo && JSON.stringify(rc.imageClick) === JSON.stringify({ aspect: 0.5, marks: 2 }));
     check("Las demás claves nuevas quedan en null", rd.imageClick === null && rc.imageDrag === null && rd.matching === null && rd.ordering === null);
 

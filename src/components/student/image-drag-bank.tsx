@@ -1,9 +1,10 @@
 "use client";
 
+import type { CSSProperties, ReactNode } from "react";
 import { useDraggable } from "@dnd-kit/core";
 import { Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { IconArt, ItemFace, LabelPill } from "@/components/exam/image-board";
+import { FOCUS_RING, IconArt, ItemFace, LabelPill } from "@/components/exam/image-pieces";
 import type { RunnerQuestion } from "@/components/student/types";
 import { iconBoxPx, textPx } from "@/lib/image-layout";
 import { cn } from "@/lib/utils";
@@ -47,6 +48,13 @@ function BankFace({ item, boardWidth, dense, className }: { item: DragItem; boar
   return <LabelPill text={item.text ?? ""} fontPx={fontPx} dense={dense} className={className} />;
 }
 
+/** Caja sin giro que contiene una de w×h girada `deg` grados. */
+function turnedBox(w: number, h: number, deg: number): CSSProperties {
+  const t = (deg * Math.PI) / 180;
+  const [c, s] = [Math.abs(Math.cos(t)), Math.abs(Math.sin(t))];
+  return { width: Math.round(w * c + h * s), height: Math.round(w * s + h * c) };
+}
+
 /** Una ficha (en el banco o colocada): se arrastra o se toca. */
 export function DraggableChip({
   item,
@@ -84,7 +92,26 @@ export function DraggableChip({
   const { setNodeRef, listeners } = useDraggable({ id: item.token });
   const pressed = selected === item.token;
   const palette = inBank && item.kind === "icon";
-  const face = cn(faded && "opacity-35");
+  const fade = cn(faded && "opacity-35");
+  let face: ReactNode;
+  let style: CSSProperties | undefined;
+  if (inBank) {
+    face = <BankFace item={item} boardWidth={boardWidth} dense={dense} className={fade} />;
+  } else if (item.kind === "icon") {
+    // En la foto el ícono gira por dentro (su sombra cae hacia abajo), en una
+    // caja que lo contiene girado: así los anillos lo rodean
+    const { w, h } = iconBoxPx(item.size, item.ratio, boardWidth);
+    style = turnedBox(w, h, item.rotation);
+    face = (
+      <span className="flex size-full items-center justify-center">
+        <ItemFace item={item} boardWidth={boardWidth} dense={dense} className={fade} />
+      </span>
+    );
+  } else {
+    // Una etiqueta gira con su botón: los anillos giran con ella
+    style = item.rotation ? { transform: `rotate(${item.rotation}deg)` } : undefined;
+    face = <ItemFace item={{ ...item, rotation: 0 }} boardWidth={boardWidth} dense={dense} className={fade} />;
+  }
   return (
     <button
       ref={setNodeRef}
@@ -96,16 +123,17 @@ export function DraggableChip({
       aria-label={label}
       aria-pressed={pressed}
       className={cn(
-        "relative block cursor-grab touch-none outline-none transition-[background-color,box-shadow] duration-150 active:cursor-grabbing motion-reduce:transition-none",
+        "relative block cursor-grab touch-none transition-[background-color,box-shadow] duration-150 active:cursor-grabbing motion-reduce:transition-none",
         palette
           ? // Ícono del banco: sin tarjeta; se resalta solo al pasar, con el foco o elegido
             cn(
-              "rounded-[10px] p-1 hover:bg-primary/10 hover:ring-2 hover:ring-primary/30 focus-visible:bg-primary/10 focus-visible:ring-2 focus-visible:ring-primary/60",
+              "rounded-[10px] p-1 outline-none hover:bg-primary/10 hover:ring-2 hover:ring-primary/30 focus-visible:bg-primary/10 focus-visible:ring-2 focus-visible:ring-primary",
               pressed && "bg-primary/10 ring-2 ring-primary"
             )
           : cn(
               item.kind === "icon" ? "rounded-md" : "rounded-full",
-              "focus-visible:ring-4 focus-visible:ring-primary/40",
+              // Sobre la foto: el mismo foco que las sombras, separado por blanco
+              FOCUS_RING,
               pressed && "ring-2 ring-primary ring-offset-2 ring-offset-background"
             ),
         hot && "ring-4 ring-primary/50",
@@ -113,14 +141,9 @@ export function DraggableChip({
         selected && !pressed && data["data-zone"] && "hover:ring-4 hover:ring-primary/30",
         className
       )}
-      // En la foto el giro va en el botón: los anillos giran con la ficha
-      style={!inBank && item.rotation ? { transform: `rotate(${item.rotation}deg)` } : undefined}
+      style={style}
     >
-      {inBank ? (
-        <BankFace item={item} boardWidth={boardWidth} dense={dense} className={face} />
-      ) : (
-        <ItemFace item={{ ...item, rotation: 0 }} boardWidth={boardWidth} dense={dense} className={face} />
-      )}
+      {face}
       {count > 1 && (
         <span
           aria-hidden

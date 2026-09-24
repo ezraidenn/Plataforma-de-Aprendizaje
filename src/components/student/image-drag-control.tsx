@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { DndContext, DragOverlay, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
-import { BoardSpot, ImageBoard, ItemFace, ZoneShadow, relToRect, useElementWidth } from "@/components/exam/image-board";
+import { BoardSpot, ImageBoard, relToRect, useElementWidth } from "@/components/exam/image-board";
+import { ItemFace, ZoneShadow } from "@/components/exam/image-pieces";
 import { QUIET_ANNOUNCEMENTS, useIsClient } from "@/components/exam/image-dnd";
 import { LiveRegion, useAnnouncer } from "@/components/exam/live-region";
 import { DraggableChip, ImageBank, groupBank, groupKey } from "@/components/student/image-drag-bank";

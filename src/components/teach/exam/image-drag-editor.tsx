@@ -19,13 +19,12 @@ import { Input } from "@/components/ui/input";
 import {
   BoardCursor,
   BoardSpot,
-  IconArt,
   ImageBoard,
-  ItemFace,
   relToRect,
   useCrosshair,
   useElementWidth,
 } from "@/components/exam/image-board";
+import { IconArt, ItemFace } from "@/components/exam/image-pieces";
 import { DropVeil, QUIET_ANNOUNCEMENTS, centerOnPointer, useFileDrop, useIsClient } from "@/components/exam/image-dnd";
 import { EDITOR_IMAGE_ACCEPT, uploadFile } from "@/lib/upload-client";
 import { plural } from "@/lib/plural";
