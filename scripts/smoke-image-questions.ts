@@ -49,16 +49,20 @@ import {
   type ImageClickConfig,
   type ImageDragConfig,
 } from "../src/lib/image-questions";
+import { initialImageValue, shapedImageValue } from "../src/lib/image-editor-value";
 import {
   DEFAULT_ICON_SIZE,
   DEFAULT_TEXT_SIZE,
+  ICON_SIZE_RANGE,
   alphaBounds,
   boxBounds,
+  boxesOverlap,
   elementBox,
   elementRatio,
   elementSize,
   elementView,
   iconBoxPx,
+  newIconSize,
   normalizeRotation,
   snapRadiusFor,
   textPx,
@@ -211,6 +215,44 @@ function layoutChecks() {
   check("Límites del dibujo", JSON.stringify(alphaBounds(rgba, 4, 3)) === JSON.stringify({ x: 2, y: 1, w: 1, h: 1 }));
   check("Límites: todo transparente, null", alphaBounds(new Uint8ClampedArray(16), 2, 2) === null);
   check("Límites: casi transparente (alfa ≤ 8) no cuenta", (() => { const a = new Uint8ClampedArray(16); a[3] = 8; return alphaBounds(a, 2, 2) === null; })());
+
+  console.log("\n— Editor: ícono nuevo y cajas que se tapan");
+  check("Ícono nuevo: el lado mayor mide el mediano de antes", newIconSize(1) === DEFAULT_ICON_SIZE && newIconSize(0.4) === DEFAULT_ICON_SIZE && newIconSize(2) === DEFAULT_ICON_SIZE / 2, [newIconSize(1), newIconSize(0.4), newIconSize(2)]);
+  check("Ícono nuevo muy alto: no baja del mínimo", newIconSize(10) === ICON_SIZE_RANGE[0], newIconSize(10));
+  const sq = (x: number, y: number, rotation = 0, side = 0.1) => elementBox({ x, y }, { w: side, h: side }, rotation, 1);
+  check("Cajas separadas no se tapan", !boxesOverlap(sq(0.2, 0.5), sq(0.35, 0.5)));
+  check("Cajas encimadas se tapan", boxesOverlap(sq(0.2, 0.5), sq(0.28, 0.52)));
+  check("Tocarse por un borde no cuenta", !boxesOverlap(sq(0.2, 0.5), sq(0.3, 0.5)));
+  // Dos rombos (cuadrados a 45°) en diagonal: sus cajas envolventes se enciman, ellos no
+  const [d1, d2] = [sq(0.2, 0.2, 45), sq(0.325, 0.325, 45)];
+  const [e1, e2] = [boxBounds(d1), boxBounds(d2)];
+  const envelopes = e1.left < e2.right && e2.left < e1.right && e1.top < e2.bottom && e2.top < e1.bottom;
+  check("Con giro: se mide la caja girada, no la envolvente", envelopes && !boxesOverlap(d1, d2));
+  // Una barra larga girada 90° alcanza a la de abajo; sin girar, no
+  const bar = (x: number, y: number, rotation: number) => elementBox({ x, y }, { w: 0.3, h: 0.03 }, rotation, 1);
+  check("Con giro: una barra vertical alcanza lo que la horizontal no", boxesOverlap(bar(0.5, 0.36, 90), bar(0.5, 0.5, 0)) && !boxesOverlap(bar(0.5, 0.36, 0), bar(0.5, 0.5, 0)));
+  // En la foto (no cuadrada) el alto se mide con la proporción
+  const tall = (y: number) => elementBox({ x: 0.5, y }, { w: 0.1, h: 0.1 }, 0, 0.5);
+  check("Con la proporción de la foto: 0.1 de alto a lo ancho son 0.2 del alto", boxesOverlap(tall(0.3), tall(0.49)) && !boxesOverlap(tall(0.3), tall(0.51)));
+
+  console.log("\n— Editor: abrir una pregunta y conservarla");
+  const opened = initialImageValue("image_drag", "foto", { ...DRAG, iconSize: "lg" }).config as ImageDragConfig;
+  check("Pregunta de antes: iconSize pasa a cada elemento y ya no sigue",
+    !("iconSize" in opened) &&
+      opened.elements.every((e) => typeof e.size === "number") &&
+      opened.elements.find((e) => e.kind === "icon")?.size === Math.round((72 / 700) * 10_000) / 10_000 &&
+      opened.elements.find((e) => e.kind === "text")?.size === DEFAULT_TEXT_SIZE,
+    opened.elements);
+  check("Pregunta de antes: se ve igual (mismo tamaño efectivo)",
+    opened.elements.every((e) => Math.abs(elementSize(e) - elementSize(DRAG.elements.find((d) => d.id === e.id)!, "lg")) < 1e-4));
+  check("Pregunta de antes: conserva elementos y lugares, y es válida", opened.elements.length === DRAG.elements.length && opened.zones.length === DRAG.zones.length && imageDragProblem(opened, true) === null);
+  const withSize = initialImageValue("image_drag", "foto", { aspect: 0.75, elements: [{ id: "a", kind: "icon", fileId: "f", size: 0.123456, ratio: 0.4, rotation: 15 }], zones: [] }).config as ImageDragConfig;
+  check("Tamaño propio: se abre tal cual", JSON.stringify(withSize.elements[0]) === JSON.stringify({ id: "a", kind: "icon", fileId: "f", size: 0.123456, ratio: 0.4, rotation: 15 }), withSize.elements[0]);
+  // Lo que exigía iconSize rehacía vacía una config sin él: borraba lo armado
+  const value = { imageFileId: "foto", config: opened };
+  check("Sin iconSize la forma encaja: no se rehace vacía", shapedImageValue("image_drag", value) === value);
+  check("Otro tipo sí se rehace (con la misma foto y proporción)",
+    (() => { const v = shapedImageValue("image_click", value); return v !== value && v.imageFileId === "foto" && v.config.aspect === opened.aspect && (v.config as ImageClickConfig).spots.length === 0; })());
 
   console.log("\n— Saneo y validación de los campos nuevos");
   const base = { aspect: 0.75, elements: [{ id: "a", kind: "icon", fileId: "f", size: 0.1, ratio: 1.5, rotation: 370 }], zones: [{ x: 0.5, y: 0.5, elementId: "a" }] };

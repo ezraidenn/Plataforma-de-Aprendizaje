@@ -1,9 +1,9 @@
 "use client";
 
 import { BoardSpot, SpotArea } from "@/components/exam/image-board";
-import { LabelPill, ZoneShadow } from "@/components/exam/image-pieces";
+import { IconArt, LabelPill, ZoneShadow } from "@/components/exam/image-pieces";
 import { PRECISION_RADIUS } from "@/lib/image-questions";
-import type { ElementView } from "@/lib/image-layout";
+import { iconBoxPx, type ElementView } from "@/lib/image-layout";
 import { cn } from "@/lib/utils";
 import { useSceneClock } from "../use-scene-clock";
 import { MiniBadge } from "../mini/basics";
@@ -23,7 +23,9 @@ import {
 /**
  * Preguntas sobre imagen. La «foto» es un plano dibujado; los lugares, las
  * fichas y los círculos de acierto son las mismas piezas que ve el alumno
- * (`src/components/exam/image-board.tsx`), a su tamaño real.
+ * (`src/components/exam/image-board.tsx` e `image-pieces.tsx`), a su tamaño
+ * real. Los íconos son SVG propios como `data:` URL: se ven puros y las
+ * sombras toman su silueta, igual que con un PNG subido.
  */
 
 const PLAN_BG = "bg-[#f7f4ec]";
@@ -76,64 +78,82 @@ const BANK_ROW_Y = 39;
 /** Fichas del banco, en coordenadas del plano (el banco queda debajo: y > 1) */
 const BANK_Y = (DRAG_PHOTO_H + BANK_GAP + BANK_ROW_Y) / DRAG_PHOTO_H;
 const BANK_X = [0.12, 0.34, 0.58, 0.82];
-const ICON_PX = 30;
 const LABEL_PX = 11;
-/** Ancho de referencia del plano: los tamaños de la ficha en la mano son relativos a él, como en una pregunta. */
+/** Ancho de referencia del plano: los tamaños de las fichas son relativos a él, como en una pregunta. */
 const PLAN_W = 320;
 
-function ExtinguisherArt() {
-  return (
-    <svg viewBox="0 0 24 24" className="size-full p-[14%]" aria-hidden>
-      <path d="M13 6.2h3.6l2.6 3.3" fill="none" stroke="#0f172a" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-      <rect x="10" y="4.5" width="4" height="3.5" rx="1" fill="#0f172a" />
-      <rect x="7.5" y="7.5" width="9" height="14.5" rx="3" fill="#dc2626" />
-      <rect x="9.5" y="12" width="5" height="4" rx="1" fill="#fff" opacity="0.85" />
-    </svg>
-  );
-}
+/**
+ * Los íconos de la escena, ya «recortados» a su dibujo como los que sube el
+ * maestro (el viewBox abarca solo el dibujo, así su caja tiene su proporción).
+ */
+const EXTINGUISHER_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="7.5 4.5 12.5 17.5" width="125" height="175">
+<path d="M13 6.2h3.6l2.6 3.3" fill="none" stroke="#0f172a" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="10" y="4.5" width="4" height="3.5" rx="1" fill="#0f172a"/>
+<rect x="7.5" y="7.5" width="9" height="14.5" rx="3" fill="#dc2626"/>
+<rect x="9.5" y="12" width="5" height="4" rx="1" fill="#fff" opacity="0.85"/>
+</svg>`;
+const FIRST_AID_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="3 3.7 18 16.8" width="180" height="168">
+<path d="M9 6.5V4.5h6v2" fill="none" stroke="#15803d" stroke-width="1.6"/>
+<rect x="3" y="6.5" width="18" height="14" rx="2.5" fill="#16a34a"/>
+<path d="M12 10v7M8.5 13.5h7" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/>
+</svg>`;
 
-function FirstAidArt() {
-  return (
-    <svg viewBox="0 0 24 24" className="size-full p-[14%]" aria-hidden>
-      <path d="M9 6.5V4.5h6v2" fill="none" stroke="#15803d" strokeWidth="1.6" />
-      <rect x="3" y="6.5" width="18" height="14" rx="2.5" fill="#16a34a" />
-      <path d="M12 10v7M8.5 13.5h7" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" />
-    </svg>
-  );
+/** Un ícono de la escena: su dibujo como URL (sirve de imagen y de máscara), proporción y ancho. */
+type SceneIcon = { src: string; ratio: number; size: number };
+const sceneIcon = (svg: string, ratio: number, widthPx: number): SceneIcon => ({
+  src: `data:image/svg+xml,${encodeURIComponent(svg)}`,
+  ratio,
+  size: widthPx / PLAN_W,
+});
+/** Dibujo de cada ficha, en el orden de DRAG_PIECES (las de texto no tienen). */
+const ICONS: (SceneIcon | null)[] = [sceneIcon(EXTINGUISHER_SVG, 17.5 / 12.5, 24), null, sceneIcon(FIRST_AID_SVG, 16.8 / 18, 28), null];
+
+/** Revisión: contorno de un ícono bien o mal puesto, en los colores de la escena. */
+const RESULT_COLOR = { ok: "#16a34a", bad: "#ef4444" };
+
+/** Lo que se toma en la mano, para las sombras: su forma, tamaño y proporción. */
+function heldShape(index: number): ElementView {
+  const piece = DRAG_PIECES[index];
+  const icon = ICONS[index];
+  return piece.kind === "text" || !icon
+    ? { kind: "text", text: piece.label, size: LABEL_PX / PLAN_W, ratio: 1, rotation: 0 }
+    : { kind: "icon", size: icon.size, ratio: icon.ratio, rotation: 0 };
 }
 
 /**
- * Lo que se toma en la mano, para las sombras. Los íconos de la escena no son
- * archivos: su sombra toma la silueta de la tarjeta.
+ * Cara de la ficha: el ícono puro (solo el dibujo, con su sombra suave) o la
+ * etiqueta real. Al calificar, el ícono lleva un contorno verde o rojo que
+ * sigue su silueta y la etiqueta un anillo, como en la revisión.
  */
-function heldShape(index: number): ElementView {
+function PieceFace({ index, result = null, className }: { index: number; result?: boolean | null; className?: string }) {
   const piece = DRAG_PIECES[index];
-  return piece.kind === "text"
-    ? { kind: "text", text: piece.label, size: LABEL_PX / PLAN_W, ratio: 1, rotation: 0 }
-    : { kind: "icon", size: ICON_PX / PLAN_W, ratio: 1, rotation: 0 };
-}
-
-/** Dibujo de cada ícono (las fichas de texto no tienen). */
-const ICON_ART = [<ExtinguisherArt key="e" />, null, <FirstAidArt key="f" />, null];
-
-/** Cara de la ficha: ícono en tarjeta blanca o la etiqueta real. */
-function PieceFace({ index, className }: { index: number; className?: string }) {
-  const piece = DRAG_PIECES[index];
-  if (piece.kind === "text") return <LabelPill text={piece.label} fontPx={LABEL_PX} dense className={className} />;
+  const icon = ICONS[index];
+  if (piece.kind === "text" || !icon) {
+    return (
+      <LabelPill
+        text={piece.label}
+        fontPx={LABEL_PX}
+        dense
+        className={cn(result !== null && (result ? "ring-2 ring-green-600" : "ring-2 ring-red-500"), className)}
+      />
+    );
+  }
+  const { w, h } = iconBoxPx(icon.size, icon.ratio, PLAN_W);
   return (
-    <span
-      className={cn("flex items-center justify-center rounded-[12px] border bg-white shadow-sm", className)}
-      style={{ width: ICON_PX, height: ICON_PX }}
-    >
-      {ICON_ART[index]}
-    </span>
+    <IconArt
+      src={icon.src}
+      w={w}
+      h={h}
+      outline={result === null ? undefined : RESULT_COLOR[result ? "ok" : "bad"]}
+      className={className}
+    />
   );
 }
 
 /**
  * Arrastrar a la imagen: tres lugares idénticos. Al tomar el ícono todos los
- * libres se vuelven cuadrados; al tomar la etiqueta, píldoras. La ficha cruza
- * hasta su lugar, este se ilumina y encaja. Al final, 2 de 3.
+ * libres toman su silueta (la del extintor); al tomar la etiqueta, píldoras.
+ * La ficha cruza hasta su lugar, este se ilumina y encaja. Al final, 2 de 3.
  */
 export function ImageDragScene() {
   const phase = useSceneClock(IMAGE_DRAG_CYCLE_MS);
@@ -158,6 +178,7 @@ export function ImageDragScene() {
                 ) : (
                   <ZoneShadow
                     shape={held}
+                    silhouette={s.held !== null ? ICONS[s.held]?.src : undefined}
                     hot={s.hot === z}
                     boardWidth={PLAN_W}
                     dense
@@ -196,14 +217,16 @@ export function ImageDragScene() {
                 <span
                   className={cn(
                     "relative block transition-transform duration-300",
-                    // En la mano va levantada; sobre el lugar, un poco corrida para que se vea iluminado
-                    inHand && (s.travelling ? "translate-x-2 -translate-y-2.5 -rotate-3 scale-110" : "-translate-y-1 -rotate-3 scale-110")
+                    // En la mano va levantada (con una sombra que sigue su forma); sobre
+                    // el lugar, un poco corrida para que se vea iluminado
+                    inHand &&
+                      cn(
+                        "drop-shadow-[0_8px_8px_rgb(15_23_42/0.3)]",
+                        s.travelling ? "translate-x-2 -translate-y-2.5 -rotate-3 scale-110" : "-translate-y-1 -rotate-3 scale-110"
+                      )
                   )}
                 >
-                  <PieceFace
-                    index={i}
-                    className={cn(inHand && "shadow-lg", result !== null && (result ? "ring-2 ring-green-600" : "ring-2 ring-red-500"))}
-                  />
+                  <PieceFace index={i} result={result} />
                   {inHand && <MiniCursor at pressed />}
                   {result && (
                     <span className="absolute -right-1.5 -top-1.5 flex size-3.5 animate-in zoom-in items-center justify-center rounded-full bg-green-600 text-[8px] font-black text-white ring-2 ring-white duration-300">

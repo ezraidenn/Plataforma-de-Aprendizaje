@@ -37,19 +37,28 @@ import {
   fileUrl,
   freeSpot,
   iconNumbers,
-  iconPx,
   imageItemName,
   readingNumbers,
   relDistance,
   round4,
-  type IconSize,
   type ImageDragConfig,
   type ImageElement,
   type ImageZone,
   type Point,
 } from "@/lib/image-questions";
-import { elementView } from "@/lib/image-layout";
+import {
+  DEFAULT_TEXT_SIZE,
+  boxBounds,
+  boxesOverlap,
+  elementBox,
+  elementRatio,
+  elementView,
+  newIconSize,
+  type Box,
+} from "@/lib/image-layout";
+import { prepareIcon } from "@/lib/image-processing";
 import { cn } from "@/lib/utils";
+import { ElementPanel } from "./image-element-panel";
 
 /**
  * «Arrastrar a la imagen» en el editor del maestro. A la derecha (debajo en
@@ -58,10 +67,15 @@ import { cn } from "@/lib/utils";
  * foto, o con teclado Enter, flechas y Enter). Los lugares se arrastran para
  * moverlos y fuera de la foto para quitarlos; muestran el elemento real y el
  * número «Lugar N» que ve el alumno. Soltar un archivo sobre la foto la cambia;
- * sobre la lista, lo agrega como ícono.
+ * sobre la lista, lo agrega como ícono (sin sus márgenes transparentes). El
+ * panel «Seleccionado» cambia el tamaño y el giro del elemento elegido.
  */
 
 const DUPLICATE = "Ya está en la lista: colócalo en varios lugares";
+const UNREADABLE = "No se pudo leer la imagen: usa un ícono PNG, JPG, WEBP o GIF.";
+const EMPTY_ICON = "Ese ícono está vacío (todo transparente): elige otra imagen.";
+/** Lado de la miniatura de un elemento en la lista (px; el mismo de `size-[34px]`). */
+const THUMB_PX = 34;
 const ARROW_STEPS: Record<string, [number, number]> = {
   ArrowLeft: [-1, 0],
   ArrowRight: [1, 0],
@@ -95,10 +109,6 @@ async function fingerprint(data: ArrayBuffer): Promise<string> {
   for (const byte of new Uint8Array(data)) h = Math.imul(h ^ byte, 0x01000193);
   return `fnv-${(h >>> 0).toString(16)}`;
 }
-
-/** Dos rectángulos de la pantalla se tocan. */
-const intersect = (a: DOMRect, b: DOMRect) =>
-  a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
 
 export function DragEditor({
   imageFileId,
@@ -154,7 +164,6 @@ export function DragEditor({
   const { elements, zones } = config;
   const fullElements = elements.length >= MAX_ELEMENTS;
   const fullZones = zones.length >= MAX_ZONES;
-  const px = iconPx(config.iconSize ?? "md", board.width);
   const dense = board.width > 0 && board.width < 480;
   const byId = useMemo(() => new Map(elements.map((e) => [e.id, e])), [elements]);
   const icons = useMemo(() => iconNumbers(elements.map((e) => e.fileId)), [elements]);
@@ -215,26 +224,31 @@ export function DragEditor({
     rootRef.current?.querySelector<HTMLElement>(selector)?.focus();
   });
 
-  // Lugares que se tapan a la vista: íconos por distancia, etiquetas por lo que ocupan en pantalla
+  // Avisos con la caja real de cada lugar en pantalla: su tamaño, su proporción y su giro
   useLayoutEffect(() => {
     const root = rootRef.current;
-    if (!root || board.width === 0) return;
-    const rects = new Map<number, DOMRect>();
+    const boardRect = board.node?.getBoundingClientRect();
+    if (!root || !boardRect || board.width === 0) return;
+    const boxes = new Map<number, Box>();
     root.querySelectorAll<HTMLElement>("[data-zone]").forEach((el) => {
-      rects.set(Number(el.dataset.zone), el.getBoundingClientRect());
+      const i = Number(el.dataset.zone);
+      const element = byId.get(zones[i]?.elementId ?? "");
+      if (!element) return;
+      // El botón mide la ficha sin girar (el giro va dentro) y girar no mueve su centro
+      const r = el.getBoundingClientRect();
+      const center = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+      boxes.set(i, elementBox(center, { w: r.width, h: r.height }, elementView(element).rotation, 1));
     });
-    const side = px / board.width;
+
+    // Dos lugares que se tapan a la vista
     const find = (): [number, number] | null => {
       for (let a = 0; a < ordered.length; a++) {
         for (let b = a + 1; b < ordered.length; b++) {
           const [i, j] = [ordered[a], ordered[b]];
-          const d = relDistance(zones[i], zones[j], aspect);
           // Más cerca aún: es el error «encimados» de la validación, que no deja guardar
-          if (d < MIN_ZONE_GAP) continue;
-          const twoIcons =
-            byId.get(zones[i].elementId)?.kind === "icon" && byId.get(zones[j].elementId)?.kind === "icon";
-          const [ri, rj] = [rects.get(i), rects.get(j)];
-          if (twoIcons ? d < side : !!ri && !!rj && intersect(ri, rj)) return [i, j];
+          if (relDistance(zones[i], zones[j], aspect) < MIN_ZONE_GAP) continue;
+          const [bi, bj] = [boxes.get(i), boxes.get(j)];
+          if (bi && bj && boxesOverlap(bi, bj)) return [i, j];
         }
       }
       return null;
@@ -243,18 +257,16 @@ export function DragEditor({
     setCovered((prev) => (prev?.[0] === found?.[0] && prev?.[1] === found?.[1] ? prev : found));
 
     // Etiquetas de texto cuyo lugar, sin recortar, se sale del rectángulo de la foto
-    const boardRect = board.node?.getBoundingClientRect();
-    const clipped = boardRect
-      ? ordered.filter((i) => {
-          if (byId.get(zones[i].elementId)?.kind !== "text") return false;
-          const r = rects.get(i);
-          return !!r && (r.left < boardRect.left || r.right > boardRect.right || r.top < boardRect.top || r.bottom > boardRect.bottom);
-        })
-      : [];
+    const clipped = ordered.filter((i) => {
+      const box = boxes.get(i);
+      if (!box || byId.get(zones[i].elementId)?.kind !== "text") return false;
+      const r = boxBounds(box);
+      return r.left < boardRect.left || r.right > boardRect.right || r.top < boardRect.top || r.bottom > boardRect.bottom;
+    });
     setEdgeClipped((prev) =>
       prev.length === clipped.length && prev.every((v, idx) => v === clipped[idx]) ? prev : clipped
     );
-  }, [zones, ordered, byId, px, dense, board.width, board.node, aspect]);
+  }, [zones, ordered, byId, dense, board.width, board.node, aspect]);
 
   const nameOf = (id: string) => names.get(id) ?? "Elemento";
   const labelTaken = (text: string) =>
@@ -327,7 +339,7 @@ export function DragEditor({
       announce(DUPLICATE);
       return;
     }
-    const element: ImageElement = { id: newElementId(elements), kind: "text", text };
+    const element: ImageElement = { id: newElementId(elements), kind: "text", text, size: DEFAULT_TEXT_SIZE };
     setConfig((c) => (c.elements.length >= MAX_ELEMENTS ? c : { ...c, elements: [...c.elements, element] }));
     setLabel("");
     setNotice(null);
@@ -340,7 +352,7 @@ export function DragEditor({
   }
 
   /** ¿Ya hay un ícono con este mismo contenido? Primero el tamaño; la huella, solo si coincide. */
-  async function iconExists(file: File): Promise<boolean> {
+  async function iconExists(file: Blob): Promise<boolean> {
     let mine: Promise<string> | null = null;
     const myPrint = () => (mine ??= file.arrayBuffer().then(fingerprint));
     const checks = elements.map(async (e) => {
@@ -371,14 +383,30 @@ export function DragEditor({
     setNotice(null);
     setUploading("icon");
     try {
-      if (await iconExists(file)) {
+      // Solo el dibujo: sin márgenes transparentes y a un tamaño razonable. Lo
+      // que se compara con los demás íconos y lo que se sube es ya el recorte
+      const icon = await prepareIcon(file).catch(() => {
+        throw new Error(UNREADABLE);
+      });
+      if (!icon) {
+        setNotice(EMPTY_ICON);
+        announce(EMPTY_ICON);
+        return;
+      }
+      if (await iconExists(icon.blob)) {
         setNotice(DUPLICATE);
         announce(DUPLICATE);
         return;
       }
-      const fileId = await uploadFile(file, "editor_image");
-      iconPrints.current.set(fileId, { size: file.size, hash: await fingerprint(await file.arrayBuffer()) });
-      const element: ImageElement = { id: newElementId(elements), kind: "icon", fileId };
+      const fileId = await uploadFile(new File([icon.blob], icon.name, { type: "image/png" }), "editor_image");
+      iconPrints.current.set(fileId, { size: icon.blob.size, hash: await fingerprint(await icon.blob.arrayBuffer()) });
+      const element: ImageElement = {
+        id: newElementId(elements),
+        kind: "icon",
+        fileId,
+        size: newIconSize(icon.ratio),
+        ratio: icon.ratio,
+      };
       setConfig((c) => (c.elements.length >= MAX_ELEMENTS ? c : { ...c, elements: [...c.elements, element] }));
       announce("Ícono agregado: arrástralo a la foto");
     } catch (err) {
@@ -450,6 +478,14 @@ export function DragEditor({
     ? byId.get(active.startsWith("el:") ? active.slice(3) : (zones[Number(active.slice(5))]?.elementId ?? ""))
     : undefined;
   const removing = outside && !!active?.startsWith("zone:");
+  /** El elemento del panel «Seleccionado»: el elegido en la lista o el del lugar elegido. */
+  const selectedId = chosen ?? (picked !== null ? zones[picked]?.elementId : undefined);
+  const selected = (selectedId && byId.get(selectedId)) || null;
+
+  /** Tamaño o giro de un elemento: lo toman todos sus lugares. */
+  function changeElement(id: string, patch: Pick<ImageElement, "size" | "rotation">) {
+    setConfig((c) => ({ ...c, elements: c.elements.map((e) => (e.id === id ? { ...e, ...patch } : e)) }));
+  }
   const hint = removing
     ? "Fuera de la foto: suéltalo para quitar este lugar."
     : chosen
@@ -508,7 +544,6 @@ export function DragEditor({
                   label={`Lugar ${numbers[i]}: ${nameOf(z.elementId)}`}
                   number={numbers[i]}
                   boardWidth={board.width}
-                  iconSize={config.iconSize}
                   dense={dense}
                   picked={picked === i}
                   lifted={active === `zone:${i}`}
@@ -556,6 +591,13 @@ export function DragEditor({
         </div>
 
         <div className="relative space-y-2 rounded-xl" {...panelDrop.dropProps}>
+          {elements.length > 0 && (
+            <ElementPanel
+              element={selected}
+              name={selected ? nameOf(selected.id) : ""}
+              onChange={(patch) => selected && changeElement(selected.id, patch)}
+            />
+          )}
           <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Elementos</p>
           {listed.length > 0 && (
             <ul className="space-y-1.5" aria-label="Elementos">
@@ -698,7 +740,7 @@ export function DragEditor({
                     removing ? "opacity-40" : "-rotate-4 opacity-95"
                   )}
                 >
-                  <ItemFace item={elementView(activeElement, config.iconSize)} boardWidth={board.width} dense={dense} />
+                  <ItemFace item={elementView(activeElement)} boardWidth={board.width} dense={dense} />
                 </span>
               </div>
             ) : null}
@@ -738,6 +780,11 @@ function ElementRow({
       : distractor
         ? "Sin lugar: distractor"
         : "Arrástralo a la foto";
+  const ratio = elementRatio(element);
+  const thumb =
+    ratio >= 1
+      ? { w: Math.max(1, Math.round(THUMB_PX / ratio)), h: THUMB_PX }
+      : { w: THUMB_PX, h: Math.max(1, Math.round(THUMB_PX * ratio)) };
   return (
     <li
       className={cn(
@@ -759,7 +806,10 @@ function ElementRow({
         className="flex min-w-0 flex-1 cursor-grab items-center gap-2 rounded-lg p-0.5 text-left outline-none focus-visible:ring-4 focus-visible:ring-primary/40 active:cursor-grabbing"
       >
         {element.kind === "icon" ? (
-          <IconArt fileId={element.fileId} w={34} h={34} className="shrink-0" />
+          // Con su proporción: el lado mayor mide lo de la miniatura
+          <span aria-hidden className="flex size-[34px] shrink-0 items-center justify-center">
+            <IconArt fileId={element.fileId} w={thumb.w} h={thumb.h} />
+          </span>
         ) : (
           <span
             aria-hidden
@@ -799,7 +849,6 @@ function PlacedZone({
   label,
   number,
   boardWidth,
-  iconSize,
   dense,
   picked,
   lifted,
@@ -813,7 +862,6 @@ function PlacedZone({
   label: string;
   number: number;
   boardWidth: number;
-  iconSize?: IconSize;
   dense: boolean;
   picked: boolean;
   /** Va en la mano: se ve el fantasma, y el botón sigue montado (invisible) para no cortar el arrastre. */
@@ -823,6 +871,11 @@ function PlacedZone({
   onKeyDown: (e: React.KeyboardEvent) => void;
 }) {
   const { setNodeRef, listeners } = useDraggable({ id: `zone:${index}` });
+  const view = elementView(element);
+  // El botón mide la ficha sin girar (los avisos lo miden así); el anillo, el
+  // número y la «×» van en una capa que gira con ella, con su contenido derecho
+  const turn = view.rotation ? { transform: `rotate(${view.rotation}deg)` } : undefined;
+  const upright = view.rotation ? { transform: `rotate(${-view.rotation}deg)` } : undefined;
   return (
     <BoardSpot x={zone.x} y={zone.y} className={cn(picked ? "z-20" : "z-10", lifted && "invisible")}>
       <button
@@ -835,31 +888,38 @@ function PlacedZone({
         aria-label={label}
         aria-pressed={picked}
         title="Arrástralo para moverlo, o fuera de la foto para quitarlo"
-        className={cn(
-          "relative block cursor-grab touch-none outline-none active:cursor-grabbing",
-          "focus-visible:ring-4 focus-visible:ring-primary/40",
-          element.kind === "icon" ? "rounded-[12px]" : "rounded-full",
-          picked && "ring-2 ring-primary ring-offset-2 ring-offset-background"
-        )}
+        className="group/zone relative block cursor-grab touch-none outline-none active:cursor-grabbing"
       >
-        <ItemFace item={elementView(element, iconSize)} boardWidth={boardWidth} dense={dense} />
-        <span
-          aria-hidden
-          className="absolute -right-2 -top-2 flex size-[18px] items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground ring-2 ring-white"
-        >
-          {number}
+        <ItemFace item={view} boardWidth={boardWidth} dense={dense} />
+        <span aria-hidden className="pointer-events-none absolute inset-0" style={turn}>
+          <span
+            className={cn(
+              "absolute inset-0 group-focus-visible/zone:ring-4 group-focus-visible/zone:ring-primary/40",
+              element.kind === "icon" ? "rounded-[12px]" : "rounded-full",
+              picked && "ring-2 ring-primary ring-offset-2 ring-offset-background"
+            )}
+          />
+          <span
+            className="absolute -right-2 -top-2 flex size-[18px] items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground ring-2 ring-white"
+            style={upright}
+          >
+            {number}
+          </span>
         </span>
       </button>
       {picked && (
-        <button
-          type="button"
-          aria-label={`Quitar el lugar ${number}`}
-          title="Quitar este lugar"
-          onClick={onRemove}
-          className="absolute -left-2.5 -top-2.5 flex size-5 items-center justify-center rounded-full bg-destructive text-white shadow ring-2 ring-white outline-none hover:bg-destructive/90 focus-visible:ring-4 focus-visible:ring-destructive/40"
-        >
-          <X className="size-3" strokeWidth={3} aria-hidden />
-        </button>
+        <span className="pointer-events-none absolute inset-0" style={turn}>
+          <button
+            type="button"
+            aria-label={`Quitar el lugar ${number}`}
+            title="Quitar este lugar"
+            onClick={onRemove}
+            style={upright}
+            className="pointer-events-auto absolute -left-2.5 -top-2.5 flex size-5 items-center justify-center rounded-full bg-destructive text-white shadow ring-2 ring-white outline-none hover:bg-destructive/90 focus-visible:ring-4 focus-visible:ring-destructive/40"
+          >
+            <X className="size-3" strokeWidth={3} aria-hidden />
+          </button>
+        </span>
       )}
     </BoardSpot>
   );

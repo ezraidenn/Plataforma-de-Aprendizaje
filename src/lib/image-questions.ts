@@ -49,7 +49,7 @@ export const MAX_ZONES = 30;
 export const MAX_SPOTS = 10;
 export const MAX_LABEL = 60;
 
-/** Lado del ícono en píxeles de pantalla, según el tamaño elegido. */
+/** Preguntas de antes: lado del ícono en px según su `iconSize`, sobre el ancho de referencia (REF_WIDTH, en image-layout). */
 export const ICON_PX: Record<IconSize, number> = { sm: 40, md: 56, lg: 72 };
 /** Radio de acierto al señalar, como fracción del ANCHO de la foto. */
 export const PRECISION_RADIUS: Record<Precision, number> = { sm: 0.03, md: 0.05, lg: 0.08 };
@@ -77,12 +77,6 @@ export const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
 
 /** URL de un archivo subido (la foto o un ícono). */
 export const fileUrl = (fileId: string) => `/api/files/${fileId}`;
-
-/** Lado de los íconos en un tablero de este ancho: el elegido, sin pasar del 12 % del ancho (celular). */
-export function iconPx(size: IconSize, boardWidth: number): number {
-  const px = ICON_PX[size];
-  return boardWidth > 0 ? Math.max(24, Math.min(px, Math.round(boardWidth * 0.12))) : px;
-}
 
 /** Distancia entre dos puntos relativos, en fracciones del ancho de la foto. */
 export function relDistance(a: Point, b: Point, aspect: number): number {

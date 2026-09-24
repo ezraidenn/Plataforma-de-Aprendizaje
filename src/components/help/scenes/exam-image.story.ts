@@ -57,8 +57,8 @@ export type ImageDragState = {
 
 /**
  * El plano con tres lugares idénticos. Toma el ícono: todos los lugares libres
- * se vuelven cuadrados; encaja. Toma la etiqueta: los libres se vuelven
- * píldoras; encaja. Al final, 2 de 3: el lugar vacío cuenta cero.
+ * toman la forma del ícono (su silueta); encaja. Toma la etiqueta: los libres
+ * se vuelven píldoras; encaja. Al final, 2 de 3: el lugar vacío cuenta cero.
  */
 export function imageDragStory(phase: number): ImageDragState {
   const placed: (number | null)[] = DRAG_ZONES.map(() => null);

@@ -9,20 +9,19 @@ import { imagePreview, type PreviewQuestion } from "@/lib/preview-question";
 import { EDITOR_IMAGE_ACCEPT, uploadFile } from "@/lib/upload-client";
 import {
   fileUrl,
-  imageClickProblem,
-  imageDragProblem,
   round4,
-  sanitizeImageConfig,
   validAspect,
-  type IconSize,
   type ImageClickConfig,
   type ImageDragConfig,
-  type ImageElement,
   type ImageQuestionType,
-  type ImageZone,
-  type Point,
   type Precision,
 } from "@/lib/image-questions";
+import {
+  imageQuestionProblem,
+  initialImageValue,
+  shapedImageValue as shaped,
+  type ImageQuestionValue,
+} from "@/lib/image-editor-value";
 import { cn } from "@/lib/utils";
 import { ClickEditor } from "./image-click-editor";
 import { DragEditor } from "./image-drag-editor";
@@ -32,81 +31,21 @@ import { PreviewDialog } from "./preview-button";
  * Editor de las preguntas sobre imagen, dentro del banco de preguntas. Primero
  * la foto (clic o soltar el archivo); «Cambiar foto» (o soltar otra sobre la
  * foto) conserva lugares y puntos porque son relativos a la foto. Lo propio de
- * cada tipo vive en `image-drag-editor.tsx` y `image-click-editor.tsx`. Debajo,
- * el problema que impediría guardar, en vivo.
+ * cada tipo vive en `image-drag-editor.tsx` y `image-click-editor.tsx`; el
+ * valor (qué se abre, su forma, qué impide guardar), en `image-editor-value.ts`.
+ * Debajo, el problema que impediría guardar, en vivo.
  */
 
-export type ImageQuestionValue = { imageFileId: string | null; config: ImageDragConfig | ImageClickConfig };
+export { imageQuestionProblem, initialImageValue };
+export type { ImageQuestionValue };
+
 type SetValue = Dispatch<SetStateAction<ImageQuestionValue>>;
 
-const ICON_SIZES: [IconSize, string][] = [
-  ["sm", "Chico"],
-  ["md", "Mediano"],
-  ["lg", "Grande"],
-];
 const PRECISIONS: [Precision, string][] = [
   ["sm", "Estricta"],
   ["md", "Normal"],
   ["lg", "Amplia"],
 ];
-
-/**
- * Lo guardado → valor del editor, sin lo ilegible. Sin nada guardado, una
- * pregunta vacía (tamaño y precisión medianos). Solo lo usan las de imagen.
- */
-export function initialImageValue(type: string, imageFileId: string | null, raw: unknown): ImageQuestionValue {
-  const isPoint = (p: Partial<Point> | null | undefined): p is Point =>
-    typeof p?.x === "number" && typeof p?.y === "number";
-  if (type === "image_click") {
-    const c = sanitizeImageConfig("image_click", raw) as Partial<ImageClickConfig>;
-    return {
-      imageFileId,
-      config: { aspect: c.aspect ?? 0, precision: c.precision ?? "md", spots: (c.spots ?? []).filter(isPoint) },
-    };
-  }
-  const c = sanitizeImageConfig("image_drag", raw) as {
-    aspect?: number;
-    iconSize?: IconSize;
-    elements?: Partial<ImageElement>[];
-    zones?: Partial<ImageZone>[];
-  };
-  return {
-    imageFileId,
-    config: {
-      aspect: c.aspect ?? 0,
-      iconSize: c.iconSize ?? "md",
-      elements: (c.elements ?? []).filter(
-        (e): e is ImageElement => !!e.id && (e.kind === "icon" ? !!e.fileId : e.kind === "text" && typeof e.text === "string")
-      ),
-      zones: (c.zones ?? []).filter(
-        (z): z is ImageZone => typeof z.x === "number" && typeof z.y === "number" && typeof z.elementId === "string"
-      ),
-    },
-  };
-}
-
-/**
- * El valor con la forma de su tipo. Si no la tiene (un borrador que cambió de
- * tipo), uno vacío de ese tipo con la misma foto y proporción.
- */
-function shaped(type: ImageQuestionType, value: ImageQuestionValue): ImageQuestionValue {
-  const c = value.config as Partial<ImageDragConfig & ImageClickConfig>;
-  const fits =
-    type === "image_drag"
-      ? Array.isArray(c.elements) && Array.isArray(c.zones) && typeof c.iconSize === "string"
-      : Array.isArray(c.spots) && typeof c.precision === "string";
-  if (fits) return value;
-  const fresh = initialImageValue(type, value.imageFileId, null);
-  return { imageFileId: value.imageFileId, config: { ...fresh.config, aspect: c.aspect ?? 0 } };
-}
-
-/** El problema que impediría guardar (el mismo que revisa el servidor), o null. */
-export function imageQuestionProblem(type: ImageQuestionType, value: ImageQuestionValue): string | null {
-  const v = shaped(type, value);
-  return type === "image_drag"
-    ? imageDragProblem(v.config, !!v.imageFileId)
-    : imageClickProblem(v.config, !!v.imageFileId);
-}
 
 /** Alto / ancho de una imagen, ya decodificada por el navegador. */
 function measureAspect(src: string): Promise<number> {
@@ -257,14 +196,8 @@ export function ImageQuestionEditor({
               {uploading === "photo" ? "Subiendo…" : "Cambiar foto"}
             </Button>
             <span className="flex-1" />
-            {type === "image_drag" ? (
-              <Segmented
-                label="Tamaño de los íconos"
-                value={(config as ImageDragConfig).iconSize ?? "md"}
-                options={ICON_SIZES}
-                onChange={(iconSize) => setDrag((c) => ({ ...c, iconSize }))}
-              />
-            ) : (
+            {/* En «arrastrar», el tamaño es de cada elemento (panel «Seleccionado») */}
+            {type === "image_click" && (
               <Segmented
                 label="Precisión"
                 value={(config as ImageClickConfig).precision}
@@ -364,7 +297,7 @@ function PhotoDrop({
   );
 }
 
-/** Botones de una sola elección (tamaño de íconos, precisión). */
+/** Botones de una sola elección (la precisión de «señalar»). */
 function Segmented<T extends string>({
   label,
   value,

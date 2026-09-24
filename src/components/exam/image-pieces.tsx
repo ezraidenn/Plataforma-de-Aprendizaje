@@ -97,6 +97,7 @@ function Contour({ mask, color, width, className }: { mask: string; color: strin
  */
 export function IconArt({
   fileId,
+  src,
   w,
   h,
   rotation = 0,
@@ -104,24 +105,22 @@ export function IconArt({
   className,
 }: {
   fileId?: string;
+  /** Dibujo que no es un archivo subido (escenas de ayuda): su URL, en lugar de `fileId`. */
+  src?: string;
   w: number;
   h: number;
   rotation?: number;
   outline?: string;
   className?: string;
 }) {
+  const url = src ?? (fileId ? fileUrl(fileId) : undefined);
   return (
     <span className={cn("relative block", className)} style={{ width: w, height: h, filter: SOFT_SHADOW }}>
-      {fileId && (
+      {url && (
         <span className="absolute inset-0" style={{ transform: rotate(rotation) }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={fileUrl(fileId)}
-            alt=""
-            draggable={false}
-            className="pointer-events-none size-full select-none object-contain"
-          />
-          {outline && <Contour mask={`url("${fileUrl(fileId)}")`} color={outline} width="2px" />}
+          <img src={url} alt="" draggable={false} className="pointer-events-none size-full select-none object-contain" />
+          {outline && <Contour mask={`url("${url}")`} color={outline} width="2px" />}
         </span>
       )}
     </span>
@@ -212,7 +211,7 @@ export function ItemFace({
   );
 }
 
-/** Ícono sin archivo (escenas de ayuda) o que no cargó: la silueta de una tarjeta redondeada. */
+/** Ícono sin archivo ni dibujo, o cuyo archivo no cargó: la silueta de una tarjeta redondeada. */
 const CARD_MASK = `url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><rect width='10' height='10' rx='3'/></svg>")`;
 
 /**
@@ -251,6 +250,7 @@ export const FOCUS_RING =
  */
 export function ZoneShadow({
   shape,
+  silhouette,
   hot,
   hoverable,
   boardWidth,
@@ -261,6 +261,8 @@ export function ZoneShadow({
 }: {
   /** Ficha activa (arrastrada o elegida), o null en reposo. */
   shape: ElementView | null;
+  /** URL del dibujo del ícono si no es un archivo subido (escenas de ayuda). */
+  silhouette?: string;
   /** Es donde caería la ficha si se suelta ahora. */
   hot?: boolean;
   /** Ficha elegida con un toque: el lugar bajo el cursor o con el foco se ilumina. */
@@ -270,7 +272,8 @@ export function ZoneShadow({
   dense?: boolean;
 } & ButtonHTMLAttributes<HTMLButtonElement>) {
   const icon = shape?.kind === "icon";
-  const mask = useSilhouette(icon ? shape.fileId : undefined);
+  const fromFile = useSilhouette(icon && !silhouette ? shape.fileId : undefined);
+  const mask = silhouette ? `url("${silhouette}")` : fromFile;
   let sized: CSSProperties | undefined;
   if (shape?.kind === "icon") {
     const { w, h } = iconBoxPx(shape.size, shape.ratio, boardWidth);

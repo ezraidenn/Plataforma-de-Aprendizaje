@@ -13,6 +13,7 @@ import {
   SNAP_RADIUS,
   TEXT_SIZE_RANGE,
   normalizeRotation,
+  round4,
   validAspect,
   type IconSize,
   type ImageElement,
@@ -71,6 +72,16 @@ export function textPx(size: number, boardWidth: number): number {
   return Math.max(MIN_TEXT_PX, Math.round(size * (boardWidth > 0 ? boardWidth : REF_WIDTH) * 10) / 10);
 }
 
+/**
+ * Tamaño de un ícono nuevo: su lado mayor mide el «mediano» de antes
+ * (DEFAULT_ICON_SIZE), como cuando todos iban en una tarjeta cuadrada; uno
+ * alto queda más angosto. Dentro del rango de los íconos.
+ */
+export function newIconSize(ratio: number): number {
+  const [min, max] = ICON_SIZE_RANGE;
+  return round4(Math.min(max, Math.max(min, DEFAULT_ICON_SIZE / Math.max(1, ratio))));
+}
+
 /** Radio de encaje de un elemento: el general o, si es grande, la mitad de su ancho. */
 export function snapRadiusFor(size: number): number {
   return Math.max(SNAP_RADIUS, size / 2);
@@ -101,6 +112,38 @@ export function boxBounds(b: Box): Bounds {
   const H = (w * s + h * c) / b.aspect;
   const r = (n: number) => Math.round(n * 1e9) / 1e9;
   return { left: r(b.cx - W / 2), right: r(b.cx + W / 2), top: r(b.cy - H / 2), bottom: r(b.cy + H / 2) };
+}
+
+/**
+ * Dos cajas con giro (de la misma foto) se enciman: prueba de ejes
+ * separadores sobre sus cuatro lados, en unidades del ancho (el alto por
+ * `aspect`), donde el giro no deforma. Tocarse por un borde no cuenta.
+ */
+export function boxesOverlap(a: Box, b: Box): boolean {
+  const axes = (k: Box) => {
+    const t = (k.rotation * Math.PI) / 180;
+    return [
+      [Math.cos(t), Math.sin(t)],
+      [-Math.sin(t), Math.cos(t)],
+    ];
+  };
+  const corners = (k: Box) => {
+    const [[ux, uy], [vx, vy]] = axes(k);
+    const [hw, hh] = [k.w / 2, (k.h * k.aspect) / 2];
+    return [
+      [-1, -1],
+      [1, -1],
+      [1, 1],
+      [-1, 1],
+    ].map(([i, j]) => [k.cx + i * hw * ux + j * hh * vx, k.cy * k.aspect + i * hw * uy + j * hh * vy]);
+  };
+  const [ca, cb] = [corners(a), corners(b)];
+  for (const [ax, ay] of [...axes(a), ...axes(b)]) {
+    const pa = ca.map(([x, y]) => x * ax + y * ay);
+    const pb = cb.map(([x, y]) => x * ax + y * ay);
+    if (Math.max(...pa) <= Math.min(...pb) + 1e-9 || Math.max(...pb) <= Math.min(...pa) + 1e-9) return false;
+  }
+  return true;
 }
 
 /** Límites del dibujo en un RGBA (alfa > umbral); null si todo es transparente. */

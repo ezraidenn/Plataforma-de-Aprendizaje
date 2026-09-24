@@ -410,7 +410,7 @@ const dragRest = imageDragStory(0.02);
 check("Arrastrar: en reposo los 3 lugares son el mismo círculo", dragRest.held === null && dragRest.shadows.every((sh) => sh === "circle"), dragRest.shadows);
 const dragIcon = imageDragStory(0.12);
 check(
-  "Arrastrar: al tomar el ícono los 3 lugares se vuelven cuadrados",
+  "Arrastrar: al tomar el ícono los 3 lugares toman la forma del ícono",
   dragIcon.held !== null && DRAG_PIECES[dragIcon.held].kind === "icon" && dragIcon.shadows.every((sh) => sh === "icon"),
   dragIcon
 );
