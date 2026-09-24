@@ -1,14 +1,27 @@
+import { imageClickProblem, imageDragProblem } from "./image-questions";
+
 /**
  * Validación de una pregunta, pura (sin BD): la usa el servicio al guardar y
  * el diálogo de IA para marcar lo que falta antes de importar. Los textos son
  * los mismos que ve el maestro en el editor.
  */
 export type QuestionShape = {
-  type: "single_choice" | "multiple_choice" | "true_false" | "short_text" | "matching" | "ordering" | "open_text";
+  type:
+    | "single_choice"
+    | "multiple_choice"
+    | "true_false"
+    | "short_text"
+    | "matching"
+    | "ordering"
+    | "open_text"
+    | "image_drag"
+    | "image_click";
   promptMd: string;
   points: number;
   config?: unknown;
   options?: { textMd: string; isCorrect: boolean }[];
+  /** Foto de fondo de las preguntas sobre imagen (id de archivo). */
+  imageFileId?: string | null;
 };
 
 /** null = válida; si no, el primer problema encontrado. */
@@ -44,5 +57,7 @@ export function questionProblem(input: QuestionShape): string | null {
       return "Hay pasos repetidos: cada paso debe ser distinto";
     }
   }
+  if (input.type === "image_drag") return imageDragProblem(input.config, !!input.imageFileId);
+  if (input.type === "image_click") return imageClickProblem(input.config, !!input.imageFileId);
   return null;
 }

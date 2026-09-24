@@ -3,21 +3,16 @@
 import { revalidatePath } from "next/cache";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
-import { attemptAnswers, examAttempts } from "@/server/db/schema";
+import { examAttempts } from "@/server/db/schema";
 import { requireStudent } from "@/server/auth/guards";
 import {
   getExam,
-  listQuestions,
   listAttempts,
-  matchingToken,
-  orderingToken,
   startAttempt,
   saveAnswer,
   submitAttempt,
-  type ExamAttempt,
-  type Question,
-  type QuestionOption,
 } from "@/server/services/exams";
+import { buildReview } from "@/server/services/exam-review";
 import { getEnrollment } from "@/server/services/progress";
 import { resultsVisible } from "@/lib/exam-results";
 import { getItem } from "@/server/services/tree";
@@ -29,7 +24,6 @@ import {
 import type {
   AttemptDto,
   ReviewEntry,
-  ReviewResult,
   RunnerQuestion,
   SavedAnswer,
 } from "@/components/student/types";
@@ -197,137 +191,4 @@ export async function submitAttemptAction(input: {
   } catch (err) {
     return { error: errorMessage(err, "No se pudo enviar el examen. Intenta de nuevo.") };
   }
-}
-
-// ─── Desglose por pregunta (solo tras calificar, nunca antes) ────────────────
-
-type FullQuestion = Question & { options: QuestionOption[] };
-type AnswerRow = typeof attemptAnswers.$inferSelect;
-
-function buildReview(attempt: ExamAttempt): ReviewEntry[] {
-  const qs = listQuestions(attempt.examItemId);
-  const byId = new Map(qs.map((q) => [q.id, q]));
-  const answers = db
-    .select()
-    .from(attemptAnswers)
-    .where(eq(attemptAnswers.attemptId, attempt.id))
-    .all();
-  const ansByQ = new Map(answers.map((a) => [a.questionId, a]));
-
-  // A4: iterar una COPIA del sorteo, sin mutar attempt.questionOrder y sin
-  // anexar preguntas del banco que no cayeron en este intento.
-  const order = [...((attempt.questionOrder as string[] | null) ?? qs.map((q) => q.id))];
-
-  const entries: ReviewEntry[] = [];
-  for (const qid of order) {
-    const q = byId.get(qid);
-    if (!q) continue;
-    entries.push(reviewEntry(q, ansByQ.get(qid) ?? null, attempt.id));
-  }
-  return entries;
-}
-
-function selectedText(q: FullQuestion, ids: string[] | null): string {
-  if (!ids || ids.length === 0) return "Sin respuesta";
-  return ids
-    .map((id) => q.options.find((o) => o.id === id)?.textMd ?? "—")
-    .join(", ");
-}
-
-function reviewEntry(q: FullQuestion, ans: AnswerRow | null, attemptId: string): ReviewEntry {
-  let yourAnswer = "Sin respuesta";
-  let correctAnswer: string | null = null;
-
-  switch (q.type) {
-    case "single_choice":
-    case "multiple_choice":
-    case "true_false": {
-      yourAnswer = selectedText(q, (ans?.selectedOptionIds as string[] | null) ?? null);
-      correctAnswer = q.options
-        .filter((o) => o.isCorrect)
-        .map((o) => o.textMd)
-        .join(", ");
-      break;
-    }
-    case "short_text": {
-      yourAnswer = ans?.answerText?.trim() || "Sin respuesta";
-      const accepted = (q.config as { accepted?: string[] } | null)?.accepted ?? [];
-      correctAnswer = accepted.filter((a) => a.trim()).join(" · ");
-      break;
-    }
-    case "matching": {
-      const pairs =
-        (q.config as { pairs?: { left: string; right: string }[] } | null)?.pairs ?? [];
-      let map: Record<string, unknown> = {};
-      try {
-        map = JSON.parse(ans?.answerText ?? "{}") as Record<string, unknown>;
-      } catch {
-        map = {};
-      }
-      // El valor puede ser un token opaco (nuevo) o un índice (intentos viejos):
-      // en ambos casos se muestra el TEXTO de la derecha elegida, nunca índices.
-      const rightText = (v: unknown): string => {
-        if (typeof v === "number") return pairs[v]?.right ?? "—";
-        if (typeof v === "string") {
-          const j = pairs.findIndex((_, k) => matchingToken(attemptId, q.id, k) === v);
-          return j >= 0 ? pairs[j].right : "—";
-        }
-        return "—";
-      };
-      yourAnswer = pairs
-        .map((p, i) => `${p.left} → ${rightText(map[String(i)])}`)
-        .join(" · ");
-      correctAnswer = pairs.map((p) => `${p.left} → ${p.right}`).join(" · ");
-      break;
-    }
-    case "ordering": {
-      const steps = (q.config as { steps?: string[] } | null)?.steps ?? [];
-      let tokens: unknown = [];
-      try {
-        tokens = JSON.parse(ans?.answerText ?? "[]");
-      } catch {
-        tokens = [];
-      }
-      const textOf = (t: unknown): string => {
-        const i = steps.findIndex((_, k) => orderingToken(attemptId, q.id, k) === t);
-        return i >= 0 ? steps[i] : "—";
-      };
-      yourAnswer =
-        Array.isArray(tokens) && tokens.length > 0
-          ? tokens.map((t, i) => `${i + 1}. ${textOf(t)}`).join(" · ")
-          : "Sin respuesta";
-      correctAnswer = steps.map((st, i) => `${i + 1}. ${st}`).join(" · ");
-      break;
-    }
-    case "open_text": {
-      yourAnswer = ans?.answerText?.trim() || "Sin respuesta";
-      correctAnswer = null;
-      break;
-    }
-  }
-
-  let earnedPoints: number | null;
-  let result: ReviewResult;
-  if (q.type === "open_text") {
-    earnedPoints = null;
-    result = "pending";
-  } else {
-    earnedPoints = ans?.autoPoints ?? 0;
-    result =
-      earnedPoints >= q.points - 1e-6
-        ? "correct"
-        : earnedPoints > 0
-          ? "partial"
-          : "incorrect";
-  }
-
-  return {
-    questionId: q.id,
-    promptMd: q.promptMd,
-    points: q.points,
-    earnedPoints,
-    result,
-    yourAnswer,
-    correctAnswer,
-  };
 }

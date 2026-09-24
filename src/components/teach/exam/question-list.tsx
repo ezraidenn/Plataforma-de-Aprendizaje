@@ -57,7 +57,9 @@ export type QuestionType =
   | "short_text"
   | "matching"
   | "ordering"
-  | "open_text";
+  | "open_text"
+  | "image_drag"
+  | "image_click";
 
 export type QuestionData = {
   id: string;
@@ -78,8 +80,11 @@ const TYPE_LABEL: Record<QuestionType, string> = {
   matching: "Relacionar columnas",
   ordering: "Ordenar pasos",
   open_text: "Texto abierto",
+  image_drag: "Arrastrar a la imagen",
+  image_click: "Señalar en la imagen",
 };
 
+// Las preguntas sobre imagen entran al selector cuando tengan su editor
 const QUESTION_TYPES: QuestionType[] = [
   "single_choice",
   "multiple_choice",

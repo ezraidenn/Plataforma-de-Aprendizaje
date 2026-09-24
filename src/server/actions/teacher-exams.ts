@@ -20,6 +20,7 @@ import {
   duplicateQuestion,
   moveQuestion,
   updateExamSettings,
+  imageQuestionFilesProblem,
   type QuestionInput,
 } from "@/server/services/exams";
 import { setExamResultsPublished } from "@/server/services/exam-results";
@@ -169,7 +170,16 @@ export async function setExamResultsPublishedAction(
 // ─── Preguntas ───────────────────────────────────────────────────────────────
 
 export type QuestionFormInput = {
-  type: "single_choice" | "multiple_choice" | "true_false" | "short_text" | "matching" | "ordering" | "open_text";
+  type:
+    | "single_choice"
+    | "multiple_choice"
+    | "true_false"
+    | "short_text"
+    | "matching"
+    | "ordering"
+    | "open_text"
+    | "image_drag"
+    | "image_click";
   promptMd: string;
   points: number;
   /** single/multiple/true_false */
@@ -180,7 +190,42 @@ export type QuestionFormInput = {
   pairs?: { left: string; right: string }[];
   /** ordering: pasos en el orden correcto */
   steps?: string[];
+  /** image_drag/image_click: foto de fondo (archivo editor_image) */
+  imageFileId?: string | null;
+  /** image_drag/image_click: la config tal como la arma el editor */
+  imageConfig?: unknown;
 };
+
+const asObject = (v: unknown): Record<string, unknown> =>
+  v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+const asList = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
+const asString = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
+const asNumber = (v: unknown): number | undefined => (typeof v === "number" ? v : undefined);
+
+/**
+ * Config de una pregunta sobre imagen que llega del navegador: se copian solo
+ * los campos conocidos, para no guardar lo que el cliente quiera meter. Que
+ * los valores tengan sentido lo revisa la validación del servicio.
+ */
+function cleanImageConfig(type: "image_drag" | "image_click", raw: unknown) {
+  const c = asObject(raw);
+  const point = (v: unknown) => {
+    const p = asObject(v);
+    return { x: asNumber(p.x), y: asNumber(p.y) };
+  };
+  if (type === "image_click") {
+    return { aspect: asNumber(c.aspect), precision: asString(c.precision), spots: asList(c.spots).map(point) };
+  }
+  return {
+    aspect: asNumber(c.aspect),
+    iconSize: asString(c.iconSize),
+    elements: asList(c.elements).map((v) => {
+      const e = asObject(v);
+      return { id: asString(e.id), kind: asString(e.kind), fileId: asString(e.fileId), text: asString(e.text)?.trim() };
+    }),
+    zones: asList(c.zones).map((v) => ({ ...point(v), elementId: asString(asObject(v).elementId) })),
+  };
+}
 
 /** Convierte el input del formulario al contrato del servicio (config por tipo). */
 function toServiceInput(input: QuestionFormInput): QuestionInput | { error: string } {
@@ -190,6 +235,13 @@ function toServiceInput(input: QuestionFormInput): QuestionInput | { error: stri
     points: input.points,
   };
   switch (input.type) {
+    case "image_drag":
+    case "image_click":
+      return {
+        ...base,
+        imageFileId: asString(input.imageFileId) || null,
+        config: cleanImageConfig(input.type, input.imageConfig),
+      };
     case "short_text": {
       const accepted = (input.accepted ?? []).map((a) => a.trim()).filter(Boolean);
       return { ...base, config: { accepted } };
@@ -223,6 +275,17 @@ function ownsQuestion(itemId: string, questionId: string): boolean {
   return listQuestions(itemId).some((q) => q.id === questionId);
 }
 
+/** Preguntas sobre imagen: la foto y los íconos deben ser imágenes que subió este usuario. */
+function imageFilesError(
+  user: { id: string; role: string },
+  input: QuestionInput,
+  questionId?: string
+): { error: string } | null {
+  if (input.type !== "image_drag" && input.type !== "image_click") return null;
+  const problem = imageQuestionFilesProblem(user, input.imageFileId, input.config, questionId);
+  return problem ? { error: problem } : null;
+}
+
 export type QuestionMutationResult = { ok: true; questionId?: string } | { error: string };
 
 export async function createQuestionAction(
@@ -235,6 +298,8 @@ export async function createQuestionAction(
 
   const serviceInput = toServiceInput(input);
   if ("error" in serviceInput) return serviceInput;
+  const filesError = imageFilesError(await requireTeacher(), serviceInput);
+  if (filesError) return filesError;
 
   try {
     const questionId = createQuestion(itemId, serviceInput);
@@ -257,6 +322,8 @@ export async function updateQuestionAction(
 
   const serviceInput = toServiceInput(input);
   if ("error" in serviceInput) return serviceInput;
+  const filesError = imageFilesError(await requireTeacher(), serviceInput, questionId);
+  if (filesError) return filesError;
 
   try {
     updateQuestion(questionId, serviceInput);

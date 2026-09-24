@@ -365,12 +365,23 @@ export const questions = sqliteTable(
       .references(() => exams.itemId, { onDelete: "cascade" }),
     position: integer("position").notNull(),
     type: text("type", {
-      enum: ["single_choice", "multiple_choice", "true_false", "short_text", "matching", "ordering", "open_text"],
+      enum: [
+        "single_choice",
+        "multiple_choice",
+        "true_false",
+        "short_text",
+        "matching",
+        "ordering",
+        "open_text",
+        "image_drag",
+        "image_click",
+      ],
     }).notNull(),
     promptMd: text("prompt_md").notNull(),
     points: real("points").notNull().default(1),
     imageFileId: text("image_file_id").references(() => files.id),
-    // short_text: variantes aceptadas; matching: pares [{left, right}]; ordering: pasos en orden
+    // short_text: variantes aceptadas; matching: pares [{left, right}]; ordering: pasos en orden;
+    // image_drag: ImageDragConfig · image_click: ImageClickConfig (src/lib/image-questions.ts)
     config: text("config", { mode: "json" }),
     ...timestamps,
   },

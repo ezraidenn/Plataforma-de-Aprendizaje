@@ -113,6 +113,10 @@ export async function loadExamGradingAction(attemptId: string): Promise<LoadExam
       answerDisplay = ans?.answerText ? "Relación de columnas" : "— Sin respuesta —";
     } else if (q.type === "ordering") {
       answerDisplay = ans?.answerText ? "Orden de pasos" : "— Sin respuesta —";
+    } else if (q.type === "image_drag") {
+      answerDisplay = ans?.answerText ? "Arrastrar a la imagen" : "— Sin respuesta —";
+    } else if (q.type === "image_click") {
+      answerDisplay = ans?.answerText ? "Señalar en la imagen" : "— Sin respuesta —";
     }
     return {
       questionId: q.id,

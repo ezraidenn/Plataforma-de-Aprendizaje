@@ -18,7 +18,7 @@ import {
 import { interpretChunkWithRetry, toDrafts } from "@/server/services/ai-exam-import";
 import { importQuestionInputs } from "@/server/services/exam-import";
 import { inputsToCsv } from "@/server/services/exam-csv";
-import { draftToInput, type QuestionDraft } from "@/lib/question-draft";
+import { draftToInput, type DraftType, type QuestionDraft } from "@/lib/question-draft";
 import { draftToPreview, questionToDraft, type PreviewQuestion } from "@/lib/preview-question";
 
 function errorMessage(err: unknown, fallback: string): string {
@@ -164,5 +164,9 @@ export type ExamPreviewResult = { questions: PreviewQuestion[] } | { error: stri
 export async function examPreviewAction(input: { courseId: string; itemId: string }): Promise<ExamPreviewResult> {
   const guard = await guardExam(input.courseId, input.itemId);
   if ("error" in guard) return { error: guard.error };
-  return { questions: listQuestions(input.itemId).map((q) => draftToPreview(questionToDraft(q))) };
+  // Las preguntas sobre imagen aún no tienen vista previa: llega con su editor
+  const previewable = listQuestions(input.itemId).filter(
+    (q): q is typeof q & { type: DraftType } => q.type !== "image_drag" && q.type !== "image_click"
+  );
+  return { questions: previewable.map((q) => draftToPreview(questionToDraft(q))) };
 }

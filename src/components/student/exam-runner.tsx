@@ -78,9 +78,15 @@ const POLICY_TEXT = {
 } as const;
 
 function toSavePayload(q: RunnerQuestion, a: AnswerState) {
-  if (q.type === "short_text" || q.type === "open_text" || q.type === "matching" || q.type === "ordering") {
-    return { answerText: a.answerText };
-  }
+  const withText: RunnerQuestion["type"][] = [
+    "short_text",
+    "open_text",
+    "matching",
+    "ordering",
+    "image_drag",
+    "image_click",
+  ];
+  if (withText.includes(q.type)) return { answerText: a.answerText };
   return { selectedOptionIds: a.selectedOptionIds };
 }
 

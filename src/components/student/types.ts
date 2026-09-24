@@ -110,7 +110,9 @@ export type QuestionKind =
   | "short_text"
   | "matching"
   | "ordering"
-  | "open_text";
+  | "open_text"
+  | "image_drag"
+  | "image_click";
 
 export type RunnerQuestion = {
   id: string;
@@ -132,6 +134,17 @@ export type RunnerQuestion = {
    * (el DOM no revela su lugar correcto). Respuesta: lista de tokens en orden.
    */
   ordering: { steps: { token: string; text: string }[] } | null;
+  /** Foto de fondo de las preguntas sobre imagen (id de archivo). */
+  image: string | null;
+  /** image_drag: lugares revueltos SIN su respuesta y fichas de elementos cifradas por intento. */
+  imageDrag: {
+    aspect: number;
+    iconSize: "sm" | "md" | "lg";
+    zones: { token: string; x: number; y: number }[];
+    items: { token: string; kind: "icon" | "text"; text?: string; fileId?: string }[];
+  } | null;
+  /** image_click: solo cuántas marcas se esperan. Los puntos correctos no viajan. */
+  imageClick: { aspect: number; marks: number } | null;
 };
 
 export type AttemptDto = {
@@ -262,4 +275,30 @@ export type ReviewEntry = {
   yourAnswer: string;
   /** null cuando no aplica mostrarla (open_text). */
   correctAnswer: string | null;
+  /** Preguntas sobre imagen: lo que puso el alumno y la solución, para dibujarlos. */
+  board?: ReviewBoard;
 };
+
+/** Tablero de revisión de una pregunta sobre imagen (solo viaja con resultados visibles). */
+export type ReviewBoard =
+  | {
+      kind: "drag";
+      image: string;
+      aspect: number;
+      iconSize: "sm" | "md" | "lg";
+      zones: {
+        x: number;
+        y: number;
+        correct: boolean;
+        placed: { kind: "icon" | "text"; text?: string; fileId?: string } | null;
+        expected: { kind: "icon" | "text"; text?: string; fileId?: string };
+      }[];
+    }
+  | {
+      kind: "click";
+      image: string;
+      aspect: number;
+      radius: number;
+      spots: { x: number; y: number; hit: boolean }[];
+      marks: { x: number; y: number }[];
+    };

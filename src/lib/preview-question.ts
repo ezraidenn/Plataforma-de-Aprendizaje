@@ -49,6 +49,10 @@ export function draftToPreview(d: QuestionDraft): PreviewQuestion {
       d.type === "ordering"
         ? { steps: shuffledOrder(d.steps.length).map((i) => ({ token: `${d.key}-s${i}`, text: d.steps[i] })) }
         : null,
+    // Los borradores nunca son preguntas sobre imagen
+    image: null,
+    imageDrag: null,
+    imageClick: null,
     answerText,
   };
 }

@@ -1,10 +1,11 @@
 import "server-only";
 import { createHmac } from "node:crypto";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { db } from "@/server/db";
 import {
   exams,
+  files,
   questions,
   questionOptions,
   examAttempts,
@@ -19,6 +20,17 @@ import { listAttempts, computeFinalScorePercent } from "./exam-scoring";
 import { notify } from "./notifications";
 import { orderingScore } from "@/lib/ordering";
 import { questionProblem } from "@/lib/question-validation";
+import {
+  dragCopies,
+  imageClickProblem,
+  imageClickScore,
+  imageDragProblem,
+  imageDragScore,
+  parseClickAnswer,
+  parseDragAnswer,
+  type ImageClickConfig,
+  type ImageDragConfig,
+} from "@/lib/image-questions";
 
 export { listAttempts, computeFinalScorePercent };
 
@@ -45,6 +57,47 @@ export function matchingToken(attemptId: string, questionId: string, originalInd
 export function orderingToken(attemptId: string, questionId: string, originalIndex: number): string {
   const secret = process.env.APP_SECRET ?? "dev-secret";
   return createHmac("sha256", secret).update(`order|${attemptId}|${questionId}|${originalIndex}`).digest("hex").slice(0, 16);
+}
+
+/** Ficha opaca de un lugar de «arrastrar a la imagen». */
+export function imageZoneToken(attemptId: string, questionId: string, zoneIndex: number): string {
+  const secret = process.env.APP_SECRET ?? "dev-secret";
+  return createHmac("sha256", secret).update(`imgzone|${attemptId}|${questionId}|${zoneIndex}`).digest("hex").slice(0, 16);
+}
+
+/** Ficha opaca de una copia de un elemento de «arrastrar a la imagen». */
+export function imageItemToken(attemptId: string, questionId: string, elementIndex: number, copy: number): string {
+  const secret = process.env.APP_SECRET ?? "dev-secret";
+  return createHmac("sha256", secret).update(`imgitem|${attemptId}|${questionId}|${elementIndex}|${copy}`).digest("hex").slice(0, 16);
+}
+
+/**
+ * Respuesta de «arrastrar a la imagen» ({fichaDeLugar: fichaDeElemento}) →
+ * elemento puesto en cada lugar, en el orden de `config.zones`. Lo usan la
+ * calificación y la revisión, así ambas leen la respuesta igual.
+ */
+export function imageDragPlacement(
+  config: ImageDragConfig,
+  answerText: string | null | undefined,
+  attemptId: string,
+  questionId: string
+): (string | undefined)[] {
+  const answer = parseDragAnswer(answerText);
+  const zoneIndex = new Map(config.zones.map((_, i) => [imageZoneToken(attemptId, questionId, i), i]));
+  const elementOf = new Map(
+    dragCopies(config).map((cp) => [imageItemToken(attemptId, questionId, cp.elementIndex, cp.copy), cp.elementId])
+  );
+  const placed: (string | undefined)[] = new Array(config.zones.length).fill(undefined);
+  const used = new Set<string>();
+  for (const [zt, it] of Object.entries(answer)) {
+    const zi = zoneIndex.get(zt);
+    const el = elementOf.get(it);
+    // Cada ficha vale una sola vez: mandar la misma en dos lugares no suma
+    if (zi === undefined || el === undefined || used.has(it)) continue;
+    used.add(it);
+    placed[zi] = el;
+  }
+  return placed;
 }
 
 // ─── Configuración del examen (maestro) ──────────────────────────────────────
@@ -109,11 +162,55 @@ export type QuestionInput = {
   points: number;
   config?: unknown; // short_text: {accepted: string[]} · matching: {pairs: [{left, right}]} · ordering: {steps: string[]}
   options?: { textMd: string; isCorrect: boolean }[];
+  /** Foto de fondo de image_drag/image_click; los demás tipos, null. */
+  imageFileId?: string | null;
 };
 
 export function validateQuestion(input: QuestionInput) {
   const problem = questionProblem(input);
   if (problem) throw new Error(problem);
+}
+
+/** Ids de archivo de una pregunta sobre imagen: la foto y los íconos de sus elementos. */
+function imageQuestionFileIds(imageFileId: string | null | undefined, config: unknown): string[] {
+  const elements = (config as { elements?: unknown } | null)?.elements;
+  const icons = Array.isArray(elements)
+    ? elements.map((e) => (e as { fileId?: unknown } | null)?.fileId).filter((f): f is string => typeof f === "string" && !!f)
+    : [];
+  return [...new Set([...(imageFileId ? [imageFileId] : []), ...icons])];
+}
+
+/**
+ * La foto y los íconos deben existir, ser imágenes del editor y haberlas
+ * subido este usuario (el admin, cualquiera). Si no, un maestro podría poner
+ * de «foto» el id de un archivo ajeno (una entrega, un certificado) y abrirlo
+ * por la regla que le deja ver las imágenes de sus preguntas. Al editar, los
+ * archivos que la pregunta ya tenía siguen valiendo (p. ej. un curso que
+ * cambió de dueño). null = todo bien.
+ */
+export function imageQuestionFilesProblem(
+  user: { id: string; role: string },
+  imageFileId: string | null | undefined,
+  config: unknown,
+  questionId?: string
+): string | null {
+  const ids = imageQuestionFileIds(imageFileId, config);
+  if (ids.length === 0) return null; // Sin foto: lo dice la validación de la pregunta
+  const current = questionId ? db.select().from(questions).where(eq(questions.id, questionId)).get() : undefined;
+  const already = new Set(current ? imageQuestionFileIds(current.imageFileId, current.config) : []);
+  const rows = db
+    .select({ id: files.id, kind: files.kind, uploadedBy: files.uploadedBy })
+    .from(files)
+    .where(inArray(files.id, ids))
+    .all();
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const ok = ids.every((id) => {
+    const f = byId.get(id);
+    return (
+      !!f && f.kind === "editor_image" && (user.role === "admin" || f.uploadedBy === user.id || already.has(id))
+    );
+  });
+  return ok ? null : "Una de las imágenes no es válida; vuelve a subirla.";
 }
 
 export function createQuestion(examItemId: string, input: QuestionInput): string {
@@ -137,6 +234,7 @@ export function createQuestion(examItemId: string, input: QuestionInput): string
         promptMd: input.promptMd,
         points: input.points,
         config: input.config ?? null,
+        imageFileId: input.imageFileId ?? null,
       })
       .run();
     (input.options ?? []).forEach((o, i) => {
@@ -157,6 +255,7 @@ export function updateQuestion(questionId: string, input: QuestionInput) {
         promptMd: input.promptMd,
         points: input.points,
         config: input.config ?? null,
+        imageFileId: input.imageFileId ?? null,
         updatedAt: new Date(),
       })
       .where(eq(questions.id, questionId))
@@ -206,6 +305,8 @@ export function duplicateQuestion(examItemId: string, questionId: string): strin
     points: q.points,
     config: q.config,
     options: opts.map((o) => ({ textMd: o.textMd, isCorrect: o.isCorrect })),
+    // Dentro del mismo examen la copia comparte la foto y los íconos
+    imageFileId: q.imageFileId,
   });
 }
 
@@ -453,6 +554,18 @@ function gradeAnswer(
       const order = tokens.map((t) => (typeof t === "string" ? indexOf.get(t) : undefined));
       if (order.some((i) => i === undefined) || new Set(order).size !== steps.length) return 0;
       return Math.round(orderingScore(order as number[]) * q.points * 100) / 100;
+    }
+    case "image_drag": {
+      // Una config dañada no debe tumbar el envío de todo el examen
+      if (imageDragProblem(q.config, true)) return 0;
+      const c = q.config as ImageDragConfig;
+      const placed = imageDragPlacement(c, answerText, attemptId, q.id);
+      return Math.round(imageDragScore(c, placed) * q.points * 100) / 100;
+    }
+    case "image_click": {
+      if (imageClickProblem(q.config, true)) return 0;
+      const c = q.config as ImageClickConfig;
+      return Math.round(imageClickScore(c, parseClickAnswer(answerText, c.spots.length)) * q.points * 100) / 100;
     }
     case "open_text":
       return null; // calificación manual (Fase 3)

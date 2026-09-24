@@ -15,6 +15,8 @@ import {
   listQuestions,
   listAttempts,
   examWindowState,
+  imageItemToken,
+  imageZoneToken,
   matchingToken,
   orderingToken,
   type ExamAttempt,
@@ -22,6 +24,13 @@ import {
 import { getVideoDetail, getVideoProgress } from "@/server/services/video";
 import { resultsVisible } from "@/lib/exam-results";
 import { shuffledOrder } from "@/lib/ordering";
+import {
+  dragCopies,
+  imageClickProblem,
+  imageDragProblem,
+  type ImageClickConfig,
+  type ImageDragConfig,
+} from "@/lib/image-questions";
 import type {
   AssignmentLessonData,
   AttemptDto,
@@ -109,6 +118,37 @@ export function buildRunnerQuestions(attempt: ExamAttempt): RunnerQuestion[] {
         })),
       };
     }
+    // Preguntas sobre imagen: viajan las posiciones de los lugares y las fichas,
+    // nunca qué elemento va en cada lugar ni dónde están los puntos correctos
+    let image: string | null = null;
+    let imageDrag: RunnerQuestion["imageDrag"] = null;
+    let imageClick: RunnerQuestion["imageClick"] = null;
+    if (q.type === "image_drag" && !imageDragProblem(q.config, !!q.imageFileId)) {
+      const c = q.config as ImageDragConfig;
+      image = q.imageFileId;
+      imageDrag = {
+        aspect: c.aspect,
+        iconSize: c.iconSize,
+        // Revueltos: el orden no puede delatar a qué elemento pertenece cada lugar
+        zones: shuffle(c.zones.map((z, i) => ({ token: imageZoneToken(attempt.id, q.id, i), x: z.x, y: z.y }))),
+        items: shuffle(
+          dragCopies(c).map((cp) => {
+            const e = c.elements[cp.elementIndex];
+            return {
+              token: imageItemToken(attempt.id, q.id, cp.elementIndex, cp.copy),
+              kind: e.kind,
+              text: e.text,
+              fileId: e.fileId,
+            };
+          })
+        ),
+      };
+    }
+    if (q.type === "image_click" && !imageClickProblem(q.config, !!q.imageFileId)) {
+      const c = q.config as ImageClickConfig;
+      image = q.imageFileId;
+      imageClick = { aspect: c.aspect, marks: c.spots.length };
+    }
     out.push({
       id: q.id,
       type: q.type,
@@ -117,6 +157,9 @@ export function buildRunnerQuestions(attempt: ExamAttempt): RunnerQuestion[] {
       options: withOptions ? q.options.map((o) => ({ id: o.id, text: o.textMd })) : [],
       matching,
       ordering,
+      image,
+      imageDrag,
+      imageClick,
     });
   }
   return out;

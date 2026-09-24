@@ -74,6 +74,9 @@ export function isAnswered(q: RunnerQuestion, a: AnswerState | undefined): boole
     case "ordering":
       // Cuenta como respondida cuando el alumno ya movió algo
       return parseOrdering(a.answerText).length === (q.ordering?.steps.length ?? -1);
+    case "image_drag":
+    case "image_click":
+      return false; // Tarea 4
   }
 }
 
