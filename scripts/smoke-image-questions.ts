@@ -68,8 +68,10 @@ import {
   shownAtMinimum,
   snapMove,
   snapRadiusFor,
+  snapScale,
   snapToGrid,
   textPx,
+  unionBounds,
   type Bounds,
 } from "../src/lib/image-layout";
 
@@ -296,6 +298,20 @@ function canvasChecks() {
   const s3 = snapMove({ left: 0.3, right: 0.35, top: 0.3, bottom: 0.35 }, [a], { tx: 0.001, ty: 0.001 });
   check("Lejos de todo: no se mueve ni hay guías", s3.dx === 0 && s3.dy === 0 && s3.guides.length === 0, s3);
   check("Cuadrícula de 10 %: pega el centro a la línea más cercana", JSON.stringify(snapToGrid({ x: 0.43, y: 0.58 }, 0.1)) === JSON.stringify({ x: 0.4, y: 0.6 }));
+  const u = unionBounds([a, b]);
+  check("Caja envolvente de varias", u.left === 0.1 && u.right === 0.62 && u.top === 0.1 && u.bottom === 0.5, u);
+  // Estirar desde el centro (0.5, 0.5): el borde izquierdo (0.305) queda a 0.005 del derecho de `c` (0.3)
+  const c: Bounds = { left: 0.25, right: 0.3, top: 0.8, bottom: 0.9 };
+  const grow = { left: 0.305, right: 0.695, top: 0.45, bottom: 0.55 };
+  const k1 = snapScale(grow, { x: 0.5, y: 0.5 }, [c], { tx: 0.01, ty: 0.01 });
+  check(
+    "Imán al estirar: el borde llega justo a la guía",
+    !!k1 && Math.abs(k1.scale - 0.2 / 0.195) < 1e-6 && k1.guides.length === 1 && k1.guides[0].axis === "x" && k1.guides[0].at === 0.3,
+    k1
+  );
+  check("Imán al estirar: lejos de todo, nada", snapScale(grow, { x: 0.5, y: 0.5 }, [c], { tx: 0.001, ty: 0.001 }) === null);
+  const k2 = snapScale({ left: 0.4, right: 0.6, top: 0.405, bottom: 0.595 }, { x: 0.5, y: 0.5 }, [], { tx: 0.01, ty: 0.01, grid: 0.1 });
+  check("Imán al estirar con cuadrícula: pega el borde a su línea", !!k2 && k2.guides[0].axis === "x" && k2.scale === 1, k2);
 
   const boxes: Bounds[] = [
     { left: 0.1, right: 0.2, top: 0.1, bottom: 0.2 },

@@ -6,32 +6,31 @@ import { TriangleAlert } from "lucide-react";
 import { BoardCursor, useCrosshair, useElementWidth } from "@/components/exam/image-board";
 import { DropVeil, QUIET_ANNOUNCEMENTS, useFileDrop, useStableHandler } from "@/components/exam/image-dnd";
 import { useMediaQuery } from "@/components/help/use-media-query";
-import { plural } from "@/lib/plural";
 import {
   MAX_ELEMENTS,
   MAX_ZONES,
   fileUrl,
-  freeSpot,
   iconNumbers,
   imageItemName,
   readingNumbers,
-  round4,
   type ImageDragConfig,
   type ImageElement,
-  type Point,
 } from "@/lib/image-questions";
-import { DEFAULT_TEXT_SIZE } from "@/lib/image-layout";
 import { cn } from "@/lib/utils";
 import { dragEditorHint } from "./drag-editor-hint";
 import { ImageCanvas } from "./image-canvas";
+import { CanvasToolbar, useCanvasPrefs } from "./image-canvas-toolbar";
 import { ElementAdder } from "./image-element-adder";
 import { ElementPanel } from "./image-element-panel";
 import { ElementList } from "./image-element-row";
 import { DragGhost, PlacedZone } from "./image-placed-zone";
+import { useTransformTool } from "./image-transform-box";
+import { GRID_STEP, useCanvasTools } from "./use-canvas-tools";
 import { useDragSelection } from "./use-drag-selection";
 import { useEditorDrag } from "./use-editor-drag";
 import { isTypingTarget, type HistoryOptions } from "./use-editor-history";
-import { newElementId, useEditorIcons } from "./use-editor-icons";
+import { useEditorIcons } from "./use-editor-icons";
+import { useElementActions } from "./use-element-actions";
 import { useZoneWarnings } from "./use-zone-warnings";
 
 /**
@@ -41,12 +40,14 @@ import { useZoneWarnings } from "./use-zone-warnings";
  * la foto, o con teclado Enter, flechas y Enter). Los lugares muestran el
  * elemento real y el número «Lugar N» que ve el alumno; se seleccionan con un
  * clic (Mayús+clic suma, arrastrar sobre la foto hace un recuadro, Ctrl+A
- * todos, Espacio sobre uno lo suma) y lo seleccionado se arrastra junto, se
- * mueve con las flechas, se duplica (Ctrl+D) o se quita (Supr). Un lugar solo
- * se quita también sacándolo de la foto. Todo cambio pasa por el historial del
- * editor (deshacer). Soltar un archivo sobre la foto la cambia; sobre la
- * lista, lo agrega como ícono. Un clic en un elemento de la lista o en lugares
- * de un solo elemento lo lleva al panel «Seleccionado» (tamaño y giro).
+ * todos, Espacio sobre uno lo suma) y lo seleccionado se arrastra junto (con
+ * imán y guías), se mueve con las flechas, se duplica (Ctrl+D), se alinea, se
+ * reparte o se quita (Supr). Con lugares de un solo elemento, su caja estira y
+ * gira el elemento (también + − [ ]). Un lugar solo se quita también sacándolo
+ * de la foto. Todo cambio pasa por el historial del editor (deshacer). Soltar
+ * un archivo sobre la foto la cambia; sobre la lista, lo agrega como ícono. Un
+ * clic en un elemento de la lista o en lugares de un solo elemento lo lleva al
+ * panel «Seleccionado» (tamaño y giro). Arriba, la barra de herramientas.
  */
 export function DragEditor({
   imageFileId,
@@ -54,6 +55,7 @@ export function DragEditor({
   config,
   setConfig,
   gesture,
+  history,
   uploading,
   setUploading,
   setError,
@@ -69,6 +71,8 @@ export function DragEditor({
   setConfig: (fn: (c: ImageDragConfig) => ImageDragConfig, options?: HistoryOptions) => ImageDragConfig;
   /** Un gesto (arrastrar un deslizante del panel) es un solo paso del historial. */
   gesture: { begin: () => void; commit: () => void };
+  /** Deshacer y Rehacer, para la barra. */
+  history: { canUndo: boolean; canRedo: boolean; undo: () => void; redo: () => void };
   uploading: "photo" | "icon" | null;
   setUploading: (u: "photo" | "icon" | null) => void;
   setError: (e: string | null) => void;
@@ -83,8 +87,11 @@ export function DragEditor({
   const [chosen, setChosen] = useState<string | null>(null);
   /** Elemento elegido en la lista para cambiar su tamaño y giro: no coloca nada. */
   const [panelId, setPanelId] = useState<string | null>(null);
+  /** El último lugar que tuvo el foco: si está seleccionado, ahí va la caja de estirar y girar. */
+  const [focusZone, setFocusZone] = useState<number | null>(null);
   const focusAfter = useRef<string | null>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  const { prefs, toggle: togglePref } = useCanvasPrefs();
 
   const { elements, zones } = config;
   const fullElements = elements.length >= MAX_ELEMENTS;
@@ -125,6 +132,18 @@ export function DragEditor({
     byId,
     aspect,
     dense,
+    announce,
+  });
+  const tools = useCanvasTools({
+    boardNode: board.node,
+    boardWidth: board.width,
+    aspect,
+    zones,
+    byId,
+    magnet: prefs.magnet,
+    grid: prefs.grid,
+    setConfig,
+    announce,
   });
   const selection = useDragSelection({
     zones,
@@ -140,11 +159,30 @@ export function DragEditor({
       setPanelId(null);
     },
     endRun: gesture.commit,
+    snapShift: tools.snapShift,
   });
   const { selected, clear: clearSelection } = selection;
+  const actions = useElementActions({
+    elements,
+    listed,
+    zones,
+    aspect,
+    byId,
+    chosen,
+    setChosen,
+    panelId,
+    setPanelId,
+    setConfig,
+    setNotice,
+    announce,
+    nameOf,
+    clearSelection,
+    focusAfter,
+    boardNode: board.node,
+  });
   const iconTools = useEditorIcons({ elements, uploading, setUploading, setError, setNotice, announce, setConfig, nameOf });
   const crosshair = useCrosshair(aspect, (p) => {
-    if (chosen) placeAt(chosen, p, true);
+    if (chosen) actions.placeAt(chosen, p, true);
     else announce("Primero pulsa «Colocar» en un elemento de la lista");
   });
   const boardDrop = useFileDrop(onPhotoFile, uploading === null);
@@ -187,82 +225,6 @@ export function DragEditor({
     rootRef.current?.querySelector<HTMLElement>(selector)?.focus();
   });
 
-  function placeAt(elementId: string, p: Point, viaKeyboard: boolean) {
-    setChosen(null);
-    // Un elemento que ya no está (se deshizo su alta) no deja un lugar sin nada
-    if (!byId.has(elementId)) return;
-    if (fullZones) {
-      const text = `Ya hay ${MAX_ZONES} lugares, el máximo: quita uno para agregar otro.`;
-      setNotice(text);
-      announce(text);
-      return;
-    }
-    // La mira del teclado acumula decimales; encima de otro lugar no: se corre lo justo
-    const dropped = { x: round4(p.x), y: round4(p.y) };
-    const at = freeSpot(dropped, zones, aspect) ?? dropped;
-    const zone = { x: at.x, y: at.y, elementId };
-    setConfig((c) => (c.zones.length >= MAX_ZONES ? c : { ...c, zones: [...c.zones, zone] }));
-    setNotice(null);
-    const n = readingNumbers([...zones, zone], aspect)[zones.length];
-    announce(`${nameOf(elementId)} en el lugar ${n}${at !== dropped ? ", corrido un poco para no encimarse" : ""}`);
-    if (viaKeyboard) focusAfter.current = `[data-zone="${zones.length}"]`;
-  }
-
-  function removeElement(id: string) {
-    const count = zones.filter((z) => z.elementId === id).length;
-    const next = listed[listed.findIndex((e) => e.id === id) + 1];
-    if (chosen === id) setChosen(null);
-    if (panelId === id) setPanelId(null);
-    clearSelection();
-    setNotice(null);
-    setConfig((c) => ({
-      ...c,
-      elements: c.elements.filter((e) => e.id !== id),
-      zones: c.zones.filter((z) => z.elementId !== id),
-    }));
-    announce(`${nameOf(id)} quitado${count ? ` junto con ${plural(count, "su lugar", `sus ${count} lugares`)}` : ""}`);
-    // El foco pasa a la fila siguiente o, si era la última, a agregar
-    focusAfter.current = next ? `[data-element="${next.id}"]` : "[data-add-icon], [data-label-input]";
-  }
-
-  function addLabel(text: string) {
-    const element: ImageElement = { id: newElementId(elements), kind: "text", text, size: DEFAULT_TEXT_SIZE };
-    setConfig((c) => (c.elements.length >= MAX_ELEMENTS ? c : { ...c, elements: [...c.elements, element] }));
-    setNotice(null);
-    announce(`«${text}» agregado: arrástralo a la foto`);
-  }
-
-  /** Un clic en la fila: el elemento va al panel «Seleccionado». No coloca nada. */
-  function select(id: string, viaKeyboard: boolean) {
-    setChosen(null);
-    clearSelection();
-    if (panelId === id) {
-      setPanelId(null);
-      announce("Elección cancelada");
-      return;
-    }
-    setPanelId(id);
-    if (viaKeyboard) announce(`${nameOf(id)} elegido: cambia su tamaño y su giro en «Seleccionado»`);
-  }
-
-  /** «Colocar»: el siguiente clic en la foto (o Enter con la mira) pone ahí un lugar suyo. */
-  function startPlacing(id: string, viaKeyboard: boolean) {
-    clearSelection();
-    if (chosen === id) {
-      setChosen(null);
-      announce("Elección cancelada");
-      return;
-    }
-    setChosen(id);
-    setPanelId(id);
-    announce(
-      viaKeyboard
-        ? `Colocar ${nameOf(id)}: en la foto, mueve la mira con las flechas y pulsa Enter`
-        : `Colocar ${nameOf(id)}: haz clic en la foto donde va`
-    );
-    if (viaKeyboard) board.node?.focus();
-  }
-
   const drag = useEditorDrag({
     boardNode: board.node,
     zones,
@@ -270,16 +232,25 @@ export function DragEditor({
     byId,
     setConfig,
     selection,
+    snap: tools,
     onStart: () => setChosen(null),
-    onPlace: (elementId, p) => placeAt(elementId, p, false),
+    onPlace: (elementId, p) => actions.placeAt(elementId, p, false),
   });
   const { active, grouped, removing } = drag;
   /** Elementos de los lugares seleccionados. */
   const selectedIds = new Set([...selected].map((i) => zones[i]?.elementId));
+  /** Todos los lugares seleccionados son de un solo elemento: ese. */
+  const soleElement = selectedIds.size === 1 ? (byId.get([...selectedIds][0] ?? "") ?? null) : null;
   /** El elemento del panel «Seleccionado»: el elegido en la lista o el de los lugares seleccionados (si es uno solo). */
-  const panelElement =
-    (panelId ? byId.get(panelId) : selectedIds.size === 1 ? byId.get([...selectedIds][0] ?? "") : undefined) ?? null;
+  const panelElement = (panelId ? byId.get(panelId) : undefined) ?? soleElement;
   const several = !panelElement && selectedIds.size > 1 ? selected.size : undefined;
+  /** El lugar con la caja de estirar y girar: el del foco o el último seleccionado. */
+  const frameAt =
+    soleElement && selected.size > 0
+      ? focusZone !== null && selected.has(focusZone)
+        ? focusZone
+        : [...selected][selected.size - 1]
+      : null;
 
   /** Tamaño o giro de un elemento: lo toman todos sus lugares. Escribir o pulsar seguido es un solo paso. */
   function changeElement(id: string, patch: Pick<ImageElement, "size" | "rotation">) {
@@ -287,27 +258,45 @@ export function DragEditor({
       coalesce: `elemento:${id}:${Object.keys(patch).join(",")}`,
     });
   }
+  const transform = useTransformTool({
+    element: soleElement,
+    target: frameAt,
+    boardNode: board.node,
+    boardWidth: board.width,
+    aspect,
+    measure: tools.sizeOf,
+    change: changeElement,
+    gesture,
+    snap: tools,
+    announce,
+  });
+  // Marca de las reglas: el centro de lo seleccionado, donde se ve (o el del lugar que va en la mano)
+  const shown = [...selected].map((i) => selection.at(i));
+  const span = (vs: number[]) => (Math.min(...vs) + Math.max(...vs)) / 2;
+  const rulerMark =
+    tools.held ?? (shown.length ? { x: span(shown.map((p) => p.x)), y: span(shown.map((p) => p.y)) } : null);
   const hint = dragEditorHint({
     removing,
     placing: chosen && nameOf(chosen),
     empty: elements.length === 0,
     selectedCount: selected.size,
+    framed: frameAt !== null,
     touch,
   });
   // Acciones fijas para las piezas memorizadas: mover un grupo no vuelve a pintar la lista ni los demás lugares
   const onZoneClick = useStableHandler((i: number, e: React.MouseEvent) => selection.click(i, e.shiftKey, e.detail === 0));
   const onZoneRemove = useStableHandler((i: number, e: React.MouseEvent) => selection.remove([i], e.detail === 0));
   const rowActions = {
-    onSelect: useStableHandler((id: string, e: React.MouseEvent) => select(id, e.detail === 0)),
-    onPlace: useStableHandler((id: string, e: React.MouseEvent) => startPlacing(id, e.detail === 0)),
+    onSelect: useStableHandler((id: string, e: React.MouseEvent) => actions.select(id, e.detail === 0)),
+    onPlace: useStableHandler((id: string, e: React.MouseEvent) => actions.startPlacing(id, e.detail === 0)),
     onTrim: useStableHandler((id: string) => void iconTools.trimIcon(id)),
-    onRemove: useStableHandler(removeElement),
+    onRemove: useStableHandler(actions.removeElement),
   };
   const onPanelChange = useStableHandler(
     (patch: Pick<ImageElement, "size" | "rotation">) => panelElement && changeElement(panelElement.id, patch)
   );
   const onIconFile = useStableHandler((file: File) => void iconTools.addIcon(file));
-  const onAddLabel = useStableHandler(addLabel);
+  const onAddLabel = useStableHandler(actions.addLabel);
 
   return (
     <DndContext
@@ -323,19 +312,41 @@ export function DragEditor({
         role="group"
         aria-label="Lugares en la foto y elementos"
         data-drag-editor=""
-        onKeyDown={selection.onKeyDown}
+        onKeyDown={(e) => {
+          selection.onKeyDown(e);
+          transform.onKeyDown(e);
+        }}
         onKeyUp={selection.onKeyUp}
         className="grid gap-4 outline-none @2xl:grid-cols-[minmax(0,1fr)_15rem]"
       >
         <div className="min-w-0 space-y-2">
+          <CanvasToolbar
+            history={history}
+            count={selected.size}
+            prefs={prefs}
+            onToggle={togglePref}
+            onDuplicate={selection.duplicate}
+            onAlign={(mode, said) => tools.align([...selected], mode, said)}
+            onDistribute={(axis) => tools.distribute([...selected], axis)}
+            announce={announce}
+          />
           <ImageCanvas
             ref={board.ref}
             imageUrl={fileUrl(imageFileId)}
             aspect={aspect}
+            rulers={prefs.rulers}
+            rulerMark={rulerMark}
+            grid={prefs.grid ? GRID_STEP : null}
+            guides={tools.guides}
+            distances={tools.distances}
+            onFocus={(e) => {
+              const zone = (e.target as HTMLElement).closest<HTMLElement>("[data-zone]");
+              if (zone) setFocusZone(Number(zone.dataset.zone));
+            }}
             onPointer={(p, e) => {
               crosshair.setCursor(p);
               // Solo con «Colocar» un clic crea un lugar; si no, suelta lo elegido (con Mayús, lo conserva)
-              if (chosen) placeAt(chosen, p, false);
+              if (chosen) actions.placeAt(chosen, p, false);
               else if (!e.shiftKey) {
                 clearSelection();
                 setPanelId(null);
@@ -383,6 +394,8 @@ export function DragEditor({
                   selected={selected.has(i)}
                   removable={selected.size === 1 && selected.has(i) && !active}
                   lifted={active === `zone:${i}` && !grouped}
+                  transform={i === frameAt ? transform.actions : undefined}
+                  readout={i === frameAt ? transform.readout : undefined}
                   onClick={onZoneClick}
                   onRemove={onZoneRemove}
                 />
@@ -391,7 +404,7 @@ export function DragEditor({
             <DropVeil show={boardDrop.over} text="Suelta la foto para cambiarla (los lugares se conservan)" />
           </ImageCanvas>
           <p className={cn("text-xs", removing ? "font-medium text-destructive" : "text-muted-foreground")}>{hint}</p>
-          {[warnings.covered, warnings.edge].map(
+          {[warnings.overlap, warnings.covered, warnings.edge].map(
             (text) =>
               text && (
                 <p key={text} className="flex items-start gap-1.5 text-xs text-amber-700 dark:text-warning" role="status">
@@ -455,6 +468,7 @@ export function DragEditor({
         removing={removing}
         boardWidth={board.width}
         dense={dense}
+        modifier={drag.ghostModifier}
       />
     </DndContext>
   );

@@ -3,11 +3,8 @@
 import { useCallback, useMemo, useRef, useState, type RefObject } from "react";
 import {
   MAX_ZONES,
-  MIN_ZONE_GAP,
   clamp01,
   freeSpot,
-  readingNumbers,
-  relDistance,
   round4,
   type ImageDragConfig,
   type ImageZone,
@@ -20,8 +17,10 @@ import { isTypingTarget, type HistoryOptions } from "./use-editor-history";
 /**
  * Selección de lugares en el editor de «arrastrar»: clic, Mayús+clic, recuadro,
  * Ctrl+A y, con teclado, Espacio sobre un lugar para sumarlo o quitarlo. Con lo
- * seleccionado: arrastrar uno mueve el grupo (sin salirse de la foto), las
- * flechas lo mueven 0.5 % (Mayús: 5 %), Ctrl+D lo duplica y Supr lo quita.
+ * seleccionado: arrastrar uno mueve el grupo (sin salirse de la foto, con el
+ * imán de `snapShift`), las flechas lo mueven 0.5 % (Mayús: 5 %), Ctrl+D lo
+ * duplica y Supr lo quita. Si lo movido queda encimado con otro lugar, lo
+ * avisa el editor (a partir de los lugares, no de lo que se hizo).
  * Cada cambio a los lugares es un paso del historial (las flechas seguidas, uno).
  *
  * La selección son índices de `zones`. Se guarda junto al arreglo al que se
@@ -85,6 +84,7 @@ export function useDragSelection({
   focusAfter,
   onSelectZones,
   endRun,
+  snapShift,
 }: {
   zones: ImageZone[];
   aspect: number;
@@ -101,6 +101,8 @@ export function useDragSelection({
   onSelectZones: () => void;
   /** Corta la racha del historial (las flechas sobre otra selección son otro paso). */
   endRun: () => void;
+  /** Imán del grupo en la mano: el desplazamiento pegado a las guías. */
+  snapShift?: (indices: Set<number>, d: { dx: number; dy: number }) => { dx: number; dy: number };
 }) {
   const [state, setState] = useState<Picked>({ of: zones, picked: [] });
   const selected = useMemo(() => resolve(state, zones), [state, zones]);
@@ -111,8 +113,6 @@ export function useDragSelection({
   const [shift, setShift] = useState<{ indices: Set<number>; dx: number; dy: number } | null>(null);
   /** Los lugares del grupo en la mano (al momento, sin esperar un render). */
   const group = useRef<Set<number> | null>(null);
-  /** Ya se avisó que lo movido quedó encimado con otro lugar. */
-  const overlapWarned = useRef(false);
 
   const byReading = (list: Iterable<number>) => [...list].sort((a, b) => numbers[a] - numbers[b]);
   const count = (n: number) => `${n} ${plural(n, "lugar seleccionado", "lugares seleccionados")}`;
@@ -170,36 +170,12 @@ export function useDragSelection({
   }
 
   /**
-   * Lo movido quedó a menos de MIN_ZONE_GAP de otro lugar: así no se puede
-   * guardar. Se avisa (en voz alta una vez) en lugar de correr el grupo: un
-   * grupo se mueve rígido y predecible, y el maestro decide cómo separarlos.
-   * Al separarlos, el aviso se va.
+   * Mueve estos lugares juntos, sin que ninguno salga de la foto. Un grupo se
+   * mueve rígido y predecible: si queda encimado con otro lugar no se corre
+   * (lo avisa el editor, y el maestro decide cómo separarlos).
    */
-  function checkOverlap(list: ImageZone[], moving: Set<number>) {
-    let pair: [number, number] | null = null;
-    for (const i of moving) {
-      for (let j = 0; j < list.length && !pair; j++) {
-        if (list[i] && !moving.has(j) && relDistance(list[i], list[j], aspect) < MIN_ZONE_GAP) pair = [i, j];
-      }
-      if (pair) break;
-    }
-    if (!pair) {
-      if (overlapWarned.current) setNotice(null);
-      overlapWarned.current = false;
-      return;
-    }
-    const nums = readingNumbers(list, aspect);
-    const [a, b] = [nums[pair[0]], nums[pair[1]]].sort((p, q) => p - q);
-    const text = `Los lugares ${a} y ${b} quedaron encimados: sepáralos un poco (así no se puede guardar).`;
-    setNotice(text);
-    if (!overlapWarned.current) announce(text);
-    overlapWarned.current = true;
-  }
-
-  /** Mueve estos lugares juntos, sin que ninguno salga de la foto. */
   function moveBy(indices: number[], dx: number, dy: number, options?: HistoryOptions) {
     const moving = new Set(indices);
-    let moved = null as ImageZone[] | null;
     setConfig((c) => {
       const d = clampShift(
         c.zones.filter((_, j) => moving.has(j)),
@@ -207,12 +183,13 @@ export function useDragSelection({
         dy
       );
       if (d.dx === 0 && d.dy === 0) return c;
-      moved = c.zones.map((z, j) =>
-        moving.has(j) ? { ...z, x: round4(clamp01(z.x + d.dx)), y: round4(clamp01(z.y + d.dy)) } : z
-      );
-      return { ...c, zones: moved };
+      return {
+        ...c,
+        zones: c.zones.map((z, j) =>
+          moving.has(j) ? { ...z, x: round4(clamp01(z.x + d.dx)), y: round4(clamp01(z.y + d.dy)) } : z
+        ),
+      };
     }, options);
-    if (moved) checkOverlap(moved, moving);
   }
 
   /** Flechas: mueven lo seleccionado; sobre un lugar que no lo estaba, ese pasa a ser la selección. */
@@ -281,25 +258,29 @@ export function useDragSelection({
 
   /**
    * Empieza a arrastrarse un lugar. Si es parte de una selección de varios, se
-   * mueve el grupo; si no, pasa a ser lo seleccionado y va solo.
+   * mueve el grupo (true); si no, pasa a ser lo seleccionado y va solo (false).
    */
-  function startDrag(i: number) {
+  function startDrag(i: number): boolean {
     if (selected.has(i) && selected.size > 1) {
       group.current = new Set(selected);
       setShift({ indices: group.current, dx: 0, dy: 0 });
-    } else {
-      group.current = null;
-      pick([i]);
+      return true;
     }
+    group.current = null;
+    pick([i]);
+    return false;
   }
 
-  /** Lo arrastrado en grupo, en píxeles desde donde empezó, sobre la foto `rect`. */
-  const shiftFor = (indices: Set<number>, px: Point, rect: DOMRect) =>
-    clampShift(
+  /** Lo arrastrado en grupo, en píxeles desde donde empezó, sobre la foto `rect`: con imán y sin salir de la foto. */
+  const shiftFor = (indices: Set<number>, px: Point, rect: DOMRect) => {
+    const raw = { dx: px.x / rect.width, dy: px.y / rect.height };
+    const d = snapShift ? snapShift(indices, raw) : raw;
+    return clampShift(
       zones.filter((_, j) => indices.has(j)),
-      px.x / rect.width,
-      px.y / rect.height
+      d.dx,
+      d.dy
     );
+  };
 
   /** El puntero se movió; false si no hay un grupo en la mano. */
   function dragGroup(px: Point, rect: DOMRect): boolean {
@@ -386,6 +367,7 @@ export function useDragSelection({
     clear,
     click,
     selectArea,
+    duplicate,
     remove,
     startDrag,
     dragGroup,

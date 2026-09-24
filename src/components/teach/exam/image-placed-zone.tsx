@@ -2,7 +2,7 @@
 
 import { memo } from "react";
 import { createPortal } from "react-dom";
-import { DragOverlay, useDraggable } from "@dnd-kit/core";
+import { DragOverlay, useDraggable, type Modifier } from "@dnd-kit/core";
 import { X } from "lucide-react";
 import { BoardSpot } from "@/components/exam/image-board";
 import { centerOnPointer, useIsClient } from "@/components/exam/image-dnd";
@@ -10,14 +10,17 @@ import { ItemFace } from "@/components/exam/image-pieces";
 import { elementView } from "@/lib/image-layout";
 import type { ImageElement, Point } from "@/lib/image-questions";
 import { cn } from "@/lib/utils";
+import { TransformBox, type TransformActions } from "./image-transform-box";
 
 /**
  * Un lugar en la foto del editor: el elemento real (el maestro sí ve la
  * solución) con su número «Lugar N». Se arrastra para moverlo (con los demás
  * seleccionados, si lo está). Seleccionado lleva un anillo; si es el único,
- * además la «×» para quitarlo. El teclado lo atiende el editor (flechas, Supr,
- * Espacio), por el `data-zone` del botón. Memorizado (con acciones fijas):
- * al mover un grupo solo se vuelven a pintar los lugares que se mueven.
+ * además la «×» para quitarlo. Con `transform`, en lugar del anillo lleva la
+ * caja para estirar y girar (y el número y la «×» se corren para no tapar sus
+ * tiradores). El teclado lo atiende el editor (flechas, Supr, Espacio, + − [ ]),
+ * por el `data-zone` del botón. Memorizado (con acciones fijas): al mover un
+ * grupo solo se vuelven a pintar los lugares que se mueven.
  */
 export const PlacedZone = memo(function PlacedZone({
   index,
@@ -30,6 +33,8 @@ export const PlacedZone = memo(function PlacedZone({
   selected,
   removable,
   lifted,
+  transform,
+  readout,
   onClick,
   onRemove,
 }: {
@@ -46,6 +51,10 @@ export const PlacedZone = memo(function PlacedZone({
   removable: boolean;
   /** Va en la mano: se ve el fantasma, y el botón sigue montado (invisible) para no cortar el arrastre. */
   lifted: boolean;
+  /** Lleva la caja para estirar y girar. */
+  transform?: TransformActions;
+  /** El valor mientras se estira o gira. */
+  readout?: string | null;
   onClick: (index: number, e: React.MouseEvent) => void;
   onRemove: (index: number, e: React.MouseEvent) => void;
 }) {
@@ -56,7 +65,7 @@ export const PlacedZone = memo(function PlacedZone({
   const turn = view.rotation ? { transform: `rotate(${view.rotation}deg)` } : undefined;
   const upright = view.rotation ? { transform: `rotate(${-view.rotation}deg)` } : undefined;
   return (
-    <BoardSpot x={at.x} y={at.y} className={cn(selected ? "z-20" : "z-10", lifted && "invisible")}>
+    <BoardSpot x={at.x} y={at.y} className={cn(transform ? "z-[25]" : selected ? "z-20" : "z-10", lifted && "invisible")}>
       <button
         ref={setNodeRef}
         type="button"
@@ -66,7 +75,11 @@ export const PlacedZone = memo(function PlacedZone({
         aria-label={label}
         aria-pressed={selected}
         title="Clic: seleccionarlo (Mayús+clic: sumarlo a la selección). Arrástralo para moverlo, o fuera de la foto para quitarlo"
-        className="group/zone relative block cursor-grab touch-none outline-none active:cursor-grabbing"
+        className={cn(
+          "group/zone relative block cursor-grab touch-none outline-none active:cursor-grabbing",
+          // Encima de la caja: donde el área de toque de un tirador cae sobre la ficha, gana la ficha (moverla)
+          transform && "z-[1]"
+        )}
       >
         <ItemFace item={view} boardWidth={boardWidth} dense={dense} />
         <span aria-hidden className="pointer-events-none absolute inset-0" style={turn}>
@@ -74,17 +87,22 @@ export const PlacedZone = memo(function PlacedZone({
             className={cn(
               "absolute inset-0 group-focus-visible/zone:ring-4 group-focus-visible/zone:ring-primary/40",
               element.kind === "icon" ? "rounded-[12px]" : "rounded-full",
-              selected && "ring-2 ring-primary ring-offset-2 ring-offset-background"
+              selected && !transform && "ring-2 ring-primary ring-offset-2 ring-offset-background"
             )}
           />
           <span
-            className="absolute -right-2 -top-2 flex size-[18px] items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground ring-2 ring-white"
+            className={cn(
+              "absolute flex size-[18px] items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground ring-2 ring-white",
+              // Con la caja, a la derecha del tirador de esa esquina
+              transform ? "-right-[33px] -top-[15px]" : "-right-2 -top-2"
+            )}
             style={upright}
           >
             {number}
           </span>
         </span>
       </button>
+      {transform && <TransformBox rotation={view.rotation} readout={readout ?? null} actions={transform} />}
       {removable && (
         <span className="pointer-events-none absolute inset-0" style={turn}>
           <button
@@ -93,7 +111,11 @@ export const PlacedZone = memo(function PlacedZone({
             title="Quitar este lugar"
             onClick={(e) => onRemove(index, e)}
             style={upright}
-            className="pointer-events-auto absolute -left-2.5 -top-2.5 flex size-5 items-center justify-center rounded-full bg-destructive text-white shadow ring-2 ring-white outline-none hover:bg-destructive/90 focus-visible:ring-4 focus-visible:ring-destructive/40"
+            className={cn(
+              "pointer-events-auto absolute flex size-5 items-center justify-center rounded-full bg-destructive text-white shadow ring-2 ring-white outline-none hover:bg-destructive/90 focus-visible:ring-4 focus-visible:ring-destructive/40",
+              // Con la caja, a la izquierda del tirador de esa esquina
+              transform ? "-left-[35px] -top-[16px]" : "-left-2.5 -top-2.5"
+            )}
           >
             <X className="size-3" strokeWidth={3} aria-hidden />
           </button>
@@ -114,6 +136,7 @@ export function DragGhost({
   removing,
   boardWidth,
   dense,
+  modifier,
 }: {
   element: ImageElement | undefined;
   /** Viene de la lista: va centrado en el puntero. */
@@ -122,18 +145,21 @@ export function DragGhost({
   removing: boolean;
   boardWidth: number;
   dense: boolean;
+  /** Para un lugar que se mueve: lo lleva adonde lo pega el imán. */
+  modifier?: Modifier;
 }) {
   const isClient = useIsClient();
   if (!isClient) return null;
   return createPortal(
-    <DragOverlay dropAnimation={null} modifiers={fromList ? [centerOnPointer] : undefined}>
+    <DragOverlay dropAnimation={null} modifiers={fromList ? [centerOnPointer] : modifier ? [modifier] : undefined}>
       {element ? (
         // El fantasma toma el tamaño de lo que se arrastra: la ficha va centrada en él
         <div className="flex size-full items-center justify-center">
           <span
             className={cn(
               "block cursor-grabbing drop-shadow-[0_12px_12px_rgb(15_23_42/0.35)] transition-opacity",
-              removing ? "opacity-40" : "-rotate-4 opacity-95"
+              // Un lugar que se mueve va derecho: así se ve justo sobre las guías
+              removing ? "opacity-40" : fromList ? "-rotate-4 opacity-95" : "opacity-95"
             )}
           >
             <ItemFace item={elementView(element)} boardWidth={boardWidth} dense={dense} />

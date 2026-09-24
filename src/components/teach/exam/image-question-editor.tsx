@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
-import { CheckCircle2, CircleAlert, Eye, ImagePlus, ImageUp, Loader2, Redo2, TriangleAlert, Undo2 } from "lucide-react";
+import { CheckCircle2, CircleAlert, Eye, ImagePlus, ImageUp, Loader2, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useFileDrop } from "@/components/exam/image-dnd";
 import { LiveRegion, useAnnouncer } from "@/components/exam/live-region";
@@ -18,6 +18,7 @@ import {
 } from "@/lib/image-questions";
 import { imageQuestionProblem, shapedImageValue as shaped, type ImageQuestionValue } from "@/lib/image-editor-value";
 import { cn } from "@/lib/utils";
+import { HistoryButtons } from "./image-canvas-toolbar";
 import { ClickEditor } from "./image-click-editor";
 import { DragEditor } from "./image-drag-editor";
 import { PreviewDialog } from "./preview-button";
@@ -179,36 +180,15 @@ export function ImageQuestionEditor({
   const problem = imageQuestionProblem(type, current);
   // Mientras se mide la foto, una proporción cualquiera para dibujar el tablero
   const aspect = validAspect(config.aspect) ? config.aspect : 0.75;
+  const undoRedo = {
+    canUndo: history.canUndo,
+    canRedo: history.canRedo,
+    undo: () => travel("undo"),
+    redo: () => travel("redo"),
+  };
+  // En «arrastrar» van en la barra de la foto; en «señalar» (y sin foto), aquí
   const historyButtons = (
-    <div role="group" aria-label="Historial" className="flex items-center gap-1">
-      {/* Sin deshabilitar del todo: así el foco no se pierde al llegar al final */}
-      <Button
-        type="button"
-        size="icon-sm"
-        variant="outline"
-        aria-label="Deshacer"
-        aria-keyshortcuts="Control+Z"
-        title="Deshacer (Ctrl+Z)"
-        aria-disabled={!history.canUndo}
-        className="aria-disabled:opacity-50"
-        onClick={() => travel("undo")}
-      >
-        <Undo2 aria-hidden />
-      </Button>
-      <Button
-        type="button"
-        size="icon-sm"
-        variant="outline"
-        aria-label="Rehacer"
-        aria-keyshortcuts="Control+Shift+Z Control+Y"
-        title="Rehacer (Ctrl+Mayús+Z o Ctrl+Y)"
-        aria-disabled={!history.canRedo}
-        className="aria-disabled:opacity-50"
-        onClick={() => travel("redo")}
-      >
-        <Redo2 aria-hidden />
-      </Button>
-    </div>
+    <HistoryButtons canUndo={undoRedo.canUndo} canRedo={undoRedo.canRedo} onUndo={undoRedo.undo} onRedo={undoRedo.redo} />
   );
 
   return (
@@ -263,7 +243,7 @@ export function ImageQuestionEditor({
               {uploading === "photo" ? <Loader2 className="animate-spin" aria-hidden /> : <ImageUp aria-hidden />}
               {uploading === "photo" ? "Subiendo…" : "Cambiar foto"}
             </Button>
-            {historyButtons}
+            {type === "image_click" && historyButtons}
             <span className="flex-1" />
             {/* En «arrastrar», el tamaño es de cada elemento (panel «Seleccionado») */}
             {type === "image_click" && (
@@ -282,6 +262,7 @@ export function ImageQuestionEditor({
               config={config as ImageDragConfig}
               setConfig={setConfig<ImageDragConfig>}
               gesture={history}
+              history={undoRedo}
               uploading={uploading}
               setUploading={setUploading}
               setError={setError}

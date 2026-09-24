@@ -1,15 +1,19 @@
 "use client";
 
-import { useLayoutEffect, useState, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { boxBounds, boxesOverlap, elementBox, elementView, type Box } from "@/lib/image-layout";
 import { MIN_ZONE_GAP, relDistance, type ImageElement, type ImageZone } from "@/lib/image-questions";
 import { joinY } from "@/lib/plural";
 
 /**
- * Avisos del editor de «arrastrar» que no impiden guardar: dos lugares que se
- * tapan a la vista y lugares que se salen por la orilla de la foto. Se miden
- * con la caja real de cada lugar en pantalla (su tamaño, su proporción y su
- * giro): los botones `[data-zone]` que hay dentro de `rootRef`.
+ * Avisos del editor de «arrastrar». Dos que no impiden guardar: dos lugares
+ * que se tapan a la vista y lugares que se salen por la orilla de la foto. Se
+ * miden con la caja real de cada lugar en pantalla (su tamaño, su proporción y
+ * su giro): los botones `[data-zone]` que hay dentro de `rootRef`. Y uno que
+ * sí: dos lugares encimados (centros a menos de MIN_ZONE_GAP). Sale de los
+ * lugares mismos, así que se va en cuanto se separan, se haga como se haga
+ * (arrastrar, flechas, imán, alinear, deshacer). Se dice en voz alta cuando
+ * aparece o cambia de pareja, no en cada cambio.
  */
 
 /** Aviso de lugares que se salen por la orilla, según lo que haya en ellos. */
@@ -39,6 +43,7 @@ export function useZoneWarnings({
   byId,
   aspect,
   dense,
+  announce,
 }: {
   rootRef: RefObject<HTMLElement | null>;
   boardNode: HTMLElement | null;
@@ -52,7 +57,27 @@ export function useZoneWarnings({
   aspect: number;
   /** Etiquetas más justas: cambia lo que miden. */
   dense: boolean;
-}): { covered: string | null; edge: string | null } {
+  announce: (text: string) => void;
+}): { overlap: string | null; covered: string | null; edge: string | null } {
+  /** Dos lugares encimados (no se puede guardar), los primeros en orden de lectura. */
+  const overlap = useMemo(() => {
+    for (let a = 0; a < ordered.length; a++) {
+      for (let b = a + 1; b < ordered.length; b++) {
+        const [i, j] = [ordered[a], ordered[b]];
+        if (relDistance(zones[i], zones[j], aspect) < MIN_ZONE_GAP) {
+          return `Los lugares ${numbers[i]} y ${numbers[j]} quedaron encimados: sepáralos un poco (así no se puede guardar).`;
+        }
+      }
+    }
+    return null;
+  }, [zones, ordered, numbers, aspect]);
+  // Lo que ya estaba al abrir no se anuncia; lo que aparece después, una vez
+  const said = useRef(overlap);
+  useEffect(() => {
+    if (overlap && overlap !== said.current) announce(overlap);
+    said.current = overlap;
+  }, [overlap, announce]);
+
   /** Dos lugares (índices) que se tapan a la vista. */
   const [covered, setCovered] = useState<[number, number] | null>(null);
   /** Lugares (índices) que se salen por la orilla de la foto. */
@@ -110,5 +135,5 @@ export function useZoneWarnings({
     .filter(Boolean)
     .sort((a, b) => a - b);
   const edgeKinds = new Set(edgeClipped.map((i) => byId.get(zones[i]?.elementId ?? "")?.kind));
-  return { covered: coveredText, edge: edgeNumbers.length > 0 ? edgeWarning(edgeNumbers, edgeKinds) : null };
+  return { overlap, covered: coveredText, edge: edgeNumbers.length > 0 ? edgeWarning(edgeNumbers, edgeKinds) : null };
 }

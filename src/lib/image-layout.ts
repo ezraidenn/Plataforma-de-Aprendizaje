@@ -177,6 +177,24 @@ export type Guide = { axis: "x" | "y"; at: number };
 const EPS = 1e-9;
 const r9 = (n: number) => Math.round(n * 1e9) / 1e9;
 
+/** La caja que envuelve a todas (al menos una). */
+export function unionBounds(list: Bounds[]): Bounds {
+  return {
+    left: Math.min(...list.map((b) => b.left)),
+    right: Math.max(...list.map((b) => b.right)),
+    top: Math.min(...list.map((b) => b.top)),
+    bottom: Math.max(...list.map((b) => b.bottom)),
+  };
+}
+
+/** Líneas del imán en un eje: bordes y centro de la foto, de cada caja y, si hay, la cuadrícula. */
+function guideLines(axis: "x" | "y", others: Bounds[], grid?: number | null): number[] {
+  const out = [0, 0.5, 1];
+  for (const o of others) out.push(...(axis === "x" ? [o.left, (o.left + o.right) / 2, o.right] : [o.top, (o.top + o.bottom) / 2, o.bottom]));
+  if (grid) for (let v = grid; v < 1 - EPS; v += grid) out.push(r9(v));
+  return out;
+}
+
 /**
  * Imán: cuánto mover `moving` para que su borde o centro (en cada eje) se pegue
  * al borde o centro más cercano de otra caja o de la foto (0, 0.5, 1), dentro
@@ -184,12 +202,7 @@ const r9 = (n: number) => Math.round(n * 1e9) / 1e9;
  * guías que se ven tras pegar.
  */
 export function snapMove(moving: Bounds, others: Bounds[], opts: { tx: number; ty: number; grid?: number | null }): { dx: number; dy: number; guides: Guide[] } {
-  const lines = (axis: "x" | "y") => {
-    const out = [0, 0.5, 1];
-    for (const o of others) out.push(...(axis === "x" ? [o.left, (o.left + o.right) / 2, o.right] : [o.top, (o.top + o.bottom) / 2, o.bottom]));
-    if (opts.grid) for (let v = opts.grid; v < 1 - EPS; v += opts.grid) out.push(r9(v));
-    return out;
-  };
+  const lines = (axis: "x" | "y") => guideLines(axis, others, opts.grid);
   const best = (anchors: number[], targets: number[], t: number) => {
     let delta = 0;
     let dist = Infinity;
@@ -222,6 +235,39 @@ export function snapMove(moving: Bounds, others: Bounds[], opts: { tx: number; t
   if (dy !== 0 || ys.some((g) => ay.some((a) => Math.abs(g - a) < EPS)))
     for (const a of ay) for (const g of ys) if (Math.abs(a + dy - g) < 1e-7) add("y", g);
   return { dx, dy, guides };
+}
+
+/**
+ * Imán al estirar desde el centro: el factor que lleva el borde de `b` más
+ * cercano a una línea del imán (las de `snapMove`) justo hasta ella, si está
+ * dentro del umbral de su eje; null si ninguno. El centro no se mueve, así que
+ * el borde de enfrente se mueve lo mismo. Entre ejes gana el más cercano en
+ * proporción a su umbral (los dos umbrales son los mismos píxeles en pantalla).
+ */
+export function snapScale(
+  b: Bounds,
+  center: Point,
+  others: Bounds[],
+  opts: { tx: number; ty: number; grid?: number | null }
+): { scale: number; guides: Guide[] } | null {
+  const edges = [
+    { axis: "x", at: b.left, half: center.x - b.left, sign: -1, t: opts.tx },
+    { axis: "x", at: b.right, half: b.right - center.x, sign: 1, t: opts.tx },
+    { axis: "y", at: b.top, half: center.y - b.top, sign: -1, t: opts.ty },
+    { axis: "y", at: b.bottom, half: b.bottom - center.y, sign: 1, t: opts.ty },
+  ] as const;
+  let best: { rel: number; scale: number; guide: Guide } | null = null;
+  for (const e of edges) {
+    if (e.half <= EPS || e.t <= 0) continue;
+    for (const g of guideLines(e.axis, others, opts.grid)) {
+      const d = g - e.at;
+      const rel = Math.abs(d) / e.t;
+      if (rel > 1 || (best && rel >= best.rel)) continue;
+      const scale = (e.half + e.sign * d) / e.half;
+      if (scale > 0) best = { rel, scale: r9(scale), guide: { axis: e.axis, at: r9(g) } };
+    }
+  }
+  return best && { scale: best.scale, guides: [best.guide] };
 }
 
 /** Centro pegado a la línea de cuadrícula más cercana. */

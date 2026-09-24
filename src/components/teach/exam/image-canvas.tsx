@@ -2,13 +2,18 @@
 
 import { useEffect, useRef, useState, type ComponentProps } from "react";
 import { ImageBoard, relToRect } from "@/components/exam/image-board";
+import type { Guide } from "@/lib/image-layout";
 import { clamp01, type Point } from "@/lib/image-questions";
+import { cn } from "@/lib/utils";
+import type { DistanceMark } from "./use-canvas-tools";
 
 /**
  * Lienzo del editor: la foto (`ImageBoard`) y sus capas. De abajo arriba: la
- * foto, la cuadrícula (tarea 7), lo colocado (`children`), las guías (tarea
- * 7) y el recuadro de selección. El envoltorio de fuera es el contenedor que
- * hará zoom y desplazamiento, con las reglas en su orilla (tareas 7 y 8).
+ * foto, la cuadrícula, lo colocado (`children`), las guías del imán, las
+ * distancias tras repartir y el recuadro de selección. El envoltorio de fuera
+ * lleva las reglas en su orilla (arriba e izquierda, 0–100 % de la foto, con
+ * una marca roja en el centro de la selección) y será el contenedor que haga
+ * zoom y desplazamiento (tarea 8).
  *
  * Recuadro de selección: arrastrar sobre un área vacía de la foto (no sobre un
  * lugar) dibuja un rectángulo; al soltar, `onMarquee` recibe su área en
@@ -23,15 +28,33 @@ export type Area = { left: number; top: number; right: number; bottom: number };
 
 /** Lo que hay que mover el puntero (px) para que sea un recuadro y no un clic. */
 const MARQUEE_START_PX = 4;
+/** Marcas con número de las reglas (cada 10 %). */
+const RULER_MARKS = Array.from({ length: 11 }, (_, k) => k * 10);
+const pct = (n: number) => `${n * 100}%`;
 
 export function ImageCanvas({
   onMarquee,
   onPointer,
+  rulers = false,
+  rulerMark,
+  grid,
+  guides,
+  distances,
   children,
   ...board
 }: ComponentProps<typeof ImageBoard> & {
   /** Recuadro terminado. Sin esto (p. ej. mientras se coloca un elemento) no hay recuadro. */
   onMarquee?: (area: Area, additive: boolean) => void;
+  /** Reglas arriba y a la izquierda. */
+  rulers?: boolean;
+  /** Centro de la selección: la marca roja de las reglas. */
+  rulerMark?: Point | null;
+  /** Cuadrícula: su separación (fracción de cada lado), o nada. */
+  grid?: number | null;
+  /** Guías del imán mientras dura un gesto. */
+  guides?: Guide[];
+  /** Distancias entre cajas vecinas tras repartir. */
+  distances?: DistanceMark[] | null;
 }) {
   /** Recuadro en curso: dónde empezó (en la foto y en pantalla) y si ya se movió lo bastante. */
   const drag = useRef<{ start: Point; x: number; y: number; additive: boolean; moved: boolean } | null>(null);
@@ -74,8 +97,15 @@ export function ImageCanvas({
   };
 
   return (
-    // El contenedor que hará zoom (tarea 8); las reglas irán en su orilla (tarea 7)
-    <div className="relative min-w-0">
+    // El contenedor que hará zoom (tarea 8), con las reglas en su orilla
+    <div className={cn("relative min-w-0", rulers && "grid grid-cols-[18px_minmax(0,1fr)] grid-rows-[18px_auto]")}>
+      {rulers && (
+        <>
+          <span aria-hidden />
+          <Ruler axis="x" mark={rulerMark?.x} />
+          <Ruler axis="y" mark={rulerMark?.y} />
+        </>
+      )}
       <ImageBoard
         {...board}
         onPointer={
@@ -132,9 +162,23 @@ export function ImageCanvas({
           cancel();
         }}
       >
-        {/* Cuadrícula (tarea 7) */}
+        {grid ? <GridLines step={grid} /> : null}
         {children}
-        {/* Guías (tarea 7) */}
+        {guides?.map((g) => (
+          <span
+            key={`${g.axis}${g.at}`}
+            aria-hidden
+            data-guide={g.axis}
+            className={cn(
+              "pointer-events-none absolute z-30 border-dashed border-rose-600",
+              g.axis === "x" ? "inset-y-0 -ml-[0.75px] border-l-[1.5px]" : "inset-x-0 -mt-[0.75px] border-t-[1.5px]"
+            )}
+            style={g.axis === "x" ? { left: pct(g.at) } : { top: pct(g.at) }}
+          />
+        ))}
+        {distances?.map((m, k) => (
+          <Distance key={k} mark={m} />
+        ))}
         {area && (
           <div
             aria-hidden
@@ -149,5 +193,103 @@ export function ImageCanvas({
         )}
       </ImageBoard>
     </div>
+  );
+}
+
+/** Regla de un lado de la foto: marcas cada 2 %, números cada 10 % y la marca roja de la selección. */
+function Ruler({ axis, mark }: { axis: "x" | "y"; mark?: number | null }) {
+  const x = axis === "x";
+  return (
+    <div
+      aria-hidden
+      data-ruler={axis}
+      className={cn(
+        "pointer-events-none relative select-none text-[9px] font-medium leading-none text-muted-foreground tabular-nums",
+        x ? "border-b" : "border-r"
+      )}
+    >
+      {/* Submarcas cada 2 % */}
+      <span
+        className={cn("absolute opacity-45", x ? "inset-x-0 bottom-0 h-1" : "inset-y-0 right-0 w-1")}
+        style={{ backgroundImage: `repeating-linear-gradient(${x ? 90 : 180}deg, currentColor 0 1px, transparent 1px 2%)` }}
+      />
+      {RULER_MARKS.map((n) => {
+        const last = n === 100;
+        return (
+          <span key={n}>
+            <span
+              className={cn("absolute bg-current opacity-70", x ? "bottom-0 h-2 w-px" : "right-0 h-px w-2")}
+              style={x ? { left: `calc(${n}% - ${last ? 1 : 0}px)` } : { top: `calc(${n}% - ${last ? 1 : 0}px)` }}
+            />
+            <span
+              className={cn("absolute", x ? "top-0.5" : "left-0.5", last && (x ? "-translate-x-full" : "-translate-y-full"))}
+              style={x ? { left: `calc(${n}% + ${last ? -2 : 2}px)` } : { top: `calc(${n}% + ${last ? -1 : 1}px)` }}
+            >
+              {n}
+            </span>
+          </span>
+        );
+      })}
+      {typeof mark === "number" && (
+        <span
+          data-ruler-mark=""
+          className={cn("absolute bg-rose-600", x ? "inset-y-0 -ml-px w-0.5" : "inset-x-0 -mt-px h-0.5")}
+          style={x ? { left: pct(mark) } : { top: pct(mark) }}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Cuadrícula: líneas blancas translúcidas (con un filo oscuro para verse en fotos claras). */
+function GridLines({ step }: { step: number }) {
+  const lines = Array.from({ length: Math.round(1 / step) - 1 }, (_, k) => (k + 1) * step);
+  return (
+    <span aria-hidden data-grid="" className="pointer-events-none absolute inset-0">
+      {lines.map((v) => (
+        <span key={v}>
+          <span
+            className="absolute inset-y-0 w-px bg-white/60 shadow-[1px_0_0_rgb(15_23_42/0.14)]"
+            style={{ left: pct(v) }}
+          />
+          <span
+            className="absolute inset-x-0 h-px bg-white/60 shadow-[0_1px_0_rgb(15_23_42/0.14)]"
+            style={{ top: pct(v) }}
+          />
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/** Distancia entre dos cajas vecinas tras repartir: una cota roja con «= N %». */
+function Distance({ mark }: { mark: DistanceMark }) {
+  const across = mark.from.y === mark.to.y;
+  const [a, b] = across ? [mark.from.x, mark.to.x] : [mark.from.y, mark.to.y];
+  const [lo, len] = [Math.min(a, b), Math.abs(b - a)];
+  return (
+    <span
+      aria-hidden
+      data-distance=""
+      className={cn(
+        "pointer-events-none absolute z-30 flex items-center justify-center border-rose-600",
+        across ? "h-2 -translate-y-1/2 border-x-[1.5px]" : "w-2 -translate-x-1/2 flex-col border-y-[1.5px]"
+      )}
+      style={
+        across
+          ? { left: pct(lo), width: pct(len), top: pct(mark.from.y) }
+          : { top: pct(lo), height: pct(len), left: pct(mark.from.x) }
+      }
+    >
+      <span className={cn("bg-rose-600", across ? "h-[1.5px] w-full" : "h-full w-[1.5px]")} />
+      <span
+        className={cn(
+          "absolute whitespace-nowrap rounded bg-background px-1 text-[10px] font-bold text-rose-600 shadow-sm",
+          across ? "bottom-full left-1/2 mb-0.5 -translate-x-1/2" : "left-full top-1/2 ml-1 -translate-y-1/2"
+        )}
+      >
+        {mark.label}
+      </span>
+    </span>
   );
 }
