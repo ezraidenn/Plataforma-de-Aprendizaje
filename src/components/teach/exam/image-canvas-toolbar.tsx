@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   AlignCenterHorizontal,
   AlignCenterVertical,
@@ -62,16 +62,21 @@ function readPrefs(): CanvasPrefs {
 /** Imán, reglas y cuadrícula, recordados en este navegador. */
 export function useCanvasPrefs() {
   const [prefs, setPrefs] = useState<CanvasPrefs>(readPrefs);
-  const toggle = (key: keyof CanvasPrefs) =>
-    setPrefs((p) => {
-      const next = { ...p, [key]: !p[key] };
-      try {
-        window.localStorage.setItem(PREFS_KEY, JSON.stringify(next));
-      } catch {
-        // Sin almacenamiento (modo privado estricto): vale solo mientras siga abierto
-      }
-      return next;
-    });
+  /** Lo último que eligió el maestro (no lo leído al abrir): solo eso se guarda. */
+  const [chosen, setChosen] = useState<CanvasPrefs | null>(null);
+  useEffect(() => {
+    if (!chosen) return;
+    try {
+      window.localStorage.setItem(PREFS_KEY, JSON.stringify(chosen));
+    } catch {
+      // Sin almacenamiento (modo privado estricto): vale solo mientras siga abierto
+    }
+  }, [chosen]);
+  const toggle = (key: keyof CanvasPrefs) => {
+    const next = { ...prefs, [key]: !prefs[key] };
+    setPrefs(next);
+    setChosen(next);
+  };
   return { prefs, toggle };
 }
 
@@ -272,6 +277,8 @@ function MenuButton({
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  // Si deja de aplicar con el menú abierto (se quitó la selección), se cierra y no se reabre solo
+  if (open && !enabled) setOpen(false);
   return (
     <DropdownMenu
       open={open && enabled}
@@ -294,7 +301,12 @@ function MenuButton({
           <ChevronDown aria-hidden className="-mr-0.5 opacity-60" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-auto min-w-40">
+      <DropdownMenuContent
+        align="start"
+        className="w-auto min-w-40"
+        // El menú va en un portal, pero sus teclas suben por React hasta el editor: ahí no son atajos (Ctrl+Z, Supr…)
+        onKeyDown={(e) => e.stopPropagation()}
+      >
         {children}
       </DropdownMenuContent>
     </DropdownMenu>

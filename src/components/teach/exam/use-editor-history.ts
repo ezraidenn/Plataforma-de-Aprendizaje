@@ -5,7 +5,8 @@ import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 /**
  * Deshacer y rehacer del editor abierto (la foto y su config). Cada cambio que
  * pasa por `set` es un paso, hasta HISTORY_LIMIT. Un gesto entero (arrastrar
- * un deslizante) es un solo paso: `begin()` al empezar y `commit()` al soltar.
+ * un deslizante) es un solo paso: `begin()` al empezar y `commit()` al soltar;
+ * `cancel()` lo deja como estaba antes de empezar, sin paso.
  * Cambios seguidos con la misma clave `coalesce` (escribir en un campo, pulsar
  * flechas) también se juntan en uno; `commit()` corta esa racha. Los cambios
  * `silent` (medir la foto, darle su forma al valor) no son pasos.
@@ -30,6 +31,7 @@ export type EditorHistory<T> = {
   redo: () => boolean;
   begin: () => void;
   commit: () => void;
+  cancel: () => void;
   canUndo: boolean;
   canRedo: boolean;
 };
@@ -99,6 +101,16 @@ export function useEditorHistory<T>(value: T, onChange: (v: T) => void): EditorH
     }
   }, [push, sync]);
 
+  /** Deja todo como antes del gesto abierto (Esc a medio estirar), sin paso. Sin gesto, nada. */
+  const cancel = useCallback(() => {
+    const open = gesture.current;
+    gesture.current = null;
+    run.current = null;
+    if (!open || Object.is(open.base, latest.current)) return;
+    latest.current = open.base;
+    emit.current(open.base);
+  }, []);
+
   const travel = useCallback(
     (from: "past" | "future"): boolean => {
       commit();
@@ -121,8 +133,8 @@ export function useEditorHistory<T>(value: T, onChange: (v: T) => void): EditorH
   const redo = useCallback(() => travel("future"), [travel]);
 
   return useMemo(
-    () => ({ set, undo, redo, begin, commit, canUndo: counts.past > 0, canRedo: counts.future > 0 }),
-    [set, undo, redo, begin, commit, counts]
+    () => ({ set, undo, redo, begin, commit, cancel, canUndo: counts.past > 0, canRedo: counts.future > 0 }),
+    [set, undo, redo, begin, commit, cancel, counts]
   );
 }
 

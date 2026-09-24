@@ -36,8 +36,8 @@ import type { HistoryOptions } from "./use-editor-history";
 
 type SetConfig = (fn: (c: ImageDragConfig) => ImageDragConfig, options?: HistoryOptions) => ImageDragConfig;
 export type Delta = { dx: number; dy: number };
-/** Distancia entre dos cajas vecinas tras repartir (en coordenadas de la foto). */
-export type DistanceMark = { from: Point; to: Point; label: string };
+/** Distancia entre dos cajas vecinas tras repartir (en coordenadas de la foto), a lo largo de `axis`. */
+export type DistanceMark = { axis: "x" | "y"; from: Point; to: Point; label: string };
 
 /** Separación de la cuadrícula (fracción de cada lado de la foto). */
 export const GRID_STEP = 0.1;
@@ -53,20 +53,25 @@ const sameGuides = (a: Guide[], b: Guide[]) =>
 /** Porcentaje con un decimal, sin «.0». */
 const percent = (n: number) => String(Math.round(n * 1000) / 10);
 
-/** Las distancias entre cajas vecinas a lo largo de un eje. */
-function distanceMarks(boxes: Bounds[], axis: "x" | "y"): DistanceMark[] {
+/**
+ * Las distancias entre cajas vecinas a lo largo de un eje. Si un hueco es el
+ * de `common` (el espacio que dio repartir) salvo el redondeo de los centros a
+ * cuatro decimales, se dice ese: así «2.65 %» no sale como «2.7» y «2.6».
+ */
+function distanceMarks(boxes: Bounds[], axis: "x" | "y", common?: number): DistanceMark[] {
   const lo = (b: Bounds) => (axis === "x" ? b.left : b.top);
   const hi = (b: Bounds) => (axis === "x" ? b.right : b.bottom);
   const sorted = [...boxes].sort((a, b) => lo(a) - lo(b));
   return sorted.slice(1).map((b, k) => {
     const a = sorted[k];
-    const label = `= ${percent(lo(b) - hi(a))} %`;
+    const gap = lo(b) - hi(a);
+    const label = `= ${percent(common !== undefined && Math.abs(gap - common) < 5e-4 ? common : gap)} %`;
     if (axis === "x") {
       const y = (a.top + a.bottom + b.top + b.bottom) / 4;
-      return { from: { x: hi(a), y }, to: { x: lo(b), y }, label };
+      return { axis, from: { x: hi(a), y }, to: { x: lo(b), y }, label };
     }
     const x = (a.left + a.right + b.left + b.right) / 4;
-    return { from: { x, y: hi(a) }, to: { x, y: lo(b) }, label };
+    return { axis, from: { x, y: hi(a) }, to: { x, y: lo(b) }, label };
   });
 }
 
@@ -79,6 +84,7 @@ export function useCanvasTools({
   magnet,
   grid,
   setConfig,
+  setNotice,
   announce,
 }: {
   boardNode: HTMLElement | null;
@@ -91,6 +97,8 @@ export function useCanvasTools({
   /** Cuadrícula encendida: el imán también pega a sus líneas. */
   grid: boolean;
   setConfig: SetConfig;
+  /** Aviso a la vista de algo que no se hizo. */
+  setNotice: (n: string | null) => void;
   announce: (text: string) => void;
 }) {
   const [guides, setGuides] = useState<Guide[]>(NONE);
@@ -102,6 +110,13 @@ export function useCanvasTools({
   const alt = useRef(false);
   /** Hay un gesto con imán en curso. */
   const busy = useRef(false);
+  /** Lo medido para el gesto en curso (ver `gestureBoxes`). */
+  const cache = useRef<{
+    of: ImageZone[];
+    key: string;
+    others: Bounds[];
+    sizes: Map<number, { w: number; h: number } | null>;
+  } | null>(null);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -175,39 +190,70 @@ export function useCanvasTools({
     setGuides((prev) => (sameGuides(prev, next) ? prev : next));
   }
 
-  /** Un grupo en la mano, desplazado `d`: el desplazamiento con imán (y sus guías). */
-  function snapShift(indices: Set<number>, d: Delta): Delta {
-    const opts = snapOptions();
-    const moving = opts
-      ? [...indices].flatMap((i) => {
-          const z = zones[i];
-          const b = z && boundsOf(i, { x: z.x + d.dx, y: z.y + d.dy });
-          return b ? [b] : [];
-        })
-      : [];
-    if (!opts || moving.length === 0) {
-      showGuides(NONE);
-      return d;
-    }
-    const s = snapMove(unionBounds(moving), othersThan((j) => indices.has(j)), opts);
-    showGuides(s.guides);
-    return { dx: d.dx + s.dx, dy: d.dy + s.dy };
+  /**
+   * Lo que no cambia mientras dura un gesto (las cajas de los lugares quietos
+   * y el tamaño de los que se mueven) se mide una vez, no en cada movimiento.
+   * Vale mientras sean los mismos lugares, el mismo gesto y el mismo ancho.
+   */
+  function gestureBoxes(key: string, skip: (j: number) => boolean, moving: number[]) {
+    const fullKey = `${key}@${width()}`;
+    const c = cache.current;
+    if (c && c.of === zones && c.key === fullKey) return c;
+    const next = { of: zones, key: fullKey, others: othersThan(skip), sizes: new Map(moving.map((i) => [i, sizeOf(i)])) };
+    cache.current = next;
+    return next;
   }
 
-  /** Un lugar solo en la mano con su centro en `p`: dónde queda con el imán. Sin tocar el estado (lo usa el fantasma al dibujarse). */
+  /**
+   * Un grupo en la mano, desplazado `d`: el desplazamiento con imán, ya
+   * recortado por `clamp` (sin salir de la foto), y sus guías. Si la orilla no
+   * deja llegar a una guía, se dibujan solo las que de verdad se tocan.
+   */
+  function snapShift(indices: Set<number>, d: Delta, clamp: (d: Delta) => Delta = (x) => x): Delta {
+    const opts = snapOptions();
+    const list = [...indices];
+    const g = opts ? gestureBoxes(`grupo:${list.join(",")}`, (j) => indices.has(j), list) : null;
+    const movingAt = (at: Delta) =>
+      list.flatMap((i) => {
+        const z = zones[i];
+        const b = z && g ? boundsOf(i, { x: z.x + at.dx, y: z.y + at.dy }, g.sizes.get(i) ?? null) : null;
+        return b ? [b] : [];
+      });
+    const moving = movingAt(d);
+    if (!opts || !g || moving.length === 0) {
+      showGuides(NONE);
+      return clamp(d);
+    }
+    const s = snapMove(unionBounds(moving), g.others, opts);
+    const snapped = { dx: d.dx + s.dx, dy: d.dy + s.dy };
+    const kept = clamp(snapped);
+    const touching =
+      kept.dx === snapped.dx && kept.dy === snapped.dy
+        ? s.guides
+        : snapMove(unionBounds(movingAt(kept)), g.others, { tx: 1e-9, ty: 1e-9, grid: opts.grid }).guides;
+    showGuides(touching);
+    return kept;
+  }
+
+  /**
+   * Un lugar solo en la mano con su centro en `p`: dónde queda con el imán.
+   * Sin tocar el estado: lo calcula el fantasma al dibujarse, y el arrastre
+   * publica ese mismo resultado con `hold`.
+   */
   function snapPoint(i: number, p: Point): { p: Point; guides: Guide[] } {
     const opts = snapOptions();
-    const b = opts && boundsOf(i, p);
-    if (!opts || !b) return { p, guides: NONE };
-    const s = snapMove(b, othersThan((j) => j === i), opts);
+    const g = opts ? gestureBoxes(`uno:${i}`, (j) => j === i, [i]) : null;
+    const b = opts && g ? boundsOf(i, p, g.sizes.get(i) ?? null) : null;
+    if (!opts || !g || !b) return { p, guides: NONE };
+    const s = snapMove(b, g.others, opts);
     return { p: { x: clamp01(p.x + s.dx), y: clamp01(p.y + s.dy) }, guides: s.guides };
   }
 
-  /** El lugar solo se movió (null: está fuera de la foto): sus guías y la marca de las reglas. */
-  function hold(i: number, p: Point | null) {
-    const s = p && snapPoint(i, p);
+  /** El lugar solo se movió (null: está fuera de la foto): sus guías y la marca de las reglas, si cambiaron. */
+  function hold(s: { p: Point; guides: Guide[] } | null) {
     showGuides(s ? s.guides : NONE);
-    setHeld(s ? s.p : null);
+    const at = s?.p ?? null;
+    setHeld((prev) => (prev === at || (prev && at && prev.x === at.x && prev.y === at.y) ? prev : at));
   }
 
   /**
@@ -218,14 +264,16 @@ export function useCanvasTools({
   function snapStretch(i: number, rel: { w: number; h: number }, altKey: boolean) {
     const opts = snapOptions(altKey);
     const z = zones[i];
-    const b = opts && z ? boundsOf(i, z, rel) : null;
-    if (!opts || !b) return null;
-    return snapScale(b, z, othersThan((j) => zones[j].elementId === z.elementId), opts);
+    if (!opts || !z) return null;
+    const g = gestureBoxes(`estirar:${i}`, (j) => zones[j].elementId === z.elementId, []);
+    const b = boundsOf(i, z, rel);
+    return b && snapScale(b, z, g.others, opts);
   }
 
-  /** Terminó el gesto: fuera guías. */
+  /** Terminó el gesto: fuera guías (y lo medido para él). */
   function end() {
     busy.current = false;
+    cache.current = null;
     setGuides(NONE);
     setHeld(null);
   }
@@ -255,11 +303,14 @@ export function useCanvasTools({
     return boxes.every((b): b is Bounds => b !== null) ? boxes : null;
   }
 
+  /** Una etiqueta sin medir (aún no se dibuja): se dice en lugar de no hacer nada. */
+  const UNMEASURED = "No se pudo medir un lugar: espera un momento e inténtalo otra vez";
+
   /** Alinear lo seleccionado por su caja visible (con giro). */
   function align(list: number[], mode: AlignMode, said: string) {
     if (list.length < 2) return announce("Selecciona al menos 2 lugares para alinearlos");
     const boxes = boxesOf(list);
-    if (!boxes) return;
+    if (!boxes) return announce(UNMEASURED);
     const moved = applyDeltas(list, alignDeltas(boxes, mode));
     announce(moved ? `${list.length} lugares alineados ${said}` : `Ya estaban alineados ${said}`);
   }
@@ -268,12 +319,20 @@ export function useCanvasTools({
   function distribute(list: number[], axis: "x" | "y") {
     if (list.length < 3) return announce("Selecciona al menos 3 lugares para repartirlos");
     const boxes = boxesOf(list);
-    if (!boxes) return;
-    const moved = applyDeltas(list, distributeDeltas(boxes, axis).deltas);
+    if (!boxes) return announce(UNMEASURED);
+    const { deltas, gap } = distributeDeltas(boxes, axis);
+    // Las cajas suman más que el tramo: con el mismo espacio se encimarían
+    if (gap < 0) {
+      const text = `No caben con el mismo espacio ${axis === "x" ? "a lo ancho" : "a lo alto"}: sepáralos más o achícalos antes de repartir.`;
+      setNotice(text);
+      return announce(text);
+    }
+    const moved = applyDeltas(list, deltas);
+    setNotice(null);
     const now = moved ?? zones;
     // Ya en su sitio (recortados a la foto): cada distancia es la real
     const placed = boxesOf(list, (i) => now[i]);
-    const marks = placed ? distanceMarks(placed, axis) : [];
+    const marks = placed ? distanceMarks(placed, axis, gap) : [];
     setDistances({ of: now, marks });
     const how = axis === "x" ? "en horizontal" : "en vertical";
     const gaps = [...new Set(marks.map((m) => m.label.slice(2)))].join(", ");

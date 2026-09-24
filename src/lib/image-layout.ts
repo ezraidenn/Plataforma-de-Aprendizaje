@@ -296,14 +296,17 @@ export function alignDeltas(boxes: Bounds[], mode: AlignMode): { dx: number; dy:
 }
 
 /**
- * Repartir: los extremos se quedan; los de en medio, en su orden, con el mismo
- * espacio libre entre cajas. `gap` es ese espacio (para mostrarlo un momento).
+ * Repartir: el tramo va del principio de la primera caja al final de la que
+ * más lejos llega (no siempre la última en empezar: una caja ancha puede
+ * abarcar a otras); las cajas, en el orden en que empiezan, quedan con el
+ * mismo espacio libre entre ellas dentro de ese tramo. `gap` es ese espacio
+ * (para mostrarlo un momento); negativo si no caben (quien llama no reparte).
  */
 export function distributeDeltas(boxes: Bounds[], axis: "x" | "y"): { deltas: { dx: number; dy: number }[]; gap: number } {
   const lo = (b: Bounds) => (axis === "x" ? b.left : b.top);
   const hi = (b: Bounds) => (axis === "x" ? b.right : b.bottom);
   const order = boxes.map((b, i) => ({ b, i })).sort((p, q) => lo(p.b) - lo(q.b));
-  const span = hi(order[order.length - 1].b) - lo(order[0].b);
+  const span = Math.max(...boxes.map(hi)) - lo(order[0].b);
   const sizes = order.reduce((s, p) => s + hi(p.b) - lo(p.b), 0);
   const gap = r9((span - sizes) / (order.length - 1));
   const deltas = boxes.map(() => ({ dx: 0, dy: 0 }));

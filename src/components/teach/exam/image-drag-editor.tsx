@@ -69,8 +69,8 @@ export function DragEditor({
   config: ImageDragConfig;
   /** Cambia la config (un paso del historial) y devuelve la nueva. */
   setConfig: (fn: (c: ImageDragConfig) => ImageDragConfig, options?: HistoryOptions) => ImageDragConfig;
-  /** Un gesto (arrastrar un deslizante del panel) es un solo paso del historial. */
-  gesture: { begin: () => void; commit: () => void };
+  /** Un gesto (arrastrar un deslizante del panel, estirar, girar) es un solo paso del historial; `cancel` lo deshace sin paso. */
+  gesture: { begin: () => void; commit: () => void; cancel: () => void };
   /** Deshacer y Rehacer, para la barra. */
   history: { canUndo: boolean; canRedo: boolean; undo: () => void; redo: () => void };
   uploading: "photo" | "icon" | null;
@@ -143,6 +143,7 @@ export function DragEditor({
     magnet: prefs.magnet,
     grid: prefs.grid,
     setConfig,
+    setNotice,
     announce,
   });
   const selection = useDragSelection({
@@ -261,11 +262,18 @@ export function DragEditor({
   const transform = useTransformTool({
     element: soleElement,
     target: frameAt,
+    several: selectedIds.size > 1,
+    keyTarget: (zone) => {
+      if (zone === null || selected.has(zone)) return soleElement;
+      selection.only(zone);
+      return byId.get(zones[zone]?.elementId ?? "") ?? null;
+    },
     boardNode: board.node,
     boardWidth: board.width,
     aspect,
     measure: tools.sizeOf,
     change: changeElement,
+    nameOf,
     gesture,
     snap: tools,
     announce,
@@ -404,7 +412,7 @@ export function DragEditor({
             <DropVeil show={boardDrop.over} text="Suelta la foto para cambiarla (los lugares se conservan)" />
           </ImageCanvas>
           <p className={cn("text-xs", removing ? "font-medium text-destructive" : "text-muted-foreground")}>{hint}</p>
-          {[warnings.overlap, warnings.covered, warnings.edge].map(
+          {[warnings.covered, warnings.edge].map(
             (text) =>
               text && (
                 <p key={text} className="flex items-start gap-1.5 text-xs text-amber-700 dark:text-warning" role="status">

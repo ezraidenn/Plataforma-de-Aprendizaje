@@ -264,7 +264,7 @@ function GridLines({ step }: { step: number }) {
 
 /** Distancia entre dos cajas vecinas tras repartir: una cota roja con «= N %». */
 function Distance({ mark }: { mark: DistanceMark }) {
-  const across = mark.from.y === mark.to.y;
+  const across = mark.axis === "x";
   const [a, b] = across ? [mark.from.x, mark.to.x] : [mark.from.y, mark.to.y];
   const [lo, len] = [Math.min(a, b), Math.abs(b - a)];
   return (

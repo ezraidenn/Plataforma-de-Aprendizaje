@@ -2,7 +2,7 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { boxBounds, boxesOverlap, elementBox, elementView, type Box } from "@/lib/image-layout";
-import { MIN_ZONE_GAP, relDistance, type ImageElement, type ImageZone } from "@/lib/image-questions";
+import { MIN_ZONE_GAP, overlapNumbers, relDistance, type ImageElement, type ImageZone } from "@/lib/image-questions";
 import { joinY } from "@/lib/plural";
 
 /**
@@ -12,8 +12,9 @@ import { joinY } from "@/lib/plural";
  * su giro): los botones `[data-zone]` que hay dentro de `rootRef`. Y uno que
  * sí: dos lugares encimados (centros a menos de MIN_ZONE_GAP). Sale de los
  * lugares mismos, así que se va en cuanto se separan, se haga como se haga
- * (arrastrar, flechas, imán, alinear, deshacer). Se dice en voz alta cuando
- * aparece o cambia de pareja, no en cada cambio.
+ * (arrastrar, flechas, imán, alinear, deshacer). A la vista lo muestra la
+ * línea de lo que impide guardar (`imageEditorProblem`); aquí solo se dice en
+ * voz alta cuando aparece o cambia de pareja, no en cada cambio.
  */
 
 /** Aviso de lugares que se salen por la orilla, según lo que haya en ellos. */
@@ -58,20 +59,14 @@ export function useZoneWarnings({
   /** Etiquetas más justas: cambia lo que miden. */
   dense: boolean;
   announce: (text: string) => void;
-}): { overlap: string | null; covered: string | null; edge: string | null } {
+}): { covered: string | null; edge: string | null } {
   /** Dos lugares encimados (no se puede guardar), los primeros en orden de lectura. */
   const overlap = useMemo(() => {
-    for (let a = 0; a < ordered.length; a++) {
-      for (let b = a + 1; b < ordered.length; b++) {
-        const [i, j] = [ordered[a], ordered[b]];
-        if (relDistance(zones[i], zones[j], aspect) < MIN_ZONE_GAP) {
-          return `Los lugares ${numbers[i]} y ${numbers[j]} quedaron encimados: sepáralos un poco (así no se puede guardar).`;
-        }
-      }
-    }
-    return null;
-  }, [zones, ordered, numbers, aspect]);
-  // Lo que ya estaba al abrir no se anuncia; lo que aparece después, una vez
+    const pair = overlapNumbers(zones, aspect);
+    return pair ? `Los lugares ${pair[0]} y ${pair[1]} quedaron encimados: sepáralos un poco (así no se puede guardar).` : null;
+  }, [zones, aspect]);
+  // A la vista lo dice la línea de «lo que impide guardar» (con los mismos números); aquí solo se
+  // dice en voz alta. Lo que ya estaba al abrir no se anuncia; lo que aparece después, una vez
   const said = useRef(overlap);
   useEffect(() => {
     if (overlap && overlap !== said.current) announce(overlap);
@@ -135,5 +130,5 @@ export function useZoneWarnings({
     .filter(Boolean)
     .sort((a, b) => a - b);
   const edgeKinds = new Set(edgeClipped.map((i) => byId.get(zones[i]?.elementId ?? "")?.kind));
-  return { overlap, covered: coveredText, edge: edgeNumbers.length > 0 ? edgeWarning(edgeNumbers, edgeKinds) : null };
+  return { covered: coveredText, edge: edgeNumbers.length > 0 ? edgeWarning(edgeNumbers, edgeKinds) : null };
 }

@@ -34,6 +34,7 @@ import {
   imageClickProblem,
   imageClickScore,
   imageDragProblem,
+  overlapNumbers,
   imageDragScore,
   iconNumbers,
   nearestZone,
@@ -49,7 +50,7 @@ import {
   type ImageClickConfig,
   type ImageDragConfig,
 } from "../src/lib/image-questions";
-import { initialImageValue, shapedImageValue } from "../src/lib/image-editor-value";
+import { imageEditorProblem, initialImageValue, shapedImageValue } from "../src/lib/image-editor-value";
 import {
   DEFAULT_ICON_SIZE,
   DEFAULT_TEXT_SIZE,
@@ -181,6 +182,11 @@ function validationChecks() {
   check("Dos lugares encimados", imageDragProblem(withZone(0.2 + MIN_ZONE_GAP / 2, 0.3), true) === stacked);
   check("Encimados en vertical: cuenta la proporción", imageDragProblem(withZone(0.2, 0.3 + 0.045), true) === stacked);
   check("Separados lo justo: válido", imageDragProblem(withZone(0.2 + MIN_ZONE_GAP + 0.001, 0.3), true) === null);
+  const near = withZone(0.2 + MIN_ZONE_GAP / 2, 0.3);
+  check("Encimados: sus números de lectura", JSON.stringify(overlapNumbers(near.zones, near.aspect)) === "[1,2]", overlapNumbers(near.zones, near.aspect));
+  const said = imageEditorProblem("image_drag", { imageFileId: "f", config: near });
+  check("El editor dice cuáles están encimados", said === "Los lugares 1 y 2 están encimados: sepáralos un poco para poder guardar", said);
+  check("El editor dice lo mismo que el servidor si no son encimados", imageEditorProblem("image_drag", { imageFileId: "f", config: { ...DRAG, zones: [] } }) === "Coloca al menos un elemento en la foto");
   const odd = (e: unknown) => {
     try {
       return imageDragProblem({ ...DRAG, elements: [...DRAG.elements, e] }, true);
@@ -312,6 +318,20 @@ function canvasChecks() {
   check("Imán al estirar: lejos de todo, nada", snapScale(grow, { x: 0.5, y: 0.5 }, [c], { tx: 0.001, ty: 0.001 }) === null);
   const k2 = snapScale({ left: 0.4, right: 0.6, top: 0.405, bottom: 0.595 }, { x: 0.5, y: 0.5 }, [], { tx: 0.01, ty: 0.01, grid: 0.1 });
   check("Imán al estirar con cuadrícula: pega el borde a su línea", !!k2 && k2.guides[0].axis === "x" && k2.scale === 1, k2);
+  // Borde derecho en 0.395 con cuadrícula de 10 %: crece hasta la línea 0.4 (el izquierdo, en 0.215, queda lejos de 0.2)
+  const k3 = snapScale({ left: 0.215, right: 0.395, top: 0.45, bottom: 0.55 }, { x: 0.305, y: 0.5 }, [], { tx: 0.01, ty: 0.001, grid: 0.1 });
+  check(
+    "Imán al estirar con cuadrícula: el borde en 0.395 llega a 0.4",
+    !!k3 && k3.guides[0].axis === "x" && k3.guides[0].at === 0.4 && Math.abs(k3.scale - 0.095 / 0.09) < 1e-9,
+    k3
+  );
+  // Mismo hueco (0.004) en x y en y, pero el umbral de y es más holgado: gana y
+  const k4 = snapScale({ left: 0.296, right: 0.704, top: 0.296, bottom: 0.704 }, { x: 0.5, y: 0.5 }, [{ left: 0.3, right: 0.3, top: 0.3, bottom: 0.3 }], { tx: 0.005, ty: 0.02 });
+  check(
+    "Imán al estirar: gana el eje más cercano en proporción a su umbral (y)",
+    !!k4 && k4.guides.length === 1 && k4.guides[0].axis === "y" && k4.guides[0].at === 0.3 && Math.abs(k4.scale - 0.2 / 0.204) < 1e-9,
+    k4
+  );
 
   const boxes: Bounds[] = [
     { left: 0.1, right: 0.2, top: 0.1, bottom: 0.2 },
@@ -328,6 +348,24 @@ function canvasChecks() {
   ];
   const d = distributeDeltas(three, "x");
   check("Repartir: el del medio queda con el mismo espacio a los lados", Math.abs(d.deltas[1].dx - 0.25) < 1e-9 && d.deltas[0].dx === 0 && d.deltas[2].dx === 0 && Math.abs(d.gap - 0.3) < 1e-9, d);
+  // Una caja ancha (0.2–0.9) abarca a la última en empezar (0.3–0.35): el tramo acaba en 0.9, no en 0.35
+  const wide: Bounds[] = [
+    { left: 0, right: 0.1, top: 0, bottom: 0.1 },
+    { left: 0.2, right: 0.9, top: 0, bottom: 0.1 },
+    { left: 0.3, right: 0.35, top: 0, bottom: 0.1 },
+  ];
+  const dw = distributeDeltas(wide, "x");
+  check(
+    "Repartir con una caja que abarca a otra: el tramo acaba en la que más lejos llega",
+    Math.abs(dw.gap - 0.025) < 1e-9 && dw.deltas[0].dx === 0 && Math.abs(dw.deltas[1].dx - -0.075) < 1e-9 && Math.abs(0.35 + dw.deltas[2].dx - 0.9) < 1e-9,
+    dw
+  );
+  const crowded: Bounds[] = [
+    { left: 0, right: 0.5, top: 0, bottom: 0.1 },
+    { left: 0.1, right: 0.6, top: 0, bottom: 0.1 },
+    { left: 0.2, right: 0.7, top: 0, bottom: 0.1 },
+  ];
+  check("Repartir cajas que no caben: hueco negativo (el editor no reparte)", distributeDeltas(crowded, "x").gap < 0, distributeDeltas(crowded, "x"));
 }
 
 function sanitizeChecks() {

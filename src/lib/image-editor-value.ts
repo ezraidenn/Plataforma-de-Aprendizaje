@@ -4,8 +4,10 @@
  * lo usa el editor y lo prueba `pnpm smoke:image`.
  */
 import {
+  OVERLAP_PROBLEM,
   imageClickProblem,
   imageDragProblem,
+  overlapNumbers,
   round4,
   sanitizeImageConfig,
   type IconSize,
@@ -82,4 +84,17 @@ export function imageQuestionProblem(type: ImageQuestionType, value: ImageQuesti
   return type === "image_drag"
     ? imageDragProblem(v.config, !!v.imageFileId)
     : imageClickProblem(v.config, !!v.imageFileId);
+}
+
+/**
+ * El mismo problema, dicho para el editor: dos lugares encimados, con sus
+ * números («Los lugares 4 y 5 están encimados…»). Es el único aviso a la vista
+ * de eso (la foto solo lo dice en voz alta al aparecer).
+ */
+export function imageEditorProblem(type: ImageQuestionType, value: ImageQuestionValue): string | null {
+  const problem = imageQuestionProblem(type, value);
+  if (type !== "image_drag" || problem !== OVERLAP_PROBLEM) return problem;
+  const c = shapedImageValue(type, value).config as ImageDragConfig;
+  const pair = overlapNumbers(c.zones, c.aspect);
+  return pair ? `Los lugares ${pair[0]} y ${pair[1]} están encimados: sepáralos un poco para poder guardar` : problem;
 }

@@ -39,10 +39,10 @@ export function useEditorDrag({
     ReturnType<typeof useDragSelection>,
     "startDrag" | "dragGroup" | "dropGroup" | "cancelDrag" | "remove" | "clear" | "groupDragging"
   >;
-  /** Imán de un lugar solo: dónde queda su centro (`point`, sin tocar el estado), sus guías (`hold`) y el final del gesto. */
+  /** Imán de un lugar solo: dónde queda su centro (`snapPoint`, sin tocar el estado), publicar eso (`hold`) y el final del gesto. */
   snap: {
     snapPoint: (i: number, p: Point) => { p: Point; guides: Guide[] };
-    hold: (i: number, p: Point | null) => void;
+    hold: (s: { p: Point; guides: Guide[] } | null) => void;
     end: () => void;
   };
   /** Empieza un arrastre: lo elegido para colocar se suelta. */
@@ -59,6 +59,8 @@ export function useEditorDrag({
   const grab = useRef<Point>({ x: 0, y: 0 });
   /** Un lugar solo en la mano (no un grupo ni un elemento de la lista) y su centro en pantalla al tomarlo. */
   const single = useRef<{ index: number; center: Point } | null>(null);
+  /** Lo último que calculó el fantasma (dónde se ve, con sus guías): el arrastre lo publica y lo usa al soltar. */
+  const lastSnap = useRef<{ p: Point; guides: Guide[] } | null>(null);
   const snapPoint = useStableHandler(snap.snapPoint);
 
   useEffect(() => {
@@ -91,7 +93,8 @@ export function useEditorDrag({
   /**
    * El fantasma de un lugar solo se dibuja donde lo pega el imán. Se calcula
    * con el desplazamiento que da dnd-kit (no con el estado), así no va un
-   * cuadro atrás del puntero.
+   * cuadro atrás del puntero; es el único cálculo por movimiento (el arrastre
+   * publica este mismo resultado, `lastSnap`, en lugar de repetirlo).
    */
   const ghostModifier = useCallback<Modifier>(
     ({ transform }) => {
@@ -99,8 +102,12 @@ export function useEditorDrag({
       if (!held || !boardNode) return transform;
       const rect = boardNode.getBoundingClientRect();
       const p = relToRect(held.center.x + transform.x, held.center.y + transform.y, rect);
-      if (p.x < 0 || p.x > 1 || p.y < 0 || p.y > 1) return transform;
+      if (p.x < 0 || p.x > 1 || p.y < 0 || p.y > 1) {
+        lastSnap.current = null;
+        return transform;
+      }
       const s = snapPoint(held.index, p);
+      lastSnap.current = s;
       return { ...transform, x: transform.x + (s.p.x - p.x) * rect.width, y: transform.y + (s.p.y - p.y) * rect.height };
     },
     [boardNode, snapPoint]
@@ -119,6 +126,7 @@ export function useEditorDrag({
         ? { x: r.left + r.width / 2 - at.x, y: r.top + r.height / 2 - at.y }
         : { x: 0, y: 0 };
     single.current = null;
+    lastSnap.current = null;
     // Un lugar seleccionado con otros se lleva al grupo; si no, pasa a ser lo seleccionado
     if (id.startsWith("zone:")) {
       const i = Number(id.slice(5));
@@ -131,7 +139,8 @@ export function useEditorDrag({
     if (rect && selection.dragGroup(e.delta, rect)) return;
     const p = dropPoint();
     setOutside(p === null);
-    if (single.current) snap.hold(single.current.index, p);
+    // El fantasma ya se dibujó con este desplazamiento (el efecto de dnd-kit llega después)
+    if (single.current) snap.hold(p ? lastSnap.current : null);
   }
 
   /**
@@ -151,15 +160,18 @@ export function useEditorDrag({
   function onDragEnd(e: DragEndEvent) {
     const id = String(e.active.id);
     const p = dropPoint();
+    // Cae donde se veía el fantasma (ya con imán)
+    const seen = single.current && p ? (lastSnap.current ?? snapPoint(single.current.index, p)).p : null;
     setActive(null);
     setOutside(false);
     single.current = null;
+    lastSnap.current = null;
     const grouped = selection.dropGroup(e.delta, boardNode?.getBoundingClientRect());
     snap.end();
     if (grouped) return;
     if (id.startsWith("zone:")) {
       const i = Number(id.slice(5));
-      if (p) moveZone(i, snapPoint(i, p).p);
+      if (p) moveZone(i, seen ?? p);
       else selection.remove([i], false);
       refocus(p ? i : null);
     } else if (p) {
@@ -172,6 +184,7 @@ export function useEditorDrag({
     setActive(null);
     setOutside(false);
     single.current = null;
+    lastSnap.current = null;
     selection.cancelDrag();
     snap.end();
     if (held) refocus(held.index);

@@ -16,7 +16,12 @@ import {
   type ImageQuestionType,
   type Precision,
 } from "@/lib/image-questions";
-import { imageQuestionProblem, shapedImageValue as shaped, type ImageQuestionValue } from "@/lib/image-editor-value";
+import {
+  imageEditorProblem,
+  imageQuestionProblem,
+  shapedImageValue as shaped,
+  type ImageQuestionValue,
+} from "@/lib/image-editor-value";
 import { cn } from "@/lib/utils";
 import { HistoryButtons } from "./image-canvas-toolbar";
 import { ClickEditor } from "./image-click-editor";
@@ -177,7 +182,8 @@ export function ImageQuestionEditor({
     }
   }
 
-  const problem = imageQuestionProblem(type, current);
+  // Lo que impediría guardar (lugares encimados: con sus números)
+  const problem = imageEditorProblem(type, current);
   // Mientras se mide la foto, una proporción cualquiera para dibujar el tablero
   const aspect = validAspect(config.aspect) ? config.aspect : 0.75;
   const undoRedo = {

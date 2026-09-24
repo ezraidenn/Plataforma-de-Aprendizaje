@@ -101,8 +101,12 @@ export function useDragSelection({
   onSelectZones: () => void;
   /** Corta la racha del historial (las flechas sobre otra selección son otro paso). */
   endRun: () => void;
-  /** Imán del grupo en la mano: el desplazamiento pegado a las guías. */
-  snapShift?: (indices: Set<number>, d: { dx: number; dy: number }) => { dx: number; dy: number };
+  /** Imán del grupo en la mano: el desplazamiento pegado a las guías y ya recortado con `clamp`. */
+  snapShift?: (
+    indices: Set<number>,
+    d: { dx: number; dy: number },
+    clamp: (d: { dx: number; dy: number }) => { dx: number; dy: number }
+  ) => { dx: number; dy: number };
 }) {
   const [state, setState] = useState<Picked>({ of: zones, picked: [] });
   const selected = useMemo(() => resolve(state, zones), [state, zones]);
@@ -274,12 +278,10 @@ export function useDragSelection({
   /** Lo arrastrado en grupo, en píxeles desde donde empezó, sobre la foto `rect`: con imán y sin salir de la foto. */
   const shiftFor = (indices: Set<number>, px: Point, rect: DOMRect) => {
     const raw = { dx: px.x / rect.width, dy: px.y / rect.height };
-    const d = snapShift ? snapShift(indices, raw) : raw;
-    return clampShift(
-      zones.filter((_, j) => indices.has(j)),
-      d.dx,
-      d.dy
-    );
+    const centers = zones.filter((_, j) => indices.has(j));
+    const clamp = (d: { dx: number; dy: number }) => clampShift(centers, d.dx, d.dy);
+    // El imán recorta antes de decidir qué guías se ven
+    return snapShift ? snapShift(indices, raw, clamp) : clamp(raw);
   };
 
   /** El puntero se movió; false si no hay un grupo en la mano. */
@@ -366,6 +368,8 @@ export function useDragSelection({
     groupDragging: shift !== null,
     clear,
     click,
+    /** Solo este lugar queda seleccionado (sin alternar, como las flechas sobre uno que no lo estaba). */
+    only: (i: number) => pick([i]),
     selectArea,
     duplicate,
     remove,

@@ -166,9 +166,12 @@ export function imageDragProblem(config: unknown, hasImage: boolean): string | n
     if (!z || !unit(z.x) || !unit(z.y)) return "Hay un lugar fuera de la foto";
     if (!ids.has(z.elementId)) return "Hay un lugar de un elemento que ya no existe";
   }
-  if (overlapping(c.zones, c.aspect as number)) return "Hay dos lugares encimados: sepáralos un poco";
+  if (overlapping(c.zones, c.aspect as number)) return OVERLAP_PROBLEM;
   return null;
 }
+
+/** Lo que dice la validación de dos lugares encimados (el editor lo dice con sus números: `overlapNumbers`). */
+export const OVERLAP_PROBLEM = "Hay dos lugares encimados: sepáralos un poco";
 
 /** Hay dos puntos a menos de MIN_ZONE_GAP. */
 function overlapping(points: Point[], aspect: number): boolean {
@@ -178,6 +181,19 @@ function overlapping(points: Point[], aspect: number): boolean {
     }
   }
   return false;
+}
+
+/** Los números de lectura («Lugar N») de los dos primeros lugares encimados, en orden de lectura; null si no hay. */
+export function overlapNumbers(points: Point[], aspect: number): [number, number] | null {
+  const numbers = readingNumbers(points, aspect);
+  const byNumber = points.map((_, i) => i).sort((a, b) => numbers[a] - numbers[b]);
+  for (let a = 0; a < byNumber.length; a++) {
+    for (let b = a + 1; b < byNumber.length; b++) {
+      const [i, j] = [byNumber[a], byNumber[b]];
+      if (relDistance(points[i], points[j], aspect) < MIN_ZONE_GAP) return [numbers[i], numbers[j]];
+    }
+  }
+  return null;
 }
 
 /** Cuatro decimales bastan (una décima de píxel en una foto de mil). */
