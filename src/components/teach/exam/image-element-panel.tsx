@@ -4,11 +4,11 @@ import { useId, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  ICON_SIZE_RANGE,
   MIN_ICON_PX,
   MIN_TEXT_PX,
   TEXT_SIZE_RANGE,
   elementView,
+  iconSizeRange,
   normalizeRotation,
   shownAtMinimum,
 } from "@/lib/image-layout";
@@ -37,6 +37,7 @@ const clamp = (n: number, [min, max]: Range) => Math.min(max, Math.max(min, n));
 export function ElementPanel({
   element,
   name,
+  aspect,
   boardWidth,
   onChange,
 }: {
@@ -44,13 +45,16 @@ export function ElementPanel({
   element: ImageElement | null;
   /** Su nombre («Ícono 2» o el texto de la etiqueta). */
   name: string;
+  /** Alto / ancho de la foto: acota el tamaño de los íconos para que quepan en ella. */
+  aspect: number;
   /** Ancho de la foto del editor en px: para avisar si se ve al mínimo. */
   boardWidth: number;
   onChange: (patch: Pick<ImageElement, "size" | "rotation">) => void;
 }) {
   const headingId = useId();
   const view = element ? elementView(element) : null;
-  const range: Range = element?.kind === "text" ? TEXT_SIZE_RANGE : ICON_SIZE_RANGE;
+  const icon = element?.kind !== "text";
+  const range: Range = icon ? iconSizeRange(aspect) : TEXT_SIZE_RANGE;
   const pct: Range = [toPercent(range[0]), toPercent(range[1])];
   // El giro tal como se guardó (−180 no salta a 180 mientras se arrastra); si no, normalizado
   const raw = element?.rotation;
@@ -67,6 +71,8 @@ export function ElementPanel({
       <div key={element?.id ?? "nada"} className="space-y-2.5">
         <Control
           label="Tamaño"
+          // Un ícono se mide por su lado mayor: así un tamaño se ve igual con cualquier forma
+          detail={view ? (icon ? "lado mayor" : "letra") : undefined}
           unit="%"
           unitLabel="% del ancho de la foto"
           disabled={off}
@@ -80,7 +86,9 @@ export function ElementPanel({
             max: SIZE_STEPS,
             value: view ? clamp(toStep(view.size, range), [0, SIZE_STEPS]) : 0,
             onChange: (step) => onChange({ size: fromStep(step, range) }),
-            valueText: view ? `${toPercent(view.size)} % del ancho de la foto` : undefined,
+            valueText: view
+              ? `${icon ? "Lado mayor: " : ""}${toPercent(view.size)} % del ancho de la foto`
+              : undefined,
           }}
           note={
             atMinimum &&
@@ -136,6 +144,7 @@ export function ElementPanel({
  */
 function Control({
   label,
+  detail,
   unit,
   unitLabel,
   disabled,
@@ -149,6 +158,8 @@ function Control({
   note,
 }: {
   label: string;
+  /** Qué mide, junto al nombre y más tenue («lado mayor»). */
+  detail?: string;
   unit: string;
   /** La unidad dicha en voz alta. */
   unitLabel: string;
@@ -181,6 +192,7 @@ function Control({
       <div className="flex items-center gap-1.5">
         <label htmlFor={sliderId} className={cn("flex-1 text-xs font-medium", disabled && "text-muted-foreground")}>
           {label}
+          {detail && <span className="font-normal text-muted-foreground"> ({detail})</span>}
         </label>
         {extra}
         <Input
@@ -188,7 +200,7 @@ function Control({
           inputMode="decimal"
           autoComplete="off"
           disabled={disabled}
-          aria-label={`${label} en ${unitLabel}`}
+          aria-label={`${label}${detail ? ` (${detail})` : ""} en ${unitLabel}`}
           value={draft ?? (value === null ? "" : String(value))}
           placeholder="–"
           onChange={(e) => {

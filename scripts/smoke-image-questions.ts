@@ -61,6 +61,7 @@ import {
   elementSize,
   elementView,
   iconBoxPx,
+  iconSizeRange,
   normalizeRotation,
   shownAtMinimum,
   snapRadiusFor,
@@ -211,6 +212,14 @@ function layoutChecks() {
     shownAtMinimum("icon", 0.02, 390) && !shownAtMinimum("icon", 0.08, 390) && shownAtMinimum("text", 0.02, 390) && !shownAtMinimum("text", 0.02, 800) && !shownAtMinimum("icon", 0.02, 0));
   check("Letra: tamaño × ancho, mínimo 11 px", textPx(0.02, 800) === 16 && textPx(0.02, 390) === 11);
   check("Radio de encaje: al menos SNAP_RADIUS, o la mitad del elemento", snapRadiusFor(0.04) === SNAP_RADIUS && snapRadiusFor(0.3) === 0.15);
+  check("Tamaños del editor: 2–50 % en fotos comunes; en una panorámica, el lado mayor cabe en el 90 % del alto",
+    JSON.stringify(iconSizeRange(800 / 1200)) === JSON.stringify([0.02, 0.5]) &&
+      JSON.stringify(iconSizeRange(9 / 16)) === JSON.stringify([0.02, 0.5]) &&
+      JSON.stringify(iconSizeRange(1.5)) === JSON.stringify([0.02, 0.5]) &&
+      JSON.stringify(iconSizeRange(0.3)) === JSON.stringify([0.02, 0.27]) &&
+      JSON.stringify(iconSizeRange(0.1)) === JSON.stringify([0.02, 0.09]) &&
+      JSON.stringify(iconSizeRange(Number.NaN)) === JSON.stringify([0.02, 0.5]),
+    [iconSizeRange(0.3), iconSizeRange(0.1)]);
   // Caja: ancho en fracciones del ancho; alto en fracciones del alto
   const b = elementBox({ x: 0.5, y: 0.5 }, { w: 0.2, h: 0.2 * 0.5 }, 0, 0.5);
   check("Caja sin giro", JSON.stringify(boxBounds(b)) === JSON.stringify({ left: 0.4, right: 0.6, top: 0.4, bottom: 0.6 }), boxBounds(b));

@@ -514,7 +514,8 @@ export function DragEditor({
         ...c,
         elements: c.elements.map((e) => (e.id === id ? { ...e, fileId, ratio: icon.ratio } : e)),
       }));
-      announce(`${nameOf(id)}: margen quitado, ahora se ve solo su dibujo`);
+      // El tamaño es el lado mayor: sin el margen, el dibujo lo ocupa entero y se ve más grande
+      announce(`${nameOf(id)}: margen quitado, ahora se ve solo su dibujo. Si quedó muy grande, ajusta su tamaño en «Seleccionado»`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo quitar el margen");
     } finally {
@@ -718,6 +719,7 @@ export function DragEditor({
             <ElementPanel
               element={selected}
               name={selected ? nameOf(selected.id) : ""}
+              aspect={aspect}
               boardWidth={board.width}
               onChange={(patch) => selected && changeElement(selected.id, patch)}
             />

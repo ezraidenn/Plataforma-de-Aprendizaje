@@ -12,6 +12,8 @@ import { inspectIcon, type IconInspection } from "@/lib/image-processing";
  */
 
 const inspections = new Map<string, Promise<IconInspection | null>>();
+/** Los hooks montados: se enteran de lo que se recuerda después (p. ej. que un ícono ya no tiene margen). */
+const listeners = new Set<(fileId: string, info: IconInspection) => void>();
 
 function inspectFile(fileId: string): Promise<IconInspection | null> {
   let found = inspections.get(fileId);
@@ -31,20 +33,30 @@ export function useIconInspection(fileIds: string[]): ReadonlyMap<string, IconIn
   const [found, setFound] = useState<ReadonlyMap<string, IconInspection>>(() => new Map());
   useEffect(() => {
     if (!key) return;
+    const wanted = new Set(key.split(","));
     let alive = true;
-    for (const fileId of key.split(",")) {
-      void inspectFile(fileId).then((info) => {
-        if (alive && info) setFound((prev) => (prev.get(fileId) === info ? prev : new Map(prev).set(fileId, info)));
-      });
-    }
+    const keep = (fileId: string, info: IconInspection | null) => {
+      if (alive && info) setFound((prev) => (prev.get(fileId) === info ? prev : new Map(prev).set(fileId, info)));
+    };
+    for (const fileId of wanted) void inspectFile(fileId).then((info) => keep(fileId, info));
+    const onRemember = (fileId: string, info: IconInspection) => {
+      if (wanted.has(fileId)) keep(fileId, info);
+    };
+    listeners.add(onRemember);
     return () => {
       alive = false;
+      listeners.delete(onRemember);
     };
   }, [key]);
   return found;
 }
 
-/** Un archivo nuevo ya se sabe cómo es (se acaba de preparar): no hace falta revisarlo. */
+/**
+ * Lo que ya se sabe de un archivo sin revisarlo: uno nuevo (se acaba de
+ * preparar) o uno que resultó no tener margen. Los hooks montados lo toman al
+ * momento (p. ej. el botón «Quitar margen» desaparece).
+ */
 export function rememberInspection(fileId: string, info: IconInspection) {
   inspections.set(fileId, Promise.resolve(info));
+  for (const listener of listeners) listener(fileId, info);
 }

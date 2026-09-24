@@ -24,6 +24,15 @@ export function useIsClient(): boolean {
   return useSyncExternalStore(noSubscribe, () => true, () => false);
 }
 
+/**
+ * Para el `onEscapeKeyDown` de un diálogo que muestra preguntas sobre imagen
+ * (la vista previa): con una ficha elegida, Esc solo la suelta (lo atiende la
+ * pregunta, marcada con `data-choosing`) y el diálogo sigue abierto.
+ */
+export function keepOpenWhileChoosing(e: KeyboardEvent) {
+  if (e.target instanceof Element && e.target.closest("[data-choosing]")) e.preventDefault();
+}
+
 /** Lo arrastrado va centrado en el puntero (el fantasma mide lo que el nodo tomado). */
 export const centerOnPointer: Modifier = ({ activatorEvent, draggingNodeRect, transform }) => {
   const at = activatorEvent ? getEventCoordinates(activatorEvent) : null;

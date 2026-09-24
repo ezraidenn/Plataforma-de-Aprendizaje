@@ -12,6 +12,8 @@ export const MAX_ICON_SIDE = 800;
 const MAX_READ_PIXELS = 16_000_000;
 /** Lado de la versión chica con la que se revisa si un ícono ya subido tiene margen. */
 const INSPECT_SIDE = 256;
+/** Un ícono opaco que en PNG pesa más que esto (una foto, no una señal) se prueba también en JPEG. */
+const PNG_HEAVY_BYTES = 150 * 1024;
 
 /** Un ícono listo para subir. `trimmed`: se le quitó margen transparente. */
 export type PreparedIcon = { blob: Blob; ratio: number; name: string; trimmed: boolean };
@@ -40,6 +42,17 @@ function opaqueWithin(data: Uint8ClampedArray, width: number, r: Rect): boolean 
   return true;
 }
 
+/** El lienzo en el formato pedido. */
+function encode(canvas: HTMLCanvasElement, type: "image/png" | "image/jpeg"): Promise<Blob> {
+  return new Promise<Blob>((ok, fail) =>
+    canvas.toBlob(
+      (b) => (b ? ok(b) : fail(new Error("El navegador no exportó la imagen"))),
+      type,
+      type === "image/jpeg" ? 0.9 : undefined
+    )
+  );
+}
+
 /** Decodifica con la orientación de la foto; si es enorme, ya reducida. */
 async function decode(blob: Blob): Promise<ImageBitmap> {
   const bitmap = await createImageBitmap(blob, { imageOrientation: "from-image" });
@@ -59,8 +72,9 @@ async function decode(blob: Blob): Promise<ImageBitmap> {
 
 /**
  * Ícono listo para subir: sin márgenes transparentes y con el lado mayor
- * hasta MAX_ICON_SIDE. Con transparencia, PNG; sin ella (un JPG, o un PNG
- * opaco), JPEG 0.9, que pesa menos. Un JPG no se lee píxel a píxel: solo se
+ * hasta MAX_ICON_SIDE. En PNG, que no mancha los colores planos de una señal;
+ * un JPG sigue en JPEG 0.9, y un ícono opaco que en PNG pesa mucho (una foto)
+ * se queda con el más chico de los dos. Un JPG no se lee píxel a píxel: solo se
  * reduce. Un GIF animado queda fijo. Si el dibujo es más de diez veces más
  * ancho que alto (o al revés), se completa con margen transparente hasta esa
  * proporción, la máxima que se acepta.
@@ -100,14 +114,16 @@ export async function prepareIcon(file: File): Promise<PreparedIcon | null> {
     // El recorte, directo del bitmap y centrado
     octx.drawImage(bitmap, crop.x, crop.y, crop.w, crop.h, Math.floor((out.width - w) / 2), Math.floor((out.height - h) / 2), w, h);
     // Un margen añadido para la proporción es transparente: ahí no sirve JPEG
-    const jpeg = opaque && out.width === w && out.height === h;
-    const blob = await new Promise<Blob>((ok, fail) =>
-      out.toBlob(
-        (b) => (b ? ok(b) : fail(new Error("El navegador no exportó la imagen"))),
-        jpeg ? "image/jpeg" : "image/png",
-        jpeg ? 0.9 : undefined
-      )
-    );
+    const opaqueOut = opaque && out.width === w && out.height === h;
+    let jpeg = opaqueOut && file.type === "image/jpeg";
+    let blob = await encode(out, jpeg ? "image/jpeg" : "image/png");
+    if (opaqueOut && !jpeg && blob.size > PNG_HEAVY_BYTES) {
+      const lighter = await encode(out, "image/jpeg");
+      if (lighter.size < blob.size) {
+        blob = lighter;
+        jpeg = true;
+      }
+    }
     const base = file.name.replace(/\.[^.]+$/, "") || "icono";
     const kept = paddedSize(crop.w, crop.h);
     return {

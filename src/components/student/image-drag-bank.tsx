@@ -4,7 +4,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { useDraggable } from "@dnd-kit/core";
 import { Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { FOCUS_RING, IconArt, ItemFace, LabelPill } from "@/components/exam/image-pieces";
+import { FOCUS_RING, IconArt, ItemFace, LabelPill, TOUCH_AREA } from "@/components/exam/image-pieces";
 import type { RunnerQuestion } from "@/components/student/types";
 import { iconBoxPx, textPx } from "@/lib/image-layout";
 import { cn } from "@/lib/utils";
@@ -123,15 +123,20 @@ export function DraggableChip({
       aria-label={label}
       aria-pressed={pressed}
       className={cn(
-        "relative block cursor-grab touch-none transition-[background-color,box-shadow] duration-150 active:cursor-grabbing motion-reduce:transition-none",
+        "relative cursor-grab touch-none transition-[background-color,box-shadow] duration-150 active:cursor-grabbing motion-reduce:transition-none",
         palette
-          ? // Ícono del banco: sin tarjeta; se resalta solo al pasar, con el foco o elegido
+          ? // Ícono del banco: sin tarjeta; se resalta solo al pasar, con el foco o elegido.
+            // Al menos 32 px por lado, con el dibujo al centro: uno muy alargado se sigue pudiendo tocar
             cn(
-              "rounded-[10px] p-1 outline-none hover:bg-primary/10 hover:ring-2 hover:ring-primary/30 focus-visible:bg-primary/10 focus-visible:ring-2 focus-visible:ring-primary",
+              "grid min-h-8 min-w-8 place-items-center rounded-[10px] p-1 outline-none hover:bg-primary/10 hover:ring-2 hover:ring-primary/30 focus-visible:bg-primary/10 focus-visible:ring-2 focus-visible:ring-primary",
               pressed && "bg-primary/10 ring-2 ring-primary"
             )
           : cn(
+              "block",
               item.kind === "icon" ? "rounded-md" : "rounded-full",
+              // Un ícono muy alargado en la foto se sigue pudiendo tocar. Con otra ficha
+              // elegida no: el área de más taparía las sombras libres de al lado
+              item.kind === "icon" && !(selected && !pressed) && TOUCH_AREA,
               // Sobre la foto: el mismo foco que las sombras, separado por blanco
               FOCUS_RING,
               pressed && "ring-2 ring-primary ring-offset-2 ring-offset-background"

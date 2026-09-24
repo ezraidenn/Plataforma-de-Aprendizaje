@@ -263,6 +263,14 @@ export const FOCUS_RING =
   "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary focus-visible:ring-2 focus-visible:ring-white";
 
 /**
+ * Área de toque de al menos 24 × 24 px (44 × 44 con el dedo) centrada en un
+ * botón chico, como un ícono muy alargado: un `::before` invisible. No cambia
+ * el dibujo, el foco ni el giro (gira con el botón). Va en un botón `relative`.
+ */
+export const TOUCH_AREA =
+  "before:absolute before:left-1/2 before:top-1/2 before:size-full before:min-h-6 before:min-w-6 before:-translate-x-1/2 before:-translate-y-1/2 pointer-coarse:before:min-h-11 pointer-coarse:before:min-w-11";
+
+/**
  * Aspecto de un lugar libre (la «sombra»). Sin ficha activa, el mismo círculo
  * punteado para todos; con una ficha activa, la forma, el tamaño y el giro de
  * esa ficha, igual en todos. Qué hace al tocarla lo decide quien la usa.
@@ -321,7 +329,8 @@ export function ZoneShadow({
         FOCUS_RING,
         // 17 px y no rounded-full: así la esquina se interpola al cambiar de forma
         !shape && "size-[34px] rounded-[17px] border-2 border-dashed border-muted-foreground bg-muted-foreground/12",
-        icon && "rounded-md",
+        // Una silueta muy delgada se sigue pudiendo tocar
+        icon && cn("rounded-md", TOUCH_AREA),
         shape?.kind === "text" &&
           cn(
             "max-w-[14em] rounded-full border-2 border-dashed border-primary bg-primary/14",

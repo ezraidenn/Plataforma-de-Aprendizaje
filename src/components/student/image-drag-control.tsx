@@ -32,7 +32,7 @@ import { cn } from "@/lib/utils";
  *   tocar y Escape cancela.
  *
  * Regla de encaje: la ficha cae en el lugar más cercano dentro de su radio de
- * encaje (SNAP_RADIUS, o la mitad de su ancho si es grande), esté libre u
+ * encaje (SNAP_RADIUS, o la mitad de su lado mayor si es grande), esté libre u
  * ocupado; si estaba ocupado, lo que había vuelve al banco. Si no hay lugar
  * cerca, la ficha vuelve al banco.
  *
@@ -196,6 +196,8 @@ export function ImageDragControl({
       // Una etiqueta junto al borde de la foto no debe abrir desplazamiento de lado en el celular.
       // Recorte en los dos ejes: con solo el horizontal, Chrome ignora el margen y corta al ras de la foto
       className="space-y-3 overflow-clip [overflow-clip-margin:16px]"
+      // Con una ficha elegida, Esc la suelta: un diálogo alrededor (la vista previa) no se cierra
+      data-choosing={selected ? "" : undefined}
       onKeyDown={(e) => {
         if (e.key === "Escape" && selected) {
           e.preventDefault();

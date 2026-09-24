@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ExamPreview } from "@/components/exam/exam-preview";
+import { keepOpenWhileChoosing } from "@/components/exam/image-dnd";
 import { examPreviewAction } from "@/server/actions/ai-exam";
 import type { PreviewQuestion } from "@/lib/preview-question";
 
@@ -67,7 +68,11 @@ export function PreviewDialog({
 }) {
   return (
     <Dialog open={questions !== null} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="flex h-[88vh] flex-col gap-3 overflow-hidden sm:max-w-4xl">
+      <DialogContent
+        className="flex h-[88vh] flex-col gap-3 overflow-hidden sm:max-w-4xl"
+        // Con una ficha elegida en una pregunta sobre imagen, Esc solo la suelta
+        onEscapeKeyDown={keepOpenWhileChoosing}
+      >
         <DialogHeader>
           <DialogTitle>Ver como alumno</DialogTitle>
           <DialogDescription>{description}</DialogDescription>

@@ -69,6 +69,18 @@ export function iconBoxPx(size: number, ratio: number, boardWidth: number): { w:
   return ratio <= 1 ? { w: Math.round(long), h: short(long * ratio) } : { w: short(long / ratio), h: Math.round(long) };
 }
 
+/**
+ * Tamaños de ícono que el editor ofrece con una foto de esta proporción. El
+ * lado mayor tampoco pasa del 90 % del alto de la foto: así el ícono cabe en
+ * ella con cualquier giro. Solo acota en fotos muy apaisadas (alto menor que
+ * 0.56 del ancho); en las demás manda ICON_SIZE_RANGE.
+ */
+export function iconSizeRange(aspect: number): readonly [number, number] {
+  const [min, max] = ICON_SIZE_RANGE;
+  const fits = validAspect(aspect) ? Math.floor(aspect * 0.9 * 1000) / 1000 : max;
+  return [min, Math.max(min, Math.min(max, fits))];
+}
+
 /** En un tablero de este ancho, el elemento se ve más grande que su tamaño (al mínimo de legibilidad). */
 export function shownAtMinimum(kind: ImageElement["kind"], size: number, boardWidth: number): boolean {
   if (boardWidth <= 0) return false;
@@ -80,7 +92,7 @@ export function textPx(size: number, boardWidth: number): number {
   return Math.max(MIN_TEXT_PX, Math.round(size * (boardWidth > 0 ? boardWidth : REF_WIDTH) * 10) / 10);
 }
 
-/** Radio de encaje de un elemento: el general o, si es grande, la mitad de su ancho. */
+/** Radio de encaje de un elemento: el general o, si es grande, la mitad de su tamaño (en un ícono, de su lado mayor). */
 export function snapRadiusFor(size: number): number {
   return Math.max(SNAP_RADIUS, size / 2);
 }
