@@ -13,7 +13,7 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { getEventCoordinates } from "@dnd-kit/utilities";
-import { Loader2, Plus, Trash2, TriangleAlert, X } from "lucide-react";
+import { Crop, Crosshair, Loader2, Plus, Trash2, TriangleAlert, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -47,18 +47,19 @@ import {
   type Point,
 } from "@/lib/image-questions";
 import {
+  DEFAULT_ICON_SIZE,
   DEFAULT_TEXT_SIZE,
   boxBounds,
   boxesOverlap,
   elementBox,
   elementRatio,
   elementView,
-  newIconSize,
   type Box,
 } from "@/lib/image-layout";
-import { prepareIcon } from "@/lib/image-processing";
+import { prepareIcon, type PreparedIcon } from "@/lib/image-processing";
 import { cn } from "@/lib/utils";
 import { ElementPanel } from "./image-element-panel";
+import { rememberInspection, useIconInspection } from "./use-icon-inspection";
 
 /**
  * «Arrastrar a la imagen» en el editor del maestro. A la derecha (debajo en
@@ -67,13 +68,18 @@ import { ElementPanel } from "./image-element-panel";
  * foto, o con teclado Enter, flechas y Enter). Los lugares se arrastran para
  * moverlos y fuera de la foto para quitarlos; muestran el elemento real y el
  * número «Lugar N» que ve el alumno. Soltar un archivo sobre la foto la cambia;
- * sobre la lista, lo agrega como ícono (sin sus márgenes transparentes). El
- * panel «Seleccionado» cambia el tamaño y el giro del elemento elegido.
+ * sobre la lista, lo agrega como ícono (sin sus márgenes transparentes). Un
+ * clic en un elemento de la lista o en un lugar lo elige para el panel
+ * «Seleccionado» (tamaño y giro), sin colocar nada; para colocar con clics está
+ * el botón «Colocar» de cada fila. A un ícono subido antes del recorte se le
+ * puede quitar el margen desde su fila.
  */
 
 const DUPLICATE = "Ya está en la lista: colócalo en varios lugares";
 const UNREADABLE = "No se pudo leer la imagen: usa un ícono PNG, JPG, WEBP o GIF.";
 const EMPTY_ICON = "Ese ícono está vacío (todo transparente): elige otra imagen.";
+const NO_MARGIN = "Ese ícono ya no tiene margen.";
+const SAME_TRIMMED = "Ya hay en la lista un ícono igual sin margen: deja uno y colócalo en varios lugares.";
 /** Lado de la miniatura de un elemento en la lista (px; el mismo de `size-[34px]`). */
 const THUMB_PX = 34;
 const ARROW_STEPS: Record<string, [number, number]> = {
@@ -86,6 +92,23 @@ const ARROW_STEPS: Record<string, [number, number]> = {
 /** «1», «1 y 4», «1, 3 y 4». */
 function joinY(list: number[]): string {
   return list.length < 2 ? list.join("") : `${list.slice(0, -1).join(", ")} y ${list[list.length - 1]}`;
+}
+
+/** Aviso de lugares que se salen por la orilla, según lo que haya en ellos. */
+function edgeWarning(numbers: number[], kinds: Set<string | undefined>): string {
+  const one = numbers.length === 1;
+  const places = one ? `del lugar ${numbers[0]}` : `de los lugares ${joinY(numbers)}`;
+  if (kinds.size === 1 && kinds.has("text")) {
+    return one
+      ? `La etiqueta ${places} queda pegada a la orilla: al alumno se le puede ver cortada.`
+      : `Las etiquetas ${places} quedan pegadas a la orilla: al alumno se le pueden ver cortadas.`;
+  }
+  if (kinds.size === 1 && kinds.has("icon")) {
+    return one
+      ? `El ícono ${places} queda pegado a la orilla: al alumno se le puede ver cortado.`
+      : `Los íconos ${places} quedan pegados a la orilla: al alumno se le pueden ver cortados.`;
+  }
+  return `Los lugares ${joinY(numbers)} quedan pegados a la orilla: al alumno se le pueden ver cortados.`;
 }
 
 function newElementId(elements: ImageElement[]): string {
@@ -109,6 +132,24 @@ async function fingerprint(data: ArrayBuffer): Promise<string> {
   for (const byte of new Uint8Array(data)) h = Math.imul(h ^ byte, 0x01000193);
   return `fnv-${(h >>> 0).toString(16)}`;
 }
+
+/** Un archivo por comparar: su tamaño y su huella (calculada una sola vez, y solo si hace falta). */
+type Candidate = { size: number; print: () => Promise<string> };
+function candidate(blob: Blob): Candidate {
+  let print: Promise<string> | null = null;
+  return { size: blob.size, print: () => (print ??= blob.arrayBuffer().then(fingerprint)) };
+}
+
+/** El ícono ya recortado; si el navegador no lo puede leer, el error real va a la consola y el amable, arriba. */
+function prepare(file: File): Promise<PreparedIcon | null> {
+  return prepareIcon(file).catch((err: unknown) => {
+    console.error("No se pudo preparar el ícono:", err);
+    throw new Error(UNREADABLE);
+  });
+}
+
+/** El Blob preparado como archivo para subirlo, con su nombre y su tipo. */
+const asFile = (icon: PreparedIcon) => new File([icon.blob], icon.name, { type: icon.blob.type });
 
 export function DragEditor({
   imageFileId,
@@ -140,19 +181,23 @@ export function DragEditor({
   const iconInput = useRef<HTMLInputElement>(null);
   /** Tamaño y huella de los íconos ya vistos (por archivo), para no subir dos veces el mismo. */
   const iconPrints = useRef(new Map<string, { size: number; hash?: string }>());
-  /** Elemento elegido para colocarlo con un clic en la foto. */
+  /** Elemento elegido para colocarlo con un clic en la foto (su botón «Colocar»). */
   const [chosen, setChosen] = useState<string | null>(null);
+  /** Elemento elegido en la lista para cambiar su tamaño y giro: no coloca nada. */
+  const [panelId, setPanelId] = useState<string | null>(null);
   /** Lugar elegido (muestra «×» y se mueve con las flechas). */
   const [picked, setPicked] = useState<number | null>(null);
   /** Lo que va en la mano: `el:<id>` o `zone:<índice>`. */
   const [active, setActive] = useState<string | null>(null);
   /** El lugar arrastrado está fuera de la foto: al soltarlo se quita. */
   const [outside, setOutside] = useState(false);
+  /** Ícono al que se le está quitando el margen. */
+  const [trimming, setTrimming] = useState<string | null>(null);
   /** Etiqueta nueva que se escribe; null = cerrado. */
   const [label, setLabel] = useState<string | null>(null);
   /** Dos lugares (índices) que se tapan a la vista: aviso que no impide guardar. */
   const [covered, setCovered] = useState<[number, number] | null>(null);
-  /** Lugares (índices) de etiquetas de texto pegadas a la orilla: aviso que no impide guardar. */
+  /** Lugares (índices) que se salen por la orilla de la foto: aviso que no impide guardar. */
   const [edgeClipped, setEdgeClipped] = useState<number[]>([]);
   /** Puntero en pantalla durante el arrastre, y desfase entre él y el centro del lugar tomado. */
   const pointer = useRef<Point>({ x: 0, y: 0 });
@@ -181,17 +226,35 @@ export function DragEditor({
   const numbers = useMemo(() => readingNumbers(zones, aspect), [zones, aspect]);
   /** Índices de los lugares en orden de lectura: el orden de Tab. */
   const ordered = useMemo(() => zones.map((_, i) => i).sort((a, b) => numbers[a] - numbers[b]), [zones, numbers]);
-  /** Números (Lugar N) de las etiquetas pegadas a la orilla, para el aviso. */
+  /** Números (Lugar N) de los lugares pegados a la orilla, para el aviso. */
   const edgeNumbers = useMemo(
     () => edgeClipped.map((i) => numbers[i]).sort((a, b) => a - b),
     [edgeClipped, numbers]
   );
+  /** Qué hay en los lugares pegados a la orilla: solo etiquetas, solo íconos o de todo. */
+  const edgeKinds = new Set(edgeClipped.map((i) => byId.get(zones[i]?.elementId ?? "")?.kind));
+  /** Proporción y margen de cada archivo de ícono (para los subidos antes del recorte). */
+  const inspected = useIconInspection(elements.flatMap((e) => (e.kind === "icon" && e.fileId ? [e.fileId] : [])));
   const crosshair = useCrosshair(aspect, (p) => {
     if (chosen) placeAt(chosen, p, true);
-    else announce("Primero elige un elemento de la lista");
+    else announce("Primero pulsa «Colocar» en un elemento de la lista");
   });
   const boardDrop = useFileDrop(onPhotoFile, uploading === null);
   const panelDrop = useFileDrop((file) => void addIcon(file), uploading === null && !fullElements);
+
+  // Íconos subidos antes del recorte (sin proporción): toman la de su archivo y
+  // su caja pasa a ser la del dibujo. Se ven igual: su tamaño es el lado mayor
+  useEffect(() => {
+    const pending = elements.some((e) => e.kind === "icon" && e.ratio === undefined && !!e.fileId && inspected.has(e.fileId));
+    if (!pending) return;
+    setConfig((c) => ({
+      ...c,
+      elements: c.elements.map((e) => {
+        const info = e.kind === "icon" && e.ratio === undefined && e.fileId ? inspected.get(e.fileId) : undefined;
+        return info ? { ...e, ratio: info.ratio } : e;
+      }),
+    }));
+  }, [elements, inspected, setConfig]);
 
   // Durante el arrastre se sigue el puntero real (en captura, antes que dnd-kit)
   useEffect(() => {
@@ -203,18 +266,20 @@ export function DragEditor({
     return () => window.removeEventListener("pointermove", track, true);
   }, [active]);
 
-  // Esc cancela la elección, esté donde esté el foco
+  // Esc cancela la elección, esté donde esté el foco (salvo que ya lo atendió un
+  // campo, como el del panel, que con Esc solo deshace lo escrito)
   useEffect(() => {
-    if (!chosen && picked === null) return;
+    if (!chosen && picked === null && !panelId) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
+      if (e.key !== "Escape" || e.defaultPrevented) return;
       setChosen(null);
       setPicked(null);
+      setPanelId(null);
       announce("Elección cancelada");
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [chosen, picked, announce]);
+  }, [chosen, picked, panelId, announce]);
 
   // Foco tras una acción: el botón nuevo (o el que se movió) está en el siguiente render
   useEffect(() => {
@@ -256,10 +321,10 @@ export function DragEditor({
     const found = find();
     setCovered((prev) => (prev?.[0] === found?.[0] && prev?.[1] === found?.[1] ? prev : found));
 
-    // Etiquetas de texto cuyo lugar, sin recortar, se sale del rectángulo de la foto
+    // Lugares que, sin recortar, se salen del rectángulo de la foto
     const clipped = ordered.filter((i) => {
       const box = boxes.get(i);
-      if (!box || byId.get(zones[i].elementId)?.kind !== "text") return false;
+      if (!box) return false;
       const r = boxBounds(box);
       return r.left < boardRect.left || r.right > boardRect.right || r.top < boardRect.top || r.bottom > boardRect.bottom;
     });
@@ -319,6 +384,7 @@ export function DragEditor({
     const count = zones.filter((z) => z.elementId === id).length;
     const next = listed[listed.findIndex((e) => e.id === id) + 1];
     if (chosen === id) setChosen(null);
+    if (panelId === id) setPanelId(null);
     setPicked(null);
     setNotice(null);
     setConfig((c) => ({
@@ -351,18 +417,20 @@ export function DragEditor({
     focusAfter.current = "[data-add-text]";
   }
 
-  /** ¿Ya hay un ícono con este mismo contenido? Primero el tamaño; la huella, solo si coincide. */
-  async function iconExists(file: Blob): Promise<boolean> {
-    let mine: Promise<string> | null = null;
-    const myPrint = () => (mine ??= file.arrayBuffer().then(fingerprint));
+  /**
+   * ¿Ya hay en la lista (sin contar el elemento `except`) un ícono con el mismo
+   * contenido que alguno de estos? Primero el tamaño; la huella, solo si coincide.
+   */
+  async function iconExists(candidates: Candidate[], except?: string): Promise<boolean> {
+    const sizes = new Set(candidates.map((c) => c.size));
     const checks = elements.map(async (e) => {
-      if (e.kind !== "icon" || !e.fileId) return false;
+      if (e.kind !== "icon" || !e.fileId || e.id === except) return false;
       let known = iconPrints.current.get(e.fileId);
-      if (!known || (known.size === file.size && !known.hash)) {
+      if (!known || (sizes.has(known.size) && !known.hash)) {
         const res = await fetch(fileUrl(e.fileId)).catch(() => null);
         if (!res?.ok) return false;
         const length = res.headers.get("content-length");
-        if (length !== null && Number(length) !== file.size) {
+        if (length !== null && !sizes.has(Number(length))) {
           // Otro tamaño: ni se descarga el resto
           void res.body?.cancel();
           iconPrints.current.set(e.fileId, { size: Number(length) });
@@ -372,9 +440,26 @@ export function DragEditor({
         known = { size: data.byteLength, hash: await fingerprint(data) };
         iconPrints.current.set(e.fileId, known);
       }
-      return known.size === file.size && known.hash === (await myPrint());
+      for (const c of candidates) {
+        if (c.size === known.size && known.hash === (await c.print())) return true;
+      }
+      return false;
     });
     return (await Promise.all(checks)).some(Boolean);
+  }
+
+  /** Un aviso de algo que no se hizo, a la vista y en voz alta. */
+  function warn(text: string) {
+    setNotice(text);
+    announce(text);
+  }
+
+  /** Sube un ícono ya preparado y lo recuerda (su huella y que ya no tiene margen). */
+  async function uploadIcon(icon: PreparedIcon, print: Candidate): Promise<string> {
+    const fileId = await uploadFile(asFile(icon), "editor_image");
+    iconPrints.current.set(fileId, { size: print.size, hash: await print.print() });
+    rememberInspection(fileId, { ratio: icon.ratio, margin: false });
+    return fileId;
   }
 
   async function addIcon(file: File) {
@@ -383,30 +468,14 @@ export function DragEditor({
     setNotice(null);
     setUploading("icon");
     try {
-      // Solo el dibujo: sin márgenes transparentes y a un tamaño razonable. Lo
-      // que se compara con los demás íconos y lo que se sube es ya el recorte
-      const icon = await prepareIcon(file).catch(() => {
-        throw new Error(UNREADABLE);
-      });
-      if (!icon) {
-        setNotice(EMPTY_ICON);
-        announce(EMPTY_ICON);
-        return;
-      }
-      if (await iconExists(icon.blob)) {
-        setNotice(DUPLICATE);
-        announce(DUPLICATE);
-        return;
-      }
-      const fileId = await uploadFile(new File([icon.blob], icon.name, { type: "image/png" }), "editor_image");
-      iconPrints.current.set(fileId, { size: icon.blob.size, hash: await fingerprint(await icon.blob.arrayBuffer()) });
-      const element: ImageElement = {
-        id: newElementId(elements),
-        kind: "icon",
-        fileId,
-        size: newIconSize(icon.ratio),
-        ratio: icon.ratio,
-      };
+      // Solo el dibujo: sin márgenes transparentes y a un tamaño razonable
+      const icon = await prepare(file);
+      if (!icon) return warn(EMPTY_ICON);
+      // Repetido: el recorte (íconos nuevos) o el archivo tal cual (subidos antes del recorte)
+      const prepared = candidate(icon.blob);
+      if (await iconExists([prepared, candidate(file)])) return warn(DUPLICATE);
+      const fileId = await uploadIcon(icon, prepared);
+      const element: ImageElement = { id: newElementId(elements), kind: "icon", fileId, size: DEFAULT_ICON_SIZE, ratio: icon.ratio };
       setConfig((c) => (c.elements.length >= MAX_ELEMENTS ? c : { ...c, elements: [...c.elements, element] }));
       announce("Ícono agregado: arrástralo a la foto");
     } catch (err) {
@@ -416,7 +485,59 @@ export function DragEditor({
     }
   }
 
-  function choose(id: string, viaKeyboard: boolean) {
+  /**
+   * «Quitar margen» a un ícono subido antes del recorte: se sube recortado y el
+   * elemento cambia de archivo y proporción; conserva su tamaño, su giro y sus
+   * lugares (como el tamaño es el lado mayor, el dibujo ahora lo ocupa entero).
+   */
+  async function trimIcon(id: string) {
+    const element = byId.get(id);
+    if (uploading || !element?.fileId) return;
+    setError(null);
+    setNotice(null);
+    setUploading("icon");
+    setTrimming(id);
+    try {
+      const res = await fetch(fileUrl(element.fileId)).catch(() => null);
+      if (!res?.ok) throw new Error("No se pudo leer el ícono: quítalo y vuelve a subirlo.");
+      const blob = await res.blob();
+      const icon = await prepare(new File([blob], "icono", { type: blob.type }));
+      if (!icon) return warn(EMPTY_ICON);
+      if (!icon.trimmed) {
+        rememberInspection(element.fileId, { ratio: icon.ratio, margin: false });
+        return warn(NO_MARGIN);
+      }
+      const prepared = candidate(icon.blob);
+      if (await iconExists([prepared], id)) return warn(SAME_TRIMMED);
+      const fileId = await uploadIcon(icon, prepared);
+      setConfig((c) => ({
+        ...c,
+        elements: c.elements.map((e) => (e.id === id ? { ...e, fileId, ratio: icon.ratio } : e)),
+      }));
+      announce(`${nameOf(id)}: margen quitado, ahora se ve solo su dibujo`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo quitar el margen");
+    } finally {
+      setUploading(null);
+      setTrimming(null);
+    }
+  }
+
+  /** Un clic en la fila: el elemento va al panel «Seleccionado». No coloca nada. */
+  function select(id: string, viaKeyboard: boolean) {
+    setChosen(null);
+    setPicked(null);
+    if (panelId === id) {
+      setPanelId(null);
+      announce("Elección cancelada");
+      return;
+    }
+    setPanelId(id);
+    if (viaKeyboard) announce(`${nameOf(id)} elegido: cambia su tamaño y su giro en «Seleccionado»`);
+  }
+
+  /** «Colocar»: el siguiente clic en la foto (o Enter con la mira) pone ahí un lugar suyo. */
+  function startPlacing(id: string, viaKeyboard: boolean) {
     setPicked(null);
     if (chosen === id) {
       setChosen(null);
@@ -424,10 +545,11 @@ export function DragEditor({
       return;
     }
     setChosen(id);
+    setPanelId(id);
     announce(
       viaKeyboard
-        ? `Elegiste ${nameOf(id)}: en la foto, mueve la mira con las flechas y pulsa Enter para colocarlo`
-        : `Elegiste ${nameOf(id)}: haz clic en la foto donde va`
+        ? `Colocar ${nameOf(id)}: en la foto, mueve la mira con las flechas y pulsa Enter`
+        : `Colocar ${nameOf(id)}: haz clic en la foto donde va`
     );
     if (viaKeyboard) board.node?.focus();
   }
@@ -479,7 +601,7 @@ export function DragEditor({
     : undefined;
   const removing = outside && !!active?.startsWith("zone:");
   /** El elemento del panel «Seleccionado»: el elegido en la lista o el del lugar elegido. */
-  const selectedId = chosen ?? (picked !== null ? zones[picked]?.elementId : undefined);
+  const selectedId = panelId ?? (picked !== null ? zones[picked]?.elementId : undefined);
   const selected = (selectedId && byId.get(selectedId)) || null;
 
   /** Tamaño o giro de un elemento: lo toman todos sus lugares. */
@@ -492,7 +614,7 @@ export function DragEditor({
       ? `Haz clic en la foto donde va «${nameOf(chosen)}» (Esc para cancelar).`
       : elements.length === 0
         ? "Primero agrega los íconos o etiquetas que el alumno colocará."
-        : "Arrastra un elemento de la lista a la foto para marcar dónde va (o elígelo y haz clic en la foto). Arrástralo de nuevo para moverlo, o sácalo de la foto para quitarlo.";
+        : "Arrastra un elemento de la lista a la foto para marcar dónde va (o pulsa su botón «Colocar», la mira, y haz clic en la foto). Arrástralo de nuevo para moverlo, o sácalo de la foto para quitarlo. Un clic en un lugar o en la lista lo elige para cambiar su tamaño y su giro.";
 
   return (
     <DndContext
@@ -515,12 +637,16 @@ export function DragEditor({
             aspect={aspect}
             onPointer={(p) => {
               crosshair.setCursor(p);
+              // Solo con «Colocar» un clic crea un lugar; si no, suelta lo elegido
               if (chosen) placeAt(chosen, p, false);
-              else setPicked(null);
+              else {
+                setPicked(null);
+                setPanelId(null);
+              }
             }}
             tabIndex={0}
             role="application"
-            aria-label="Foto: elige un elemento de la lista, mueve la mira con las flechas y pulsa Enter para colocarlo"
+            aria-label="Foto: pulsa «Colocar» en un elemento de la lista, mueve la mira con las flechas y pulsa Enter para colocarlo"
             onKeyDown={crosshair.onKeyDown}
             {...boardDrop.dropProps}
             className={cn(
@@ -549,6 +675,7 @@ export function DragEditor({
                   lifted={active === `zone:${i}`}
                   onClick={(e) => {
                     setChosen(null);
+                    setPanelId(null);
                     setPicked(picked === i ? null : i);
                     if (e.detail === 0 && picked !== i) {
                       announce(`Lugar ${numbers[i]} elegido: flechas para moverlo, Supr para quitarlo`);
@@ -581,11 +708,7 @@ export function DragEditor({
           {edgeNumbers.length > 0 && (
             <p className="flex items-start gap-1.5 text-xs text-amber-700 dark:text-warning" role="status">
               <TriangleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
-              {plural(
-                edgeNumbers.length,
-                `La etiqueta del lugar ${edgeNumbers[0]} queda pegada a la orilla: al alumno se le puede ver cortada.`,
-                `Las etiquetas de los lugares ${joinY(edgeNumbers)} quedan pegadas a la orilla: al alumno se le pueden ver cortadas.`
-              )}
+              {edgeWarning(edgeNumbers, edgeKinds)}
             </p>
           )}
         </div>
@@ -595,6 +718,7 @@ export function DragEditor({
             <ElementPanel
               element={selected}
               name={selected ? nameOf(selected.id) : ""}
+              boardWidth={board.width}
               onChange={(patch) => selected && changeElement(selected.id, patch)}
             />
           )}
@@ -613,8 +737,14 @@ export function DragEditor({
                     name={nameOf(element.id)}
                     places={places}
                     started={zones.length > 0}
-                    chosen={chosen === element.id}
-                    onChoose={(e) => choose(element.id, e.detail === 0)}
+                    selected={selected?.id === element.id}
+                    placing={chosen === element.id}
+                    margin={element.kind === "icon" && !!element.fileId && !!inspected.get(element.fileId)?.margin}
+                    trimming={trimming === element.id}
+                    busy={uploading !== null}
+                    onSelect={(e) => select(element.id, e.detail === 0)}
+                    onPlace={(e) => startPlacing(element.id, e.detail === 0)}
+                    onTrim={() => void trimIcon(element.id)}
                     onRemove={() => removeElement(element.id)}
                   />
                 );
@@ -751,14 +881,24 @@ export function DragEditor({
   );
 }
 
-/** Un elemento de la lista: se arrastra a la foto, o se elige y luego clic en la foto. */
+/**
+ * Un elemento de la lista. Clic: lo elige para el panel «Seleccionado» (no
+ * coloca nada). Se coloca arrastrándolo a la foto o con su botón «Colocar» y
+ * un clic en la foto. Un ícono con margen transparente ofrece quitárselo.
+ */
 function ElementRow({
   element,
   name,
   places,
   started,
-  chosen,
-  onChoose,
+  selected,
+  placing,
+  margin,
+  trimming,
+  busy,
+  onSelect,
+  onPlace,
+  onTrim,
   onRemove,
 }: {
   element: ImageElement;
@@ -767,8 +907,18 @@ function ElementRow({
   places: number[];
   /** Ya hay algo en la foto: lo que no tiene lugar es un distractor, no algo pendiente. */
   started: boolean;
-  chosen: boolean;
-  onChoose: (e: React.MouseEvent) => void;
+  /** Es el del panel «Seleccionado». */
+  selected: boolean;
+  /** Se está colocando: el siguiente clic en la foto pone un lugar suyo. */
+  placing: boolean;
+  /** Ícono con margen transparente que se puede quitar. */
+  margin: boolean;
+  trimming: boolean;
+  /** Hay una subida en curso. */
+  busy: boolean;
+  onSelect: (e: React.MouseEvent) => void;
+  onPlace: (e: React.MouseEvent) => void;
+  onTrim: () => void;
   onRemove: () => void;
 }) {
   const { setNodeRef, listeners, isDragging } = useDraggable({ id: `el:${element.id}` });
@@ -788,55 +938,88 @@ function ElementRow({
   return (
     <li
       className={cn(
-        "flex items-center gap-1 rounded-xl border p-1 transition-colors",
+        "rounded-xl border p-1 transition-colors",
         distractor && "border-warning/40 bg-warning/10",
-        chosen && "border-primary ring-2 ring-primary/30",
+        selected && "border-primary bg-primary/5",
+        placing && "ring-2 ring-primary/30",
         isDragging && "opacity-60"
       )}
     >
-      <button
-        ref={setNodeRef}
-        type="button"
-        {...listeners}
-        data-element={element.id}
-        onClick={onChoose}
-        aria-pressed={chosen}
-        aria-label={`${name}: ${status}`}
-        title="Arrástralo a la foto, o haz clic aquí y después en la foto"
-        className="flex min-w-0 flex-1 cursor-grab items-center gap-2 rounded-lg p-0.5 text-left outline-none focus-visible:ring-4 focus-visible:ring-primary/40 active:cursor-grabbing"
-      >
-        {element.kind === "icon" ? (
-          // Con su proporción: el lado mayor mide lo de la miniatura
-          <span aria-hidden className="flex size-[34px] shrink-0 items-center justify-center">
-            <IconArt fileId={element.fileId} w={thumb.w} h={thumb.h} />
+      <div className="flex items-center gap-0.5">
+        <button
+          ref={setNodeRef}
+          type="button"
+          {...listeners}
+          data-element={element.id}
+          onClick={onSelect}
+          aria-pressed={selected}
+          aria-label={`${name}: ${status}`}
+          title="Clic: cambiar su tamaño y su giro. Arrástralo a la foto para colocarlo"
+          className="flex min-w-0 flex-1 cursor-grab items-center gap-2 rounded-lg p-0.5 text-left outline-none focus-visible:ring-4 focus-visible:ring-primary/40 active:cursor-grabbing"
+        >
+          {element.kind === "icon" ? (
+            // Con su proporción: el lado mayor mide lo de la miniatura
+            <span aria-hidden className="flex size-[34px] shrink-0 items-center justify-center">
+              <IconArt fileId={element.fileId} w={thumb.w} h={thumb.h} />
+            </span>
+          ) : (
+            <span
+              aria-hidden
+              className="flex size-[34px] shrink-0 items-center justify-center rounded-[10px] border bg-card text-[11px] font-bold text-muted-foreground"
+            >
+              Aa
+            </span>
+          )}
+          <span className="min-w-0">
+            <span className="block truncate text-sm font-semibold">{name}</span>
+            <span
+              className={cn("block text-xs", distractor ? "text-amber-700 dark:text-warning" : "text-muted-foreground")}
+            >
+              {status}
+            </span>
           </span>
-        ) : (
-          <span
-            aria-hidden
-            className="flex size-[34px] shrink-0 items-center justify-center rounded-[10px] border bg-card text-[11px] font-bold text-muted-foreground"
+        </button>
+        <Button
+          type="button"
+          size="icon-sm"
+          variant={placing ? "default" : "ghost"}
+          className={cn("shrink-0", !placing && "text-muted-foreground hover:text-primary")}
+          aria-pressed={placing}
+          aria-label={`Colocar ${name} en la foto`}
+          title="Colocar: después haz clic en la foto donde va"
+          onClick={onPlace}
+        >
+          <Crosshair aria-hidden />
+        </Button>
+        <Button
+          type="button"
+          size="icon-sm"
+          variant="ghost"
+          className="shrink-0 text-muted-foreground hover:text-destructive"
+          aria-label={`Quitar ${name}${n > 0 ? ` y ${plural(n, "su lugar", "sus lugares")}` : ""}`}
+          onClick={onRemove}
+        >
+          <Trash2 aria-hidden />
+        </Button>
+      </div>
+      {(margin || trimming) && (
+        <div className="flex items-center gap-1.5 pb-0.5 pl-[42px] pt-1">
+          <Button
+            type="button"
+            size="xs"
+            variant="outline"
+            // Mientras sube no se deshabilita del todo: así el foco no se pierde
+            aria-disabled={busy}
+            aria-label={`Quitar margen a ${name}`}
+            className="aria-disabled:opacity-60"
+            title="El archivo tiene margen transparente: se recorta al dibujo (conserva su tamaño, su giro y sus lugares)"
+            onClick={() => !busy && onTrim()}
           >
-            Aa
-          </span>
-        )}
-        <span className="min-w-0">
-          <span className="block truncate text-sm font-semibold">{name}</span>
-          <span
-            className={cn("block text-xs", distractor ? "text-amber-700 dark:text-warning" : "text-muted-foreground")}
-          >
-            {status}
-          </span>
-        </span>
-      </button>
-      <Button
-        type="button"
-        size="icon-sm"
-        variant="ghost"
-        className="shrink-0 text-muted-foreground hover:text-destructive"
-        aria-label={`Quitar ${name}${n > 0 ? ` y ${plural(n, "su lugar", "sus lugares")}` : ""}`}
-        onClick={onRemove}
-      >
-        <Trash2 aria-hidden />
-      </Button>
+            {trimming ? <Loader2 className="animate-spin" aria-hidden /> : <Crop aria-hidden />}
+            {trimming ? "Quitando…" : "Quitar margen"}
+          </Button>
+        </div>
+      )}
     </li>
   );
 }

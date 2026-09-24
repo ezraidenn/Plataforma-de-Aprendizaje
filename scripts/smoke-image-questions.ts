@@ -53,7 +53,6 @@ import { initialImageValue, shapedImageValue } from "../src/lib/image-editor-val
 import {
   DEFAULT_ICON_SIZE,
   DEFAULT_TEXT_SIZE,
-  ICON_SIZE_RANGE,
   alphaBounds,
   boxBounds,
   boxesOverlap,
@@ -62,8 +61,8 @@ import {
   elementSize,
   elementView,
   iconBoxPx,
-  newIconSize,
   normalizeRotation,
+  shownAtMinimum,
   snapRadiusFor,
   textPx,
 } from "../src/lib/image-layout";
@@ -200,8 +199,16 @@ function layoutChecks() {
   const view = elementView({ id: "a", kind: "icon", fileId: "f", size: 0.1, ratio: 2, rotation: 45 }, "md");
   check("Vista de un elemento: sin id y con todo resuelto", JSON.stringify(view) === JSON.stringify({ kind: "icon", fileId: "f", size: 0.1, ratio: 2, rotation: 45 }), view);
   check("Vista de un texto viejo: letra por defecto y giro 0", JSON.stringify(elementView({ id: "t", kind: "text", text: "Hola" })) === JSON.stringify({ kind: "text", text: "Hola", size: DEFAULT_TEXT_SIZE, ratio: 1, rotation: 0 }));
-  check("Píxeles de un ícono: tamaño × ancho y proporción", JSON.stringify(iconBoxPx(0.1, 2, 800)) === JSON.stringify({ w: 80, h: 160 }));
-  check("Píxeles de un ícono: mínimo de 24 px en el lado corto", JSON.stringify(iconBoxPx(0.02, 1, 390)) === JSON.stringify({ w: 24, h: 24 }));
+  check("Píxeles de un ícono: el tamaño es su lado mayor (ancho)", JSON.stringify(iconBoxPx(0.1, 0.5, 800)) === JSON.stringify({ w: 80, h: 40 }), iconBoxPx(0.1, 0.5, 800));
+  check("Píxeles de un ícono alto (ratio 4, size 0.2): w = 0.05·W, h = 0.2·W", JSON.stringify(iconBoxPx(0.2, 4, 800)) === JSON.stringify({ w: 40, h: 160 }), iconBoxPx(0.2, 4, 800));
+  check("Mismo tamaño, cualquier forma: el lado mayor mide lo mismo", [0.1, 0.4, 1, 2.5, 10].every((r) => { const b = iconBoxPx(0.1, r, 800); return Math.max(b.w, b.h) === 80; }));
+  check("Píxeles de un ícono: mínimo de 24 px en el lado mayor",
+    JSON.stringify(iconBoxPx(0.02, 1, 390)) === JSON.stringify({ w: 24, h: 24 }) &&
+      JSON.stringify(iconBoxPx(0.02, 0.25, 390)) === JSON.stringify({ w: 24, h: 6 }) &&
+      JSON.stringify(iconBoxPx(0.02, 4, 390)) === JSON.stringify({ w: 6, h: 24 }),
+    [iconBoxPx(0.02, 0.25, 390), iconBoxPx(0.02, 4, 390)]);
+  check("Se ve al mínimo: ícono bajo 24 px o letra bajo 11 px en ese ancho",
+    shownAtMinimum("icon", 0.02, 390) && !shownAtMinimum("icon", 0.08, 390) && shownAtMinimum("text", 0.02, 390) && !shownAtMinimum("text", 0.02, 800) && !shownAtMinimum("icon", 0.02, 0));
   check("Letra: tamaño × ancho, mínimo 11 px", textPx(0.02, 800) === 16 && textPx(0.02, 390) === 11);
   check("Radio de encaje: al menos SNAP_RADIUS, o la mitad del elemento", snapRadiusFor(0.04) === SNAP_RADIUS && snapRadiusFor(0.3) === 0.15);
   // Caja: ancho en fracciones del ancho; alto en fracciones del alto
@@ -216,9 +223,7 @@ function layoutChecks() {
   check("Límites: todo transparente, null", alphaBounds(new Uint8ClampedArray(16), 2, 2) === null);
   check("Límites: casi transparente (alfa ≤ 8) no cuenta", (() => { const a = new Uint8ClampedArray(16); a[3] = 8; return alphaBounds(a, 2, 2) === null; })());
 
-  console.log("\n— Editor: ícono nuevo y cajas que se tapan");
-  check("Ícono nuevo: el lado mayor mide el mediano de antes", newIconSize(1) === DEFAULT_ICON_SIZE && newIconSize(0.4) === DEFAULT_ICON_SIZE && newIconSize(2) === DEFAULT_ICON_SIZE / 2, [newIconSize(1), newIconSize(0.4), newIconSize(2)]);
-  check("Ícono nuevo muy alto: no baja del mínimo", newIconSize(10) === ICON_SIZE_RANGE[0], newIconSize(10));
+  console.log("\n— Editor: cajas que se tapan");
   const sq = (x: number, y: number, rotation = 0, side = 0.1) => elementBox({ x, y }, { w: side, h: side }, rotation, 1);
   check("Cajas separadas no se tapan", !boxesOverlap(sq(0.2, 0.5), sq(0.35, 0.5)));
   check("Cajas encimadas se tapan", boxesOverlap(sq(0.2, 0.5), sq(0.28, 0.52)));

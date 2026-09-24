@@ -214,6 +214,30 @@ export function ItemFace({
 /** Ícono sin archivo ni dibujo, o cuyo archivo no cargó: la silueta de una tarjeta redondeada. */
 const CARD_MASK = `url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><rect width='10' height='10' rx='3'/></svg>")`;
 
+/** Si el archivo de cada ícono carga como máscara: una prueba por archivo para toda la página. */
+const silhouetteLoads = new Map<string, Promise<boolean>>();
+/** Archivos que ya se sabe que no cargan: se dibuja la tarjeta desde el primer cuadro. */
+const brokenSilhouettes = new Set<string>();
+
+function probeSilhouette(fileId: string): Promise<boolean> {
+  let probe = silhouetteLoads.get(fileId);
+  if (!probe) {
+    probe = new Promise<boolean>((resolve) => {
+      const img = new Image();
+      // Como la máscara: con CORS, así falla igual que ella
+      img.crossOrigin = "anonymous";
+      img.onload = () => resolve(true);
+      img.onerror = () => {
+        brokenSilhouettes.add(fileId);
+        resolve(false);
+      };
+      img.src = fileUrl(fileId);
+    });
+    silhouetteLoads.set(fileId, probe);
+  }
+  return probe;
+}
+
 /**
  * Silueta de un archivo como máscara. Si el archivo no carga (se borró), la de
  * una tarjeta: una máscara que no carga ocultaría el lugar entero.
@@ -222,16 +246,16 @@ function useSilhouette(fileId: string | undefined): string {
   const [failed, setFailed] = useState<string | null>(null);
   useEffect(() => {
     if (!fileId) return;
-    const img = new Image();
-    // Como la máscara: con CORS, así falla igual que ella
-    img.crossOrigin = "anonymous";
-    img.onerror = () => setFailed(fileId);
-    img.src = fileUrl(fileId);
+    let alive = true;
+    void probeSilhouette(fileId).then((ok) => {
+      if (alive && !ok) setFailed(fileId);
+    });
     return () => {
-      img.onerror = null;
+      alive = false;
     };
   }, [fileId]);
-  return fileId && failed !== fileId ? `url("${fileUrl(fileId)}")` : CARD_MASK;
+  const broken = !!fileId && (failed === fileId || brokenSilhouettes.has(fileId));
+  return fileId && !broken ? `url("${fileUrl(fileId)}")` : CARD_MASK;
 }
 
 /** Anillo de foco del teclado, separado de la foto por un anillo blanco. */
@@ -322,7 +346,7 @@ export function ZoneShadow({
             "motion-safe:animate-[zone-pulse-shape_1.4s_ease-in-out_infinite]",
             hot
               ? "opacity-100! [--zone-ring:3px] [filter:drop-shadow(0_0_6px_color-mix(in_srgb,var(--primary)_80%,transparent))]"
-              : "[--zone-ring:2px] [filter:drop-shadow(0_0_0_transparent)]",
+              : "[--zone-ring:2px] [filter:none]",
             hoverable &&
               cn(
                 "group-hover/zone:opacity-100! group-hover/zone:[--zone-ring:3px] group-hover/zone:[filter:drop-shadow(0_0_6px_color-mix(in_srgb,var(--primary)_80%,transparent))]",

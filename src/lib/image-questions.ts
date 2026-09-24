@@ -14,7 +14,11 @@ export type ImageElement = {
   kind: "icon" | "text";
   fileId?: string;
   text?: string;
-  /** Ancho (ícono) o tamaño de letra (texto), como fracción del ancho de la foto. Sin él, se deriva (ver image-layout). */
+  /**
+   * Como fracción del ancho de la foto: ícono, su LADO MAYOR (se ve igual de
+   * grande con cualquier forma); texto, su tamaño de letra. Sin él, se deriva
+   * (ver image-layout).
+   */
   size?: number;
   /** Ícono: alto / ancho del dibujo. */
   ratio?: number;
@@ -58,7 +62,7 @@ export const SNAP_RADIUS = 0.08;
 /** Separación mínima entre dos lugares (fracción del ancho): más cerca, se enciman. */
 export const MIN_ZONE_GAP = 0.04;
 
-/** Tamaños por defecto de un elemento nuevo (fracción del ancho): el «mediano» de antes sobre 700 px, y letra de 14 px. */
+/** Tamaños por defecto de un elemento nuevo (fracción del ancho): lado mayor del ícono, el «mediano» de antes sobre 700 px; letra de 14 px. */
 export const DEFAULT_ICON_SIZE = 0.08;
 export const DEFAULT_TEXT_SIZE = 0.02;
 export const ICON_SIZE_RANGE = [0.02, 0.5] as const;

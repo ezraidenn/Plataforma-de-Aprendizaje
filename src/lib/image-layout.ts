@@ -13,7 +13,6 @@ import {
   SNAP_RADIUS,
   TEXT_SIZE_RANGE,
   normalizeRotation,
-  round4,
   validAspect,
   type IconSize,
   type ImageElement,
@@ -32,7 +31,11 @@ export const MIN_TEXT_PX = 11;
 /** Un elemento tal como se dibuja: sin id, con tamaño, proporción y giro resueltos. */
 export type ElementView = Pick<ImageItemView, "kind" | "text" | "fileId"> & { size: number; ratio: number; rotation: number };
 
-/** Tamaño efectivo: el suyo; si es de antes, el de `iconSize` (íconos) o la letra por defecto (texto). */
+/**
+ * Tamaño efectivo (ícono: su lado mayor; texto: su letra). El suyo; si es de
+ * antes, el de `iconSize` (íconos: eran tarjetas cuadradas, su lado es el lado
+ * mayor) o la letra por defecto (texto).
+ */
 export function elementSize(e: Pick<ImageElement, "kind" | "size">, iconSize?: IconSize): number {
   if (typeof e.size === "number" && Number.isFinite(e.size)) return e.size;
   if (e.kind === "text") return DEFAULT_TEXT_SIZE;
@@ -55,31 +58,26 @@ export function elementView(e: ImageElement, iconSize?: IconSize): ElementView {
   };
 }
 
-/** Caja de un ícono en píxeles de pantalla, sin bajar de MIN_ICON_PX en su lado corto. */
+/**
+ * Caja de un ícono en píxeles de pantalla. `size` es su LADO MAYOR (fracción
+ * del ancho de la foto): así un tamaño se ve igual de grande con cualquier
+ * forma. El lado mayor no baja de MIN_ICON_PX (como en el banco).
+ */
 export function iconBoxPx(size: number, ratio: number, boardWidth: number): { w: number; h: number } {
-  let w = size * (boardWidth > 0 ? boardWidth : REF_WIDTH);
-  let h = w * ratio;
-  const short = Math.min(w, h);
-  if (short > 0 && short < MIN_ICON_PX) {
-    w *= MIN_ICON_PX / short;
-    h *= MIN_ICON_PX / short;
-  }
-  return { w: Math.round(w), h: Math.round(h) };
+  const long = Math.max(MIN_ICON_PX, size * (boardWidth > 0 ? boardWidth : REF_WIDTH));
+  const short = (n: number) => Math.max(1, Math.round(n));
+  return ratio <= 1 ? { w: Math.round(long), h: short(long * ratio) } : { w: short(long / ratio), h: Math.round(long) };
+}
+
+/** En un tablero de este ancho, el elemento se ve más grande que su tamaño (al mínimo de legibilidad). */
+export function shownAtMinimum(kind: ImageElement["kind"], size: number, boardWidth: number): boolean {
+  if (boardWidth <= 0) return false;
+  return size * boardWidth < (kind === "icon" ? MIN_ICON_PX : MIN_TEXT_PX);
 }
 
 /** Tamaño de letra en píxeles, sin bajar de MIN_TEXT_PX. */
 export function textPx(size: number, boardWidth: number): number {
   return Math.max(MIN_TEXT_PX, Math.round(size * (boardWidth > 0 ? boardWidth : REF_WIDTH) * 10) / 10);
-}
-
-/**
- * Tamaño de un ícono nuevo: su lado mayor mide el «mediano» de antes
- * (DEFAULT_ICON_SIZE), como cuando todos iban en una tarjeta cuadrada; uno
- * alto queda más angosto. Dentro del rango de los íconos.
- */
-export function newIconSize(ratio: number): number {
-  const [min, max] = ICON_SIZE_RANGE;
-  return round4(Math.min(max, Math.max(min, DEFAULT_ICON_SIZE / Math.max(1, ratio))));
 }
 
 /** Radio de encaje de un elemento: el general o, si es grande, la mitad de su ancho. */

@@ -16,12 +16,7 @@ import {
   type ImageQuestionType,
   type Precision,
 } from "@/lib/image-questions";
-import {
-  imageQuestionProblem,
-  initialImageValue,
-  shapedImageValue as shaped,
-  type ImageQuestionValue,
-} from "@/lib/image-editor-value";
+import { imageQuestionProblem, shapedImageValue as shaped, type ImageQuestionValue } from "@/lib/image-editor-value";
 import { cn } from "@/lib/utils";
 import { ClickEditor } from "./image-click-editor";
 import { DragEditor } from "./image-drag-editor";
@@ -35,9 +30,6 @@ import { PreviewDialog } from "./preview-button";
  * valor (qué se abre, su forma, qué impide guardar), en `image-editor-value.ts`.
  * Debajo, el problema que impediría guardar, en vivo.
  */
-
-export { imageQuestionProblem, initialImageValue };
-export type { ImageQuestionValue };
 
 type SetValue = Dispatch<SetStateAction<ImageQuestionValue>>;
 

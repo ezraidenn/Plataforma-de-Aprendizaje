@@ -98,15 +98,15 @@ const FIRST_AID_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="3 3.7 18
 <path d="M12 10v7M8.5 13.5h7" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/>
 </svg>`;
 
-/** Un ícono de la escena: su dibujo como URL (sirve de imagen y de máscara), proporción y ancho. */
+/** Un ícono de la escena: su dibujo como URL (sirve de imagen y de máscara), proporción y tamaño (lado mayor). */
 type SceneIcon = { src: string; ratio: number; size: number };
-const sceneIcon = (svg: string, ratio: number, widthPx: number): SceneIcon => ({
+const sceneIcon = (svg: string, ratio: number, longPx: number): SceneIcon => ({
   src: `data:image/svg+xml,${encodeURIComponent(svg)}`,
   ratio,
-  size: widthPx / PLAN_W,
+  size: longPx / PLAN_W,
 });
 /** Dibujo de cada ficha, en el orden de DRAG_PIECES (las de texto no tienen). */
-const ICONS: (SceneIcon | null)[] = [sceneIcon(EXTINGUISHER_SVG, 17.5 / 12.5, 24), null, sceneIcon(FIRST_AID_SVG, 16.8 / 18, 28), null];
+const ICONS: (SceneIcon | null)[] = [sceneIcon(EXTINGUISHER_SVG, 17.5 / 12.5, 32), null, sceneIcon(FIRST_AID_SVG, 16.8 / 18, 28), null];
 
 /** Revisión: contorno de un ícono bien o mal puesto, en los colores de la escena. */
 const RESULT_COLOR = { ok: "#16a34a", bad: "#ef4444" };

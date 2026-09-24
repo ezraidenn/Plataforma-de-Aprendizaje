@@ -48,12 +48,8 @@ import {
 } from "@/server/actions/teacher-exams";
 import { HelpTip } from "@/components/help/help-tip";
 import { fileUrl, isImageQuestionType } from "@/lib/image-questions";
-import {
-  ImagePreviewButton,
-  ImageQuestionEditor,
-  initialImageValue,
-  type ImageQuestionValue,
-} from "./image-question-editor";
+import { initialImageValue, type ImageQuestionValue } from "@/lib/image-editor-value";
+import { ImagePreviewButton, ImageQuestionEditor } from "./image-question-editor";
 
 // ─── Tipos ───────────────────────────────────────────────────────────────────
 

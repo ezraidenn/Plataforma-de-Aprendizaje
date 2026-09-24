@@ -3,7 +3,15 @@
 import { useId, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ICON_SIZE_RANGE, TEXT_SIZE_RANGE, elementView, normalizeRotation } from "@/lib/image-layout";
+import {
+  ICON_SIZE_RANGE,
+  MIN_ICON_PX,
+  MIN_TEXT_PX,
+  TEXT_SIZE_RANGE,
+  elementView,
+  normalizeRotation,
+  shownAtMinimum,
+} from "@/lib/image-layout";
 import { round4, type ImageElement } from "@/lib/image-questions";
 import { cn } from "@/lib/utils";
 
@@ -12,7 +20,8 @@ import { cn } from "@/lib/utils";
  * del elemento elegido en la lista o por uno de sus lugares. Son del elemento
  * (no del lugar): cambian todos sus lugares y la sombra que ve el alumno, así
  * ninguna sombra delata cuál va dónde. Sin nada elegido, los controles se ven
- * apagados con una indicación (el panel no cambia de alto al elegir).
+ * apagados con una indicación (el panel no cambia de alto al elegir). Cambiar
+ * algo aquí nunca coloca nada en la foto.
  */
 
 type Range = readonly [number, number];
@@ -28,18 +37,25 @@ const clamp = (n: number, [min, max]: Range) => Math.min(max, Math.max(min, n));
 export function ElementPanel({
   element,
   name,
+  boardWidth,
   onChange,
 }: {
   /** El elemento elegido, o null si no hay nada elegido. */
   element: ImageElement | null;
   /** Su nombre («Ícono 2» o el texto de la etiqueta). */
   name: string;
+  /** Ancho de la foto del editor en px: para avisar si se ve al mínimo. */
+  boardWidth: number;
   onChange: (patch: Pick<ImageElement, "size" | "rotation">) => void;
 }) {
   const headingId = useId();
   const view = element ? elementView(element) : null;
   const range: Range = element?.kind === "text" ? TEXT_SIZE_RANGE : ICON_SIZE_RANGE;
   const pct: Range = [toPercent(range[0]), toPercent(range[1])];
+  // El giro tal como se guardó (−180 no salta a 180 mientras se arrastra); si no, normalizado
+  const raw = element?.rotation;
+  const rotation = view ? Math.round(typeof raw === "number" && raw >= -180 && raw <= 180 ? raw : view.rotation) : 0;
+  const atMinimum = !!view && shownAtMinimum(view.kind, view.size, boardWidth);
   const off = !view;
   return (
     <section aria-labelledby={headingId} className="space-y-2.5 rounded-xl border bg-muted/30 p-2.5">
@@ -55,6 +71,7 @@ export function ElementPanel({
           unitLabel="% del ancho de la foto"
           disabled={off}
           value={view ? toPercent(view.size) : null}
+          step={0.5}
           fieldRange={pct}
           fix={(n) => clamp(n, pct)}
           onValue={(n) => onChange({ size: round4(clamp(n, pct) / 100) })}
@@ -65,31 +82,36 @@ export function ElementPanel({
             onChange: (step) => onChange({ size: fromStep(step, range) }),
             valueText: view ? `${toPercent(view.size)} % del ancho de la foto` : undefined,
           }}
+          note={
+            atMinimum &&
+            `En esta pantalla se ve al mínimo legible (${view.kind === "icon" ? `${MIN_ICON_PX} px` : `letra de ${MIN_TEXT_PX} px`}).`
+          }
         />
         <Control
           label="Giro"
           unit="°"
           unitLabel="grados"
           disabled={off}
-          value={view ? Math.round(view.rotation) : null}
+          value={view ? rotation : null}
+          step={1}
           fieldRange={[-180, 180]}
           // Fuera de ±180 se lleva a su equivalente (270 → −90)
-          fix={(n) => Math.round(normalizeRotation(n))}
+          fix={(n) => Math.round(n >= -180 && n <= 180 ? n : normalizeRotation(n))}
           onValue={(n) => onChange({ rotation: Math.round(n) })}
           slider={{
             min: -180,
             max: 180,
-            value: view ? Math.round(view.rotation) : 0,
+            value: rotation,
             onChange: (deg) => onChange({ rotation: deg }),
-            valueText: view ? `${Math.round(view.rotation)} grados` : undefined,
+            valueText: view ? `${rotation} grados` : undefined,
           }}
           extra={
             <Button
               type="button"
               size="xs"
               variant="outline"
-              disabled={!view || Math.round(view.rotation) === 0}
-              aria-label="Quitar el giro"
+              disabled={!view || rotation === 0}
+              aria-label="0° (quitar el giro)"
               title="Quitar el giro"
               onClick={() => onChange({ rotation: 0 })}
             >
@@ -107,18 +129,24 @@ export function ElementPanel({
   );
 }
 
-/** Una propiedad: nombre, campo numérico con su unidad y, debajo, el deslizante. */
+/**
+ * Una propiedad: nombre, campo numérico con su unidad y, debajo, el
+ * deslizante. El campo es de texto (acepta coma decimal); las flechas del
+ * teclado suben y bajan `step` (con Mayús, diez veces); Esc deshace lo escrito.
+ */
 function Control({
   label,
   unit,
   unitLabel,
   disabled,
   value,
+  step,
   fieldRange,
   fix,
   onValue,
   slider,
   extra,
+  note,
 }: {
   label: string;
   unit: string;
@@ -127,6 +155,7 @@ function Control({
   disabled: boolean;
   /** Lo que muestra el campo (null: nada elegido). */
   value: number | null;
+  step: number;
   /** Lo que se aplica mientras se escribe; fuera de esto, se espera a salir del campo. */
   fieldRange: Range;
   /** Al salir del campo (o con Enter): un número cualquiera → uno válido. */
@@ -134,11 +163,14 @@ function Control({
   onValue: (n: number) => void;
   slider: { min: number; max: number; value: number; onChange: (n: number) => void; valueText?: string };
   extra?: React.ReactNode;
+  /** Una aclaración bajo el deslizante (false: ninguna). */
+  note?: string | false;
 }) {
   const sliderId = useId();
+  const noteId = useId();
   /** Lo que se escribe, mientras el campo tiene el foco; null: se muestra el valor. */
   const [draft, setDraft] = useState<string | null>(null);
-  const parse = (text: string) => (text.trim() === "" ? NaN : Number(text.replace(",", ".")));
+  const parse = (text: string) => (text.trim() === "" ? NaN : Number(text.trim().replace(",", ".")));
   const settle = () => {
     const n = draft === null ? NaN : parse(draft);
     if (Number.isFinite(n)) onValue(fix(n));
@@ -152,11 +184,9 @@ function Control({
         </label>
         {extra}
         <Input
-          type="number"
+          type="text"
           inputMode="decimal"
-          step="any"
-          min={fieldRange[0]}
-          max={fieldRange[1]}
+          autoComplete="off"
           disabled={disabled}
           aria-label={`${label} en ${unitLabel}`}
           value={draft ?? (value === null ? "" : String(value))}
@@ -171,10 +201,21 @@ function Control({
             if (e.key === "Enter") {
               e.preventDefault();
               settle();
+            } else if (e.key === "Escape") {
+              // Solo deshace lo escrito: la selección sigue
+              e.preventDefault();
+              e.stopPropagation();
+              setDraft(null);
+            } else if ((e.key === "ArrowUp" || e.key === "ArrowDown") && value !== null) {
+              e.preventDefault();
+              const typed = draft === null ? NaN : parse(draft);
+              const base = Number.isFinite(typed) ? typed : value;
+              const delta = (e.key === "ArrowUp" ? 1 : -1) * step * (e.shiftKey ? 10 : 1);
+              onValue(fix(Math.round((base + delta) * 10) / 10));
+              setDraft(null);
             }
           }}
-          // Sin las flechitas del navegador: tapaban el número (las flechas del teclado siguen)
-          className="h-7 w-14 px-1.5 text-right text-xs tabular-nums [appearance:textfield] md:text-xs [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+          className="h-7 w-14 px-1.5 text-right text-xs tabular-nums md:text-xs"
         />
         <span aria-hidden className="w-3 text-xs text-muted-foreground">
           {unit}
@@ -189,9 +230,15 @@ function Control({
         value={slider.value}
         disabled={disabled}
         aria-valuetext={slider.valueText}
+        aria-describedby={note ? noteId : undefined}
         onChange={(e) => slider.onChange(Number(e.target.value))}
         className="block h-4 w-full cursor-pointer accent-primary disabled:cursor-default disabled:opacity-50"
       />
+      {note && (
+        <p id={noteId} className="text-[11px] leading-snug text-amber-700 dark:text-warning">
+          {note}
+        </p>
+      )}
     </div>
   );
 }
