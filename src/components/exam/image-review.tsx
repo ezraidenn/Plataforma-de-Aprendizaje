@@ -67,7 +67,7 @@ export function ImageSolution({ board }: { board: ReviewBoard }) {
   const icons = iconNumbers(board.iconFiles);
   return (
     // A lo ancho: sola, la solución no tiene con qué ir en la otra columna
-    <div className="overflow-x-clip [overflow-clip-margin:12px]">
+    <div className={CLIP}>
       <DragThumb board={board} zones={zones} mine={false} />
       {/* Lo mismo en texto, para quien no ve la miniatura */}
       <ul className="sr-only">
@@ -81,8 +81,14 @@ export function ImageSolution({ board }: { board: ReviewBoard }) {
   );
 }
 
-/** Lado a lado en escritorio, apiladas en celular; lo que asome del borde no abre desplazamiento de lado. */
-const GRID = "grid gap-3 overflow-x-clip [overflow-clip-margin:12px] sm:grid-cols-2";
+/**
+ * Lo que asome del borde de la foto se ve hasta 16 px más allá, sin abrir
+ * desplazamiento de lado. Recorte en los dos ejes: con solo el horizontal,
+ * Chrome ignora el margen y corta al ras de la foto.
+ */
+const CLIP = "overflow-clip [overflow-clip-margin:16px]";
+/** Lado a lado en escritorio, apiladas en celular. */
+const GRID = `grid gap-3 sm:grid-cols-2 ${CLIP}`;
 
 type DragBoard = Extract<ReviewBoard, { kind: "drag" }>;
 type ClickBoard = Extract<ReviewBoard, { kind: "click" }>;

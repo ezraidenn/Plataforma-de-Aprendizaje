@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useCallback, useState, useTransition, type SetStateAction } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowDown,
@@ -447,6 +447,12 @@ function QuestionEditor({
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, startSaving] = useTransition();
+  // Al tocar la foto, los lugares o los puntos, el error del último intento de
+  // guardar ya no aplica: no debe quedar junto a «Lista para guardar»
+  const changeImage = useCallback((next: SetStateAction<ImageQuestionValue>) => {
+    setError(null);
+    setImage(next);
+  }, []);
   const parsedPoints = Number(points);
 
   function addVariant() {
@@ -807,7 +813,7 @@ function QuestionEditor({
       )}
 
       {isImageQuestionType(type) && (
-        <ImageQuestionEditor type={type} value={image} onChange={setImage} onBusyChange={setUploading} />
+        <ImageQuestionEditor type={type} value={image} onChange={changeImage} onBusyChange={setUploading} />
       )}
 
       {error && (

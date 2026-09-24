@@ -192,8 +192,9 @@ export function ImageDragControl({
   return (
     <div
       ref={rootRef}
-      // Una etiqueta junto al borde de la foto no debe abrir desplazamiento de lado en el celular
-      className="space-y-3 overflow-x-clip [overflow-clip-margin:16px]"
+      // Una etiqueta junto al borde de la foto no debe abrir desplazamiento de lado en el celular.
+      // Recorte en los dos ejes: con solo el horizontal, Chrome ignora el margen y corta al ras de la foto
+      className="space-y-3 overflow-clip [overflow-clip-margin:16px]"
       onKeyDown={(e) => {
         if (e.key === "Escape" && selected) {
           e.preventDefault();

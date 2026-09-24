@@ -176,6 +176,8 @@ export function ImageQuestionEditor({
 
   async function uploadPhoto(file: File) {
     if (uploading) return;
+    // El candado va antes de medir: dos fotos soltadas casi a la vez no se suben las dos
+    setUploading("photo");
     setError(null);
     setNotice(null);
     // Se mide antes de subir: si no sirve, ni se sube (no quedan archivos huérfanos)
@@ -185,13 +187,14 @@ export function ImageQuestionEditor({
       .finally(() => URL.revokeObjectURL(local));
     if (aspect === null) {
       setError("No se pudo leer la imagen: usa una foto PNG, JPG, WEBP o GIF.");
+      setUploading(null);
       return;
     }
     if (!validAspect(aspect)) {
       setError("La foto es demasiado alargada: recórtala para que no sea más de diez veces más ancha que alta, ni al revés.");
+      setUploading(null);
       return;
     }
-    setUploading("photo");
     const hadPhoto = !!imageFileId;
     try {
       const fileId = await uploadFile(file, "editor_image");
