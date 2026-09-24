@@ -1,5 +1,10 @@
 // Tipos serializables que viajan de server components a client components.
 
+import type { IconSize, ImageElement } from "@/lib/image-questions";
+
+/** Un elemento de «arrastrar a la imagen» tal como se dibuja: sin su id. */
+export type ImageItemView = Omit<ImageElement, "id">;
+
 export type StudentItemStatus = "completed" | "in_progress" | "available" | "locked";
 
 export type StudentItemKind =
@@ -136,14 +141,21 @@ export type RunnerQuestion = {
   ordering: { steps: { token: string; text: string }[] } | null;
   /** Foto de fondo de las preguntas sobre imagen (id de archivo). */
   image: string | null;
-  /** image_drag: lugares revueltos SIN su respuesta y fichas de elementos cifradas por intento. */
+  /**
+   * image_drag: lugares revueltos SIN su respuesta y una ficha por copia de
+   * cada elemento, cada uno con un token opaco por intento (el DOM no revela
+   * qué va dónde). Respuesta: `{ fichaDeLugar: fichaDeElemento }`.
+   */
   imageDrag: {
     aspect: number;
-    iconSize: "sm" | "md" | "lg";
+    iconSize: IconSize;
     zones: { token: string; x: number; y: number }[];
-    items: { token: string; kind: "icon" | "text"; text?: string; fileId?: string }[];
+    items: (ImageItemView & { token: string })[];
   } | null;
-  /** image_click: solo cuántas marcas se esperan. Los puntos correctos no viajan. */
+  /**
+   * image_click: solo cuántas marcas se esperan; los puntos correctos no
+   * viajan. Respuesta: `[{ x, y }, …]` relativas a la foto (0–1).
+   */
   imageClick: { aspect: number; marks: number } | null;
 };
 
@@ -285,14 +297,8 @@ export type ReviewBoard =
       kind: "drag";
       image: string;
       aspect: number;
-      iconSize: "sm" | "md" | "lg";
-      zones: {
-        x: number;
-        y: number;
-        correct: boolean;
-        placed: { kind: "icon" | "text"; text?: string; fileId?: string } | null;
-        expected: { kind: "icon" | "text"; text?: string; fileId?: string };
-      }[];
+      iconSize: IconSize;
+      zones: { x: number; y: number; correct: boolean; placed: ImageItemView | null; expected: ImageItemView }[];
     }
   | {
       kind: "click";

@@ -22,13 +22,12 @@ import { orderingScore } from "@/lib/ordering";
 import { questionProblem } from "@/lib/question-validation";
 import {
   dragCopies,
-  imageClickProblem,
   imageClickScore,
-  imageDragProblem,
   imageDragScore,
   parseClickAnswer,
   parseDragAnswer,
-  type ImageClickConfig,
+  readImageClick,
+  readImageDrag,
   type ImageDragConfig,
 } from "@/lib/image-questions";
 
@@ -43,32 +42,40 @@ export type ExamAttempt = typeof examAttempts.$inferSelect;
 const DEADLINE_GRACE_MS = 5_000;
 
 /**
+ * HMAC de las partes unidas con «|», recortado a 16 hexadecimales. Es
+ * determinista por (tipo, intento, pregunta, …): se recalcula al calificar sin
+ * guardar nada extra, y el cliente no puede deducir de él lo que oculta.
+ */
+function opaqueToken(...parts: (string | number)[]): string {
+  const secret = process.env.APP_SECRET ?? "dev-secret";
+  return createHmac("sha256", secret).update(parts.join("|")).digest("hex").slice(0, 16);
+}
+
+/**
  * Token opaco por intento para las derechas del matching: el cliente solo ve
- * tokens (no el índice original), así el DOM no revela la solución. El token
- * es determinista por (intento, pregunta, índice) para poder verificarlo al
- * calificar sin guardar nada extra.
+ * tokens (no el índice original), así el DOM no revela la solución.
  */
 export function matchingToken(attemptId: string, questionId: string, originalIndex: number): string {
-  const secret = process.env.APP_SECRET ?? "dev-secret";
-  return createHmac("sha256", secret).update(`match|${attemptId}|${questionId}|${originalIndex}`).digest("hex").slice(0, 16);
+  return opaqueToken("match", attemptId, questionId, originalIndex);
 }
 
 /** Token opaco de cada paso de «ordenar»: como el de relacionar, con otro prefijo. */
 export function orderingToken(attemptId: string, questionId: string, originalIndex: number): string {
-  const secret = process.env.APP_SECRET ?? "dev-secret";
-  return createHmac("sha256", secret).update(`order|${attemptId}|${questionId}|${originalIndex}`).digest("hex").slice(0, 16);
+  return opaqueToken("order", attemptId, questionId, originalIndex);
 }
 
 /** Ficha opaca de un lugar de «arrastrar a la imagen». */
 export function imageZoneToken(attemptId: string, questionId: string, zoneIndex: number): string {
-  const secret = process.env.APP_SECRET ?? "dev-secret";
-  return createHmac("sha256", secret).update(`imgzone|${attemptId}|${questionId}|${zoneIndex}`).digest("hex").slice(0, 16);
+  return opaqueToken("imgzone", attemptId, questionId, zoneIndex);
 }
 
-/** Ficha opaca de una copia de un elemento de «arrastrar a la imagen». */
-export function imageItemToken(attemptId: string, questionId: string, elementIndex: number, copy: number): string {
-  const secret = process.env.APP_SECRET ?? "dev-secret";
-  return createHmac("sha256", secret).update(`imgitem|${attemptId}|${questionId}|${elementIndex}|${copy}`).digest("hex").slice(0, 16);
+/**
+ * Ficha opaca de una copia de un elemento de «arrastrar a la imagen». Va por
+ * el id del elemento (el HMAC lo oculta), no por su posición: si el maestro
+ * reordena o borra elementos con un intento en curso, las demás fichas valen.
+ */
+export function imageItemToken(attemptId: string, questionId: string, elementId: string, copy: number): string {
+  return opaqueToken("imgitem", attemptId, questionId, elementId, copy);
 }
 
 /**
@@ -85,7 +92,7 @@ export function imageDragPlacement(
   const answer = parseDragAnswer(answerText);
   const zoneIndex = new Map(config.zones.map((_, i) => [imageZoneToken(attemptId, questionId, i), i]));
   const elementOf = new Map(
-    dragCopies(config).map((cp) => [imageItemToken(attemptId, questionId, cp.elementIndex, cp.copy), cp.elementId])
+    dragCopies(config).map((cp) => [imageItemToken(attemptId, questionId, cp.elementId, cp.copy), cp.elementId])
   );
   const placed: (string | undefined)[] = new Array(config.zones.length).fill(undefined);
   const used = new Set<string>();
@@ -160,7 +167,9 @@ export type QuestionInput = {
   type: Question["type"];
   promptMd: string;
   points: number;
-  config?: unknown; // short_text: {accepted: string[]} · matching: {pairs: [{left, right}]} · ordering: {steps: string[]}
+  // short_text: {accepted: string[]} · matching: {pairs: [{left, right}]} · ordering: {steps: string[]} ·
+  // image_drag: ImageDragConfig · image_click: ImageClickConfig (src/lib/image-questions.ts)
+  config?: unknown;
   options?: { textMd: string; isCorrect: boolean }[];
   /** Foto de fondo de image_drag/image_click; los demás tipos, null. */
   imageFileId?: string | null;
@@ -556,16 +565,17 @@ function gradeAnswer(
       return Math.round(orderingScore(order as number[]) * q.points * 100) / 100;
     }
     case "image_drag": {
-      // Una config dañada no debe tumbar el envío de todo el examen
-      if (imageDragProblem(q.config, true)) return 0;
-      const c = q.config as ImageDragConfig;
-      const placed = imageDragPlacement(c, answerText, attemptId, q.id);
-      return Math.round(imageDragScore(c, placed) * q.points * 100) / 100;
+      // Una pregunta incompleta vale cero: no debe tumbar el envío de todo el examen
+      const drag = readImageDrag(q);
+      if (!drag) return 0;
+      const placed = imageDragPlacement(drag.config, answerText, attemptId, q.id);
+      return Math.round(imageDragScore(drag.config, placed) * q.points * 100) / 100;
     }
     case "image_click": {
-      if (imageClickProblem(q.config, true)) return 0;
-      const c = q.config as ImageClickConfig;
-      return Math.round(imageClickScore(c, parseClickAnswer(answerText, c.spots.length)) * q.points * 100) / 100;
+      const click = readImageClick(q);
+      if (!click) return 0;
+      const marks = parseClickAnswer(answerText, click.config.spots.length);
+      return Math.round(imageClickScore(click.config, marks) * q.points * 100) / 100;
     }
     case "open_text":
       return null; // calificación manual (Fase 3)

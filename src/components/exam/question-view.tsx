@@ -76,7 +76,8 @@ export function isAnswered(q: RunnerQuestion, a: AnswerState | undefined): boole
       return parseOrdering(a.answerText).length === (q.ordering?.steps.length ?? -1);
     case "image_drag":
     case "image_click":
-      return false; // Tarea 4
+      // Las preguntas sobre imagen llegan con su propio control, que dirá cuándo están completas
+      return false;
   }
 }
 

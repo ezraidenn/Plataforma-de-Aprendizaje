@@ -25,6 +25,7 @@ import {
 } from "@/server/services/exams";
 import { setExamResultsPublished } from "@/server/services/exam-results";
 import { audit } from "@/server/services/audit";
+import { sanitizeImageConfig } from "@/lib/image-questions";
 
 // ─── Guard común: el ítem debe ser un examen de un curso del maestro ─────────
 
@@ -32,7 +33,15 @@ async function guardExamItem(
   courseId: string,
   itemId: string
 ): Promise<{ error: string } | null> {
-  const user = await requireTeacher();
+  return checkExamItem(await requireTeacher(), courseId, itemId);
+}
+
+/** El guard con el usuario ya en mano (para las acciones que también lo usan). */
+function checkExamItem(
+  user: { id: string; role: string },
+  courseId: string,
+  itemId: string
+): { error: string } | null {
   const course = getOwnedCourse(courseId, user);
   if (!course) return { error: "No encontramos este curso o no te pertenece" };
 
@@ -196,37 +205,6 @@ export type QuestionFormInput = {
   imageConfig?: unknown;
 };
 
-const asObject = (v: unknown): Record<string, unknown> =>
-  v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
-const asList = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
-const asString = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
-const asNumber = (v: unknown): number | undefined => (typeof v === "number" ? v : undefined);
-
-/**
- * Config de una pregunta sobre imagen que llega del navegador: se copian solo
- * los campos conocidos, para no guardar lo que el cliente quiera meter. Que
- * los valores tengan sentido lo revisa la validación del servicio.
- */
-function cleanImageConfig(type: "image_drag" | "image_click", raw: unknown) {
-  const c = asObject(raw);
-  const point = (v: unknown) => {
-    const p = asObject(v);
-    return { x: asNumber(p.x), y: asNumber(p.y) };
-  };
-  if (type === "image_click") {
-    return { aspect: asNumber(c.aspect), precision: asString(c.precision), spots: asList(c.spots).map(point) };
-  }
-  return {
-    aspect: asNumber(c.aspect),
-    iconSize: asString(c.iconSize),
-    elements: asList(c.elements).map((v) => {
-      const e = asObject(v);
-      return { id: asString(e.id), kind: asString(e.kind), fileId: asString(e.fileId), text: asString(e.text)?.trim() };
-    }),
-    zones: asList(c.zones).map((v) => ({ ...point(v), elementId: asString(asObject(v).elementId) })),
-  };
-}
-
 /** Convierte el input del formulario al contrato del servicio (config por tipo). */
 function toServiceInput(input: QuestionFormInput): QuestionInput | { error: string } {
   const base = {
@@ -237,10 +215,11 @@ function toServiceInput(input: QuestionFormInput): QuestionInput | { error: stri
   switch (input.type) {
     case "image_drag":
     case "image_click":
+      // La config llega del navegador: solo se guardan los campos conocidos
       return {
         ...base,
-        imageFileId: asString(input.imageFileId) || null,
-        config: cleanImageConfig(input.type, input.imageConfig),
+        imageFileId: typeof input.imageFileId === "string" && input.imageFileId ? input.imageFileId : null,
+        config: sanitizeImageConfig(input.type, input.imageConfig),
       };
     case "short_text": {
       const accepted = (input.accepted ?? []).map((a) => a.trim()).filter(Boolean);
@@ -293,12 +272,13 @@ export async function createQuestionAction(
   itemId: string,
   input: QuestionFormInput
 ): Promise<QuestionMutationResult> {
-  const guard = await guardExamItem(courseId, itemId);
+  const user = await requireTeacher();
+  const guard = checkExamItem(user, courseId, itemId);
   if (guard) return guard;
 
   const serviceInput = toServiceInput(input);
   if ("error" in serviceInput) return serviceInput;
-  const filesError = imageFilesError(await requireTeacher(), serviceInput);
+  const filesError = imageFilesError(user, serviceInput);
   if (filesError) return filesError;
 
   try {
@@ -316,13 +296,14 @@ export async function updateQuestionAction(
   questionId: string,
   input: QuestionFormInput
 ): Promise<QuestionMutationResult> {
-  const guard = await guardExamItem(courseId, itemId);
+  const user = await requireTeacher();
+  const guard = checkExamItem(user, courseId, itemId);
   if (guard) return guard;
   if (!ownsQuestion(itemId, questionId)) return { error: "No encontramos esta pregunta" };
 
   const serviceInput = toServiceInput(input);
   if ("error" in serviceInput) return serviceInput;
-  const filesError = imageFilesError(await requireTeacher(), serviceInput, questionId);
+  const filesError = imageFilesError(user, serviceInput, questionId);
   if (filesError) return filesError;
 
   try {

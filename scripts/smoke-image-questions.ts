@@ -7,9 +7,9 @@
  */
 import { Readable } from "node:stream";
 import sharp from "sharp";
-import { inArray, like, or } from "drizzle-orm";
+import { and, eq, inArray, like, or } from "drizzle-orm";
 import { db } from "../src/server/db";
-import { auditLog, courses as coursesTable, files, notifications, users } from "../src/server/db/schema";
+import { attemptAnswers, auditLog, courses as coursesTable, files, notifications, users } from "../src/server/db/schema";
 import * as courses from "../src/server/services/courses";
 import * as tree from "../src/server/services/tree";
 import * as examsSvc from "../src/server/services/exams";
@@ -29,7 +29,10 @@ import {
   nearestZone,
   parseClickAnswer,
   parseDragAnswer,
+  readImageClick,
+  readImageDrag,
   relDistance,
+  sanitizeImageConfig,
   type ImageClickConfig,
   type ImageDragConfig,
 } from "../src/lib/image-questions";
@@ -70,7 +73,6 @@ function mathChecks() {
     copies.filter((c) => c.elementId === "reg").length === 1, copies);
 
   check("Todo bien puesto: 1", imageDragScore(DRAG, ["ext", "ext", "sal", "reu"]) === 1);
-  check("Copias intercambiables: da igual cuál extintor", imageDragScore(DRAG, ["ext", "ext", "sal", "reu"]) === 1);
   check("Un distractor cuenta como error", imageDragScore(DRAG, ["reg", "ext", "sal", "reu"]) === 0.75);
   check("Lugar vacío cuenta cero", imageDragScore(DRAG, [undefined, "ext", undefined, "reu"]) === 0.5);
   check("Sin lugares: 0", imageDragScore({ ...DRAG, zones: [] }, []) === 0);
@@ -111,10 +113,55 @@ function validationChecks() {
   check("Coordenadas fuera de la foto", imageDragProblem({ ...DRAG, zones: [{ x: 1.2, y: 0.1, elementId: "ext" }] }, true) !== null);
   check("Demasiados elementos", imageDragProblem({ ...DRAG, elements: Array.from({ length: 21 }, (_, i) => ({ id: `e${i}`, kind: "text" as const, text: "t" })) }, true) !== null);
   check("Config ilegible", imageDragProblem(null, true) !== null);
+  const odd = (e: unknown) => {
+    try {
+      return imageDragProblem({ ...DRAG, elements: [...DRAG.elements, e] }, true);
+    } catch {
+      return "lanzó";
+    }
+  };
+  check("Etiqueta con texto que no es texto: problema, sin lanzar", odd({ id: "n", kind: "text", text: 123 }) === "Hay una etiqueta sin texto", odd({ id: "n", kind: "text", text: 123 }));
+  check("Ícono con archivo que no es texto: problema, sin lanzar", odd({ id: "m", kind: "icon", fileId: 5 }) === "Hay un ícono sin imagen", odd({ id: "m", kind: "icon", fileId: 5 }));
   check("Señalar válido", imageClickProblem(CLICK, true) === null, imageClickProblem(CLICK, true));
   check("Señalar sin puntos", imageClickProblem({ ...CLICK, spots: [] }, true) === "Marca al menos un punto en la foto");
   check("Señalar con 11 puntos", imageClickProblem({ ...CLICK, spots: Array.from({ length: 11 }, () => ({ x: 0.5, y: 0.5 })) }, true) === "Usa como máximo diez puntos");
   check("Proporción inválida", imageClickProblem({ ...CLICK, aspect: 0 }, true) !== null);
+}
+
+function sanitizeChecks() {
+  console.log("\n— Lo que llega del navegador");
+  const long = "x".repeat(65);
+  const raw = {
+    aspect: 0.75,
+    iconSize: "md",
+    isCorrect: true, // basura: no se guarda
+    elements: [
+      { id: "ext", kind: "icon", fileId: "f-ext", text: "no va", extra: 1 },
+      { id: "reu", kind: "text", text: "  Punto de reunión  ", fileId: "no-va" },
+      { id: long, kind: "text", text: "id largo" },
+    ],
+    zones: [
+      { x: 0.2, y: 0.3, elementId: "ext", correct: "reu" },
+      { x: Infinity, y: NaN, elementId: 7 },
+    ],
+  };
+  const clean = sanitizeImageConfig("image_drag", raw) as ImageDragConfig & Record<string, unknown>;
+  check("Descarta los campos desconocidos", !("isCorrect" in clean) && !("extra" in clean.elements[0]) && !("correct" in clean.zones[0]));
+  check("El ícono pierde su texto; la etiqueta, su archivo", !("text" in clean.elements[0]) && !("fileId" in clean.elements[1]), clean.elements);
+  check("Recorta el texto de la etiqueta", clean.elements[1].text === "Punto de reunión");
+  check("Ids de más de 64 caracteres fuera", !("id" in clean.elements[2]));
+  check("Números no finitos y ids que no son texto fuera", JSON.stringify(clean.zones[1]) === "{}", clean.zones[1]);
+  check("Lo limpio de una config buena queda igual", JSON.stringify(sanitizeImageConfig("image_drag", DRAG)) === JSON.stringify(DRAG));
+  check("Señalar: solo proporción, precisión y puntos",
+    JSON.stringify(sanitizeImageConfig("image_click", { ...CLICK, spots: [{ x: 0.1, y: 0.2, z: 3 }], precision: "xl", hint: "aquí" })) ===
+      JSON.stringify({ aspect: 0.5, spots: [{ x: 0.1, y: 0.2 }] }));
+  check("Basura total: queda vacía y la validación la rechaza",
+    JSON.stringify(sanitizeImageConfig("image_click", "hola")) === '{"spots":[]}' && imageClickProblem(sanitizeImageConfig("image_click", "hola"), true) !== null);
+
+  check("Leer arrastrar: completa", readImageDrag({ imageFileId: "foto", config: DRAG })?.image === "foto");
+  check("Leer arrastrar: sin foto, null", readImageDrag({ imageFileId: null, config: DRAG }) === null);
+  check("Leer arrastrar: config dañada, null", readImageDrag({ imageFileId: "foto", config: { ...DRAG, zones: "x" } }) === null);
+  check("Leer señalar: completa y sin foto", readImageClick({ imageFileId: "foto", config: CLICK })?.config === CLICK && readImageClick({ imageFileId: null, config: CLICK }) === null);
 }
 
 // ─── Recorrido contra la base ────────────────────────────────────────────────
@@ -245,21 +292,17 @@ async function endToEnd() {
     check("Señalar: solo la foto y cuántas marcas", rc.image === photo && JSON.stringify(rc.imageClick) === JSON.stringify({ aspect: 0.5, marks: 2 }));
     check("Las demás claves nuevas quedan en null", rd.imageClick === null && rc.imageDrag === null && rd.matching === null && rd.ordering === null);
 
-    // Respuesta correcta calculada con las mismas fichas que el servidor
-    const copyOf = new Map<string, number>();
-    const answer: Record<string, string> = {};
-    drag.zones.forEach((z, i) => {
-      const elementIndex = drag.elements.findIndex((e) => e.id === z.elementId);
-      const copy = copyOf.get(z.elementId) ?? 0;
-      copyOf.set(z.elementId, copy + 1);
-      answer[examsSvc.imageZoneToken(attempt.id, qDrag, i)] = examsSvc.imageItemToken(attempt.id, qDrag, elementIndex, copy);
-    });
+    // Respuesta correcta calculada con las mismas fichas que el servidor, con
+    // los dos extintores cruzados (copia 1 en el primer lugar, copia 0 en el
+    // segundo): da igual qué copia vaya en cuál
+    const [z0, z1, z2, z3] = drag.zones.map((_, i) => examsSvc.imageZoneToken(attempt.id, qDrag, i));
+    const item = (elementId: string, copy: number) => examsSvc.imageItemToken(attempt.id, qDrag, elementId, copy);
+    const ext0 = item(EL.ext, 0);
+    const answer: Record<string, string> = { [z0]: item(EL.ext, 1), [z1]: ext0, [z2]: item(EL.sal, 0), [z3]: item(EL.reu, 0) };
     check("Las fichas de la respuesta están en lo que recibe el alumno",
       Object.entries(answer).every(([z, it]) => rd.imageDrag!.zones.some((x) => x.token === z) && rd.imageDrag!.items.some((x) => x.token === it)));
 
     // La misma ficha en dos lugares solo cuenta una vez; una ficha inventada no cuenta
-    const [z0, z1, z2, z3] = drag.zones.map((_, i) => examsSvc.imageZoneToken(attempt.id, qDrag, i));
-    const ext0 = examsSvc.imageItemToken(attempt.id, qDrag, 0, 0);
     const twice = examsSvc.imageDragPlacement(drag, JSON.stringify({ [z0]: ext0, [z1]: ext0, [z2]: answer[z2], [z3]: answer[z3] }), attempt.id, qDrag);
     check("La misma ficha en dos lugares cuenta una vez", imageDragScore(drag, twice) === 0.75, twice);
     const forged = examsSvc.imageDragPlacement(drag, JSON.stringify({ [z0]: "0123456789abcdef", [z1]: EL.ext }), attempt.id, qDrag);
@@ -288,6 +331,15 @@ async function endToEnd() {
     check("Revisión de señalar: puntos acertados y marcas",
       !!bc && bc.radius === r && JSON.stringify(bc.spots.map((s) => s.hit)) === "[true,false]" && bc.marks.length === 2, bc);
 
+    // Una respuesta sin ninguna colocación válida se lee como «Sin respuesta», igual que en señalar
+    db.update(attemptAnswers)
+      .set({ answerText: JSON.stringify({ [z0]: "0123456789abcdef" }) })
+      .where(and(eq(attemptAnswers.attemptId, attempt.id), eq(attemptAnswers.questionId, qDrag)))
+      .run();
+    const empty = buildReview(graded).find((e) => e.questionId === qDrag)!;
+    check("Revisión de arrastrar sin colocaciones válidas: «Sin respuesta»",
+      empty.yourAnswer === "Sin respuesta" && empty.board?.kind === "drag" && empty.board.zones.every((z) => z.placed === null), empty);
+
     const copyId = examsSvc.duplicateQuestion(exam.id, qDrag);
     const copied = examsSvc.listQuestions(exam.id).find((q) => q.id === copyId);
     check("Duplicar dentro del examen comparte la foto", copied?.imageFileId === photo && JSON.stringify(copied?.config) === JSON.stringify(drag));
@@ -304,6 +356,7 @@ async function endToEnd() {
 async function main() {
   mathChecks();
   validationChecks();
+  sanitizeChecks();
   await endToEnd();
   console.log(failures === 0 ? "\nTodo bien" : `\n${failures} fallo(s)`);
   process.exitCode = failures === 0 ? 0 : 1;

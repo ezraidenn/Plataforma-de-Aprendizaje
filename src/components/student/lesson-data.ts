@@ -24,13 +24,7 @@ import {
 import { getVideoDetail, getVideoProgress } from "@/server/services/video";
 import { resultsVisible } from "@/lib/exam-results";
 import { shuffledOrder } from "@/lib/ordering";
-import {
-  dragCopies,
-  imageClickProblem,
-  imageDragProblem,
-  type ImageClickConfig,
-  type ImageDragConfig,
-} from "@/lib/image-questions";
+import { dragCopies, readImageClick, readImageDrag } from "@/lib/image-questions";
 import type {
   AssignmentLessonData,
   AttemptDto,
@@ -123,9 +117,10 @@ export function buildRunnerQuestions(attempt: ExamAttempt): RunnerQuestion[] {
     let image: string | null = null;
     let imageDrag: RunnerQuestion["imageDrag"] = null;
     let imageClick: RunnerQuestion["imageClick"] = null;
-    if (q.type === "image_drag" && !imageDragProblem(q.config, !!q.imageFileId)) {
-      const c = q.config as ImageDragConfig;
-      image = q.imageFileId;
+    const drag = q.type === "image_drag" ? readImageDrag(q) : null;
+    if (drag) {
+      const c = drag.config;
+      image = drag.image;
       imageDrag = {
         aspect: c.aspect,
         iconSize: c.iconSize,
@@ -135,7 +130,7 @@ export function buildRunnerQuestions(attempt: ExamAttempt): RunnerQuestion[] {
           dragCopies(c).map((cp) => {
             const e = c.elements[cp.elementIndex];
             return {
-              token: imageItemToken(attempt.id, q.id, cp.elementIndex, cp.copy),
+              token: imageItemToken(attempt.id, q.id, cp.elementId, cp.copy),
               kind: e.kind,
               text: e.text,
               fileId: e.fileId,
@@ -144,10 +139,10 @@ export function buildRunnerQuestions(attempt: ExamAttempt): RunnerQuestion[] {
         ),
       };
     }
-    if (q.type === "image_click" && !imageClickProblem(q.config, !!q.imageFileId)) {
-      const c = q.config as ImageClickConfig;
-      image = q.imageFileId;
-      imageClick = { aspect: c.aspect, marks: c.spots.length };
+    const click = q.type === "image_click" ? readImageClick(q) : null;
+    if (click) {
+      image = click.image;
+      imageClick = { aspect: click.config.aspect, marks: click.config.spots.length };
     }
     out.push({
       id: q.id,

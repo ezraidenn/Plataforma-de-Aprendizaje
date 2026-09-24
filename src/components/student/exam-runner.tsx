@@ -78,16 +78,11 @@ const POLICY_TEXT = {
 } as const;
 
 function toSavePayload(q: RunnerQuestion, a: AnswerState) {
-  const withText: RunnerQuestion["type"][] = [
-    "short_text",
-    "open_text",
-    "matching",
-    "ordering",
-    "image_drag",
-    "image_click",
-  ];
-  if (withText.includes(q.type)) return { answerText: a.answerText };
-  return { selectedOptionIds: a.selectedOptionIds };
+  // Solo las de opciones mandan ids; los demás tipos responden con texto (o JSON)
+  if (q.type === "single_choice" || q.type === "multiple_choice" || q.type === "true_false") {
+    return { selectedOptionIds: a.selectedOptionIds };
+  }
+  return { answerText: a.answerText };
 }
 
 // ─── Timer con reloj corregido por el servidor ───────────────────────────────

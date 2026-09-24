@@ -14,13 +14,11 @@ import {
 import {
   PRECISION_RADIUS,
   imageClickHits,
-  imageClickProblem,
-  imageDragProblem,
   parseClickAnswer,
-  type ImageClickConfig,
-  type ImageDragConfig,
+  readImageClick,
+  readImageDrag,
 } from "@/lib/image-questions";
-import type { ReviewBoard, ReviewEntry, ReviewResult } from "@/components/student/types";
+import type { ImageItemView, ReviewBoard, ReviewEntry, ReviewResult } from "@/components/student/types";
 
 /**
  * Desglose por pregunta de un intento calificado. Lleva la solución: quien lo
@@ -59,12 +57,6 @@ function selectedText(q: FullQuestion, ids: string[] | null): string {
   return ids
     .map((id) => q.options.find((o) => o.id === id)?.textMd ?? "—")
     .join(", ");
-}
-
-/** Lo que se dibuja de un elemento de «arrastrar a la imagen». */
-function elementView(c: ImageDragConfig, elementId: string) {
-  const e = c.elements.find((el) => el.id === elementId);
-  return { kind: e?.kind ?? "text", text: e?.text, fileId: e?.fileId };
 }
 
 function reviewEntry(q: FullQuestion, ans: AnswerRow | null, attemptId: string): ReviewEntry {
@@ -134,27 +126,34 @@ function reviewEntry(q: FullQuestion, ans: AnswerRow | null, attemptId: string):
       break;
     }
     case "image_drag": {
-      if (imageDragProblem(q.config, !!q.imageFileId)) break;
-      const c = q.config as ImageDragConfig;
+      const drag = readImageDrag(q);
+      if (!drag) break;
+      const c = drag.config;
       // Misma lectura de la respuesta que la calificación
       const placed = imageDragPlacement(c, ans?.answerText, attemptId, q.id);
-      const zones = c.zones.map((z, i) => ({
-        x: z.x,
-        y: z.y,
-        correct: placed[i] === z.elementId,
-        placed: placed[i] ? elementView(c, placed[i]) : null,
-        expected: elementView(c, z.elementId),
-      }));
-      if (ans?.answerText) {
+      const views = new Map<string, ImageItemView>(c.elements.map(({ id, ...view }) => [id, view]));
+      const zones = c.zones.map((z, i) => {
+        const put = placed[i];
+        return {
+          x: z.x,
+          y: z.y,
+          correct: put === z.elementId,
+          placed: put ? (views.get(put) ?? null) : null,
+          // La config ya se validó: cada lugar apunta a un elemento que existe
+          expected: views.get(z.elementId)!,
+        };
+      });
+      if (placed.some((p) => p !== undefined)) {
         yourAnswer = `${zones.filter((z) => z.correct).length} de ${zones.length} lugares correctos`;
       }
       correctAnswer = "Mira la imagen con la solución";
-      board = { kind: "drag", image: q.imageFileId!, aspect: c.aspect, iconSize: c.iconSize, zones };
+      board = { kind: "drag", image: drag.image, aspect: c.aspect, iconSize: c.iconSize, zones };
       break;
     }
     case "image_click": {
-      if (imageClickProblem(q.config, !!q.imageFileId)) break;
-      const c = q.config as ImageClickConfig;
+      const click = readImageClick(q);
+      if (!click) break;
+      const c = click.config;
       const marks = parseClickAnswer(ans?.answerText, c.spots.length);
       // Mismo emparejamiento que la calificación: cada marca acredita un solo punto
       const hits = imageClickHits(c, marks);
@@ -164,7 +163,7 @@ function reviewEntry(q: FullQuestion, ans: AnswerRow | null, attemptId: string):
       correctAnswer = "Mira la imagen con la solución";
       board = {
         kind: "click",
-        image: q.imageFileId!,
+        image: click.image,
         aspect: c.aspect,
         radius: PRECISION_RADIUS[c.precision],
         spots: c.spots.map((s, i) => ({ x: s.x, y: s.y, hit: hits[i] })),

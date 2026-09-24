@@ -46,9 +46,13 @@ export function imageDragProblem(config: unknown, hasImage: boolean): string | n
   for (const e of c.elements) {
     if (!e || typeof e.id !== "string" || !e.id || ids.has(e.id)) return "Hay elementos repetidos";
     ids.add(e.id);
-    if (e.kind === "icon" && !e.fileId) return "Hay un ícono sin imagen";
-    if (e.kind === "text" && !(e.text ?? "").trim()) return "Hay una etiqueta sin texto";
-    if (e.kind === "text" && (e.text ?? "").trim().length > MAX_LABEL) return `Las etiquetas deben tener como máximo ${MAX_LABEL} caracteres`;
+    // typeof antes de usarlos: la config puede venir de cualquier parte
+    if (e.kind === "icon" && (typeof e.fileId !== "string" || !e.fileId)) return "Hay un ícono sin imagen";
+    if (e.kind === "text") {
+      const text = typeof e.text === "string" ? e.text.trim() : "";
+      if (!text) return "Hay una etiqueta sin texto";
+      if (text.length > MAX_LABEL) return `Las etiquetas deben tener como máximo ${MAX_LABEL} caracteres`;
+    }
     if (e.kind !== "icon" && e.kind !== "text") return "Hay un elemento de un tipo desconocido";
   }
   if (c.zones.length === 0) return "Coloca al menos un elemento en la foto";
@@ -70,6 +74,61 @@ export function imageClickProblem(config: unknown, hasImage: boolean): string | 
   if (c.spots.length > MAX_SPOTS) return "Usa como máximo diez puntos";
   if (c.spots.some((s) => !s || !unit(s.x) || !unit(s.y))) return "Hay un punto fuera de la foto";
   return null;
+}
+
+/**
+ * Pregunta guardada → su foto y su config, o null si no está completa. Es el
+ * único criterio para lo que ve el alumno, la calificación y la revisión.
+ */
+export function readImageDrag(q: { imageFileId: string | null; config: unknown }): { image: string; config: ImageDragConfig } | null {
+  if (imageDragProblem(q.config, !!q.imageFileId) || !q.imageFileId) return null;
+  return { image: q.imageFileId, config: q.config as ImageDragConfig };
+}
+
+export function readImageClick(q: { imageFileId: string | null; config: unknown }): { image: string; config: ImageClickConfig } | null {
+  if (imageClickProblem(q.config, !!q.imageFileId) || !q.imageFileId) return null;
+  return { image: q.imageFileId, config: q.config as ImageClickConfig };
+}
+
+const MAX_ID = 64;
+const SIZES = ["sm", "md", "lg"];
+const record = (v: unknown): Record<string, unknown> =>
+  v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+const list = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
+const finite = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+const shortId = (v: unknown): string | undefined => (typeof v === "string" && v.length <= MAX_ID ? v : undefined);
+const size = (v: unknown): string | undefined => (typeof v === "string" && SIZES.includes(v) ? v : undefined);
+/** Sin las claves en undefined: lo que se guarda queda limpio. */
+const compact = <T extends Record<string, unknown>>(o: T): T =>
+  Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T;
+const point = (v: unknown) => {
+  const p = record(v);
+  return compact({ x: finite(p.x), y: finite(p.y) });
+};
+
+/**
+ * Config que llega del navegador → solo los campos conocidos, con su tipo
+ * (íconos sin texto, etiquetas sin archivo, ids cortos, números finitos). Lo
+ * que no cuadra se omite y lo señala la validación; aquí no se decide si la
+ * pregunta está completa.
+ */
+export function sanitizeImageConfig(type: "image_drag" | "image_click", raw: unknown): unknown {
+  const c = record(raw);
+  if (type === "image_click") {
+    return compact({ aspect: finite(c.aspect), precision: size(c.precision), spots: list(c.spots).map(point) });
+  }
+  return compact({
+    aspect: finite(c.aspect),
+    iconSize: size(c.iconSize),
+    elements: list(c.elements).map((v) => {
+      const e = record(v);
+      const id = shortId(e.id);
+      if (e.kind === "icon") return compact({ id, kind: "icon", fileId: shortId(e.fileId) });
+      if (e.kind === "text") return compact({ id, kind: "text", text: typeof e.text === "string" ? e.text.trim() : undefined });
+      return compact({ id });
+    }),
+    zones: list(c.zones).map((v) => compact({ ...point(v), elementId: shortId(record(v).elementId) })),
+  });
 }
 
 /**
