@@ -199,11 +199,12 @@ export function validateExamCsv(text: string): {
     const rawType = col.get(cells, "tipo").toLowerCase().trim();
     const prompt = col.get(cells, "pregunta").trim();
     const preview = prompt.length > 60 ? prompt.slice(0, 57) + "…" : prompt;
-    const typeLabel = TYPE_LABELS[rawType] ?? rawType;
+    // Object.hasOwn: «constructor» o «toString» en la columna no deben leerse del prototipo
+    const typeLabel = Object.hasOwn(TYPE_LABELS, rawType) ? TYPE_LABELS[rawType] : rawType;
 
     const fail = (message: string): ExamCsvRow => ({ line, status: "invalid", message, preview, typeLabel });
 
-    const type = CSV_TO_TYPE[rawType];
+    const type = Object.hasOwn(CSV_TO_TYPE, rawType) ? CSV_TO_TYPE[rawType] : undefined;
     if (!type) return fail(`Tipo desconocido "${rawType}" — usa los de la plantilla`);
     if (!prompt) return fail("Falta el enunciado");
 

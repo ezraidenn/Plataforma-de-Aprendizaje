@@ -40,8 +40,6 @@ import { cn } from "@/lib/utils";
 
 type DragConfig = NonNullable<RunnerQuestion["imageDrag"]>;
 
-const INSTRUCTIONS = { draggable: "Pulsa Enter para elegir la ficha y después Enter en su lugar." };
-
 export function ImageDragControl({
   image,
   config,
@@ -171,7 +169,7 @@ export function ImageDragControl({
   /** Toque en la foto con una ficha elegida: al lugar más cercano, si hay uno a la mano. */
   function onBoardTap(p: Point) {
     if (!selected) return;
-    const i = nearestZone(zones, p, config.aspect, () => true);
+    const i = nearestZone(zones, p, config.aspect);
     if (i !== null) place(selected, zones[i].token, false);
     else announce("Toca uno de los lugares marcados en la foto");
   }
@@ -185,7 +183,7 @@ export function ImageDragControl({
       rect.top + rect.height / 2,
       board.node.getBoundingClientRect()
     );
-    const i = nearestZone(zones, center, config.aspect, () => true);
+    const i = nearestZone(zones, center, config.aspect);
     return i === null ? null : zones[i].token;
   }
 
@@ -212,7 +210,7 @@ export function ImageDragControl({
       </p>
       <DndContext
         sensors={sensors}
-        accessibility={{ announcements: QUIET_ANNOUNCEMENTS, screenReaderInstructions: INSTRUCTIONS }}
+        accessibility={{ announcements: QUIET_ANNOUNCEMENTS }}
         // Desplaza solo muy cerca del borde: con el 20 % de fábrica, una sombra
         // arriba de la vista se alejaba justo al llegar a ella
         autoScroll={{ threshold: { x: 0, y: 0.08 } }}

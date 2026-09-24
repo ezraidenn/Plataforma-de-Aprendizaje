@@ -70,7 +70,7 @@ export function buildStudentTree(courseId: string, studentId: string): StudentTr
   }
 
   // drawCount por examen: con pool aleatorio el subtexto muestra las preguntas
-  // POR INTENTO, no el tamaño del banco (B8)
+  // POR INTENTO, no el tamaño del banco
   const drawCountByExam = new Map<string, number | null>();
   if (examIds.length > 0) {
     const rows = db

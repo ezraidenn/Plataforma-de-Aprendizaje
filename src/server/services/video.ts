@@ -152,7 +152,7 @@ export function videoHeartbeat(opts: {
   }
   if (!video.durationSeconds) throw new Error("La duración del video aún no está registrada");
 
-  // B4: si la duración guardada difiere >20% de la que reporta el player,
+  // Si la duración guardada difiere >20% de la que reporta el player,
   // usamos la MENOR solo para el cálculo de cobertura. No reescribimos la
   // guardada (la fijó el maestro o el primer latido y el cliente no debe
   // poder inflarla), pero con una guardada demasiado larga el 100% sería

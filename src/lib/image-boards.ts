@@ -1,11 +1,38 @@
-import type { ReviewBoard } from "@/components/student/types";
-import { PRECISION_RADIUS, imageClickHits, type ImageClickConfig, type ImageDragConfig, type Point } from "./image-questions";
+import {
+  PRECISION_RADIUS,
+  imageClickHits,
+  type IconSize,
+  type ImageClickConfig,
+  type ImageDragConfig,
+  type ImageItemView,
+  type Point,
+} from "./image-questions";
 
 /**
  * Tableros que dibujan la solución de una pregunta sobre imagen: los usa la
  * revisión del alumno (con lo que respondió) y la vista previa del maestro
  * (solo la solución). Puro: sin BD ni DOM.
  */
+
+/** Tablero de revisión de una pregunta sobre imagen (solo viaja con resultados visibles). */
+export type ReviewBoard =
+  | {
+      kind: "drag";
+      image: string;
+      aspect: number;
+      iconSize: IconSize;
+      zones: { x: number; y: number; correct: boolean; placed: ImageItemView | null; expected: ImageItemView }[];
+      /** Archivos de todos los íconos de la pregunta, para numerar «Ícono N» como el alumno. */
+      iconFiles: string[];
+    }
+  | {
+      kind: "click";
+      image: string;
+      aspect: number;
+      radius: number;
+      spots: { x: number; y: number; hit: boolean }[];
+      marks: { x: number; y: number }[];
+    };
 
 type DragBoard = Extract<ReviewBoard, { kind: "drag" }>;
 type ClickBoard = Extract<ReviewBoard, { kind: "click" }>;

@@ -23,8 +23,11 @@ import { schema, str, strEnum, param, type AssistantTool, type ToolCtx, type Too
  * El contenido lo copia la misma copia profunda de «copiar y pegar lecciones»
  * (`duplicateItem`), rama por rama y en orden: carpetas con lo que llevan
  * dentro, documentos, videos, textos, enlaces, recursos, tareas y exámenes con
- * sus preguntas. Los archivos NO se comparten: cada copia estrena los suyos en
- * el almacenamiento, así que borrar la copia nunca toca los del original.
+ * sus preguntas. Los archivos de las lecciones NO se comparten: cada copia
+ * estrena los suyos en el almacenamiento, así que borrar la copia nunca toca
+ * los del original. Las imágenes del editor sí se comparten, entre ellas la
+ * foto y los íconos de las preguntas sobre imagen: son de la plataforma y
+ * borrar la copia tampoco las retira.
  *
  * Lo que NO se copia, porque es de las personas y no del curso: alumnos,
  * matrículas, entregas, intentos y certificados. Tampoco las reglas de

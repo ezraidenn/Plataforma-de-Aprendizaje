@@ -435,7 +435,6 @@ const clickEnd = imageClickStory(0.97);
 check("Señalar: una dentro y otra fuera → 1 de 2", clickEnd.graded && clickEnd.hits.join() === "true,false" && clickEnd.ok === 1 && clickEnd.total === 2, clickEnd);
 check("Señalar: la frase explica el círculo", HELP_TOPICS["exam.imageClick"].caption({}).includes("dentro de su círculo"));
 
-// ── Las tareas siguientes agregan sus secciones ARRIBA de este bloque ──
 console.log("\n— Historia: ordenar pasos");
 check("Ordenar: empieza revuelto", orderingStory(0.05).order.join() !== "0,1,2,3");
 check("Ordenar: el cursor mueve pasos", orderingStory(0.4).moving !== null);

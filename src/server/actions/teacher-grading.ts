@@ -16,6 +16,7 @@ import {
   gradedRecently,
 } from "@/server/services/grading";
 import { listQuestions } from "@/server/services/exams";
+import { NO_ANSWER, imageAnswerSummary } from "@/server/services/exam-review";
 import { getAssignmentDetail, listSubmissionFiles } from "@/server/services/assignments";
 
 function errorMessage(err: unknown, fallback: string): string {
@@ -113,10 +114,10 @@ export async function loadExamGradingAction(attemptId: string): Promise<LoadExam
       answerDisplay = ans?.answerText ? "Relación de columnas" : "— Sin respuesta —";
     } else if (q.type === "ordering") {
       answerDisplay = ans?.answerText ? "Orden de pasos" : "— Sin respuesta —";
-    } else if (q.type === "image_drag") {
-      answerDisplay = ans?.answerText ? "Arrastrar a la imagen" : "— Sin respuesta —";
-    } else if (q.type === "image_click") {
-      answerDisplay = ans?.answerText ? "Señalar en la imagen" : "— Sin respuesta —";
+    } else if (q.type === "image_drag" || q.type === "image_click") {
+      // El mismo resumen que lee el alumno en su revisión («N de M lugares correctos»…)
+      const summary = imageAnswerSummary(q, ans?.answerText, attemptId);
+      if (summary !== NO_ANSWER) answerDisplay = summary;
     }
     return {
       questionId: q.id,

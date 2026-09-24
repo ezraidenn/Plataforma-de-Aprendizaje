@@ -140,7 +140,7 @@ export async function submitAttemptAction(input: {
     return { error: "Examen no encontrado" };
   }
   try {
-    // B9: validar que el intento corresponde al examen ANTES de enviarlo
+    // El intento debe ser de este examen y de este alumno: se comprueba ANTES de enviarlo
     const existing = db
       .select()
       .from(examAttempts)
@@ -150,7 +150,7 @@ export async function submitAttemptAction(input: {
       return { error: "Intento no encontrado" };
     }
 
-    // M1: capturar el estado del enrollment ANTES del envío para avisar
+    // El estado de la matrícula se toma ANTES del envío para avisar
     // "¡Aprobaste el curso!" solo cuando este envío lo completa.
     const wasCompleted = getEnrollment(input.courseId, user.id)?.status === "completed";
 

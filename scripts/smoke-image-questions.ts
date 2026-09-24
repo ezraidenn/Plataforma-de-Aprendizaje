@@ -14,7 +14,7 @@ import { attemptAnswers, auditLog, courses as coursesTable, files, notifications
 import * as courses from "../src/server/services/courses";
 import * as tree from "../src/server/services/tree";
 import * as examsSvc from "../src/server/services/exams";
-import { buildReview } from "../src/server/services/exam-review";
+import { buildReview, imageAnswerSummary } from "../src/server/services/exam-review";
 import { exportExamCsv, countImageQuestions } from "../src/server/services/exam-csv";
 import { importQuestionInputs } from "../src/server/services/exam-import";
 import { parseCsv } from "../src/server/services/csv-core";
@@ -24,6 +24,7 @@ import { cleanupSmokeNotifications } from "./lib/smoke-cleanup";
 import { imagePreview, questionsToPreview } from "../src/lib/preview-question";
 import { clickReviewBoard, dragReviewBoard } from "../src/lib/image-boards";
 import {
+  MAX_SPOTS,
   MIN_ZONE_GAP,
   PRECISION_RADIUS,
   SNAP_RADIUS,
@@ -103,9 +104,9 @@ function mathChecks() {
   check("Emparejamiento máximo", imageClickScore(NEAR, [{ x: 0.55, y: 0.5 }, { x: 0.45, y: 0.5 }]) === 1);
 
   const zones = DRAG.zones.map(({ x, y }) => ({ x, y }));
-  check("Encaje: la sombra más cercana dentro del radio", nearestZone(zones, { x: 0.22, y: 0.31 }, DRAG.aspect, () => true) === 0);
-  check("Encaje: lejos de todas, ninguna", nearestZone(zones, { x: 0.45, y: 0.55 }, DRAG.aspect, () => true) === null);
-  check("Encaje: salta las ocupadas", nearestZone(zones, { x: 0.22, y: 0.31 }, DRAG.aspect, (i) => i !== 0) === null);
+  check("Encaje: la sombra más cercana dentro del radio", nearestZone(zones, { x: 0.22, y: 0.31 }, DRAG.aspect) === 0);
+  check("Encaje: lejos de todas, ninguna", nearestZone(zones, { x: 0.45, y: 0.55 }, DRAG.aspect) === null);
+  check("Encaje: con dos a la mano, la más cercana", nearestZone([{ x: 0.5, y: 0.5 }, { x: 0.56, y: 0.5 }], { x: 0.54, y: 0.5 }, 1) === 1);
   check("Radio de encaje razonable", SNAP_RADIUS > 0 && SNAP_RADIUS < 0.2);
 
   // Editor: un lugar soltado encima de otro se corre lo justo
@@ -166,7 +167,7 @@ function validationChecks() {
   check("Ícono con archivo que no es texto: problema, sin lanzar", odd({ id: "m", kind: "icon", fileId: 5 }) === "Hay un ícono sin imagen", odd({ id: "m", kind: "icon", fileId: 5 }));
   check("Señalar válido", imageClickProblem(CLICK, true) === null, imageClickProblem(CLICK, true));
   check("Señalar sin puntos", imageClickProblem({ ...CLICK, spots: [] }, true) === "Marca al menos un punto en la foto");
-  check("Señalar con 11 puntos", imageClickProblem({ ...CLICK, spots: Array.from({ length: 11 }, () => ({ x: 0.5, y: 0.5 })) }, true) === "Usa como máximo diez puntos");
+  check(`Señalar con ${MAX_SPOTS + 1} puntos`, imageClickProblem({ ...CLICK, spots: Array.from({ length: MAX_SPOTS + 1 }, () => ({ x: 0.5, y: 0.5 })) }, true) === `Usa como máximo ${MAX_SPOTS} puntos`);
   check("Proporción inválida", imageClickProblem({ ...CLICK, aspect: 0 }, true) !== null);
 }
 
@@ -385,7 +386,7 @@ async function endToEnd() {
     // Respuesta correcta calculada con las mismas fichas que el servidor, con
     // los dos extintores cruzados (copia 1 en el primer lugar, copia 0 en el
     // segundo): da igual qué copia vaya en cuál
-    const [z0, z1, z2, z3] = drag.zones.map((_, i) => examsSvc.imageZoneToken(attempt.id, qDrag, i));
+    const [z0, z1, z2, z3] = drag.zones.map((z) => examsSvc.imageZoneToken(attempt.id, qDrag, z));
     const item = (elementId: string, copy: number) => examsSvc.imageItemToken(attempt.id, qDrag, elementId, copy);
     const ext0 = item(EL.ext, 0);
     const answer: Record<string, string> = { [z0]: item(EL.ext, 1), [z1]: ext0, [z2]: item(EL.sal, 0), [z3]: item(EL.reu, 0) };
@@ -397,6 +398,13 @@ async function endToEnd() {
     check("La misma ficha en dos lugares cuenta una vez", imageDragScore(drag, twice) === 0.75, twice);
     const forged = examsSvc.imageDragPlacement(drag, JSON.stringify({ [z0]: "0123456789abcdef", [z1]: EL.ext }), attempt.id, qDrag);
     check("Fichas inventadas o ids de elemento no cuentan", forged.every((p) => p === undefined), forged);
+
+    // La ficha de un lugar va por sus coordenadas: si el maestro lo mueve, ese
+    // lugar queda vacío y los demás no cambian
+    const moved: ImageDragConfig = { ...drag, zones: drag.zones.map((z, i) => (i === 2 ? { ...z, x: 0.85 } : z)) };
+    const afterMove = examsSvc.imageDragPlacement(moved, JSON.stringify(answer), attempt.id, qDrag);
+    check("Mover un lugar lo deja vacío; los demás siguen acreditados",
+      afterMove[2] === undefined && imageDragScore(moved, afterMove) === 0.75, afterMove);
 
     const r = PRECISION_RADIUS.md;
     const marks = [
@@ -432,11 +440,44 @@ async function endToEnd() {
     check("Revisión de arrastrar sin colocaciones válidas: «Sin respuesta»",
       empty.yourAnswer === "Sin respuesta" && empty.board?.kind === "drag" && empty.board.zones.every((z) => z.placed === null), empty);
 
+    // ─── El maestro quita el primer lugar con un intento ya contestado ────────
+    // Los lugares que quedan siguen acreditados; con fichas por posición se
+    // corrían un lugar y la respuesta, toda bien puesta, valía 0.
+    // En su propio curso: con la secuencia obligatoria, un segundo examen aquí
+    // quedaría bloqueado
+    const editCourse = courses.createCourse({ ownerId: teacher, title: `${P} Editar con intento` });
+    const editExam = tree.createItem({ courseId: editCourse.id, parentId: null, kind: "exam", title: `${P} Examen editado` });
+    const qEdit = examsSvc.createQuestion(editExam.id, { type: "image_drag", promptMd: "Coloca cada señal", points: 3, config: drag, imageFileId: photo });
+    courses.publishCourse(editCourse.id);
+    courses.enrollStudents(editCourse.id, [student], teacher);
+    const open = examsSvc.startAttempt({ courseId: editCourse.id, studentId: student, examItemId: editExam.id });
+    const zoneOf = (z: { x: number; y: number }) => examsSvc.imageZoneToken(open.id, qEdit, z);
+    const itemOf = (elementId: string, copy: number) => examsSvc.imageItemToken(open.id, qEdit, elementId, copy);
+    const allRight = {
+      [zoneOf(drag.zones[0])]: itemOf(EL.ext, 1),
+      [zoneOf(drag.zones[1])]: itemOf(EL.ext, 0),
+      [zoneOf(drag.zones[2])]: itemOf(EL.sal, 0),
+      [zoneOf(drag.zones[3])]: itemOf(EL.reu, 0),
+    };
+    examsSvc.saveAnswer({ studentId: student, attemptId: open.id, questionId: qEdit, answerText: JSON.stringify(allRight) });
+    const trimmed: ImageDragConfig = { ...drag, zones: drag.zones.slice(1) };
+    examsSvc.updateQuestion(qEdit, { type: "image_drag", promptMd: "Coloca cada señal", points: 3, config: trimmed, imageFileId: photo });
+    const afterEdit = examsSvc.submitAttempt({ courseId: editCourse.id, studentId: student, attemptId: open.id });
+    check("Quitar el primer lugar con el intento contestado: los otros tres siguen acreditados (3 de 3)",
+      afterEdit.status === "graded" && afterEdit.finalScore === 3, { status: afterEdit.status, score: afterEdit.finalScore });
+    const editReview = buildReview(afterEdit).find((e) => e.questionId === qEdit);
+    check("…y la revisión lo lee igual", editReview?.yourAnswer === "3 de 3 lugares correctos", editReview);
+    check("…y el maestro al calificar ve lo mismo que el alumno",
+      imageAnswerSummary(examsSvc.listQuestions(editExam.id)[0], JSON.stringify(allRight), open.id) === "3 de 3 lugares correctos");
+    check("Resumen: una respuesta «{}» o «[]» se lee «Sin respuesta», no como contestada",
+      imageAnswerSummary({ id: qEdit, type: "image_drag", imageFileId: photo, config: trimmed }, "{}", open.id) === "Sin respuesta" &&
+        imageAnswerSummary({ id: qEdit, type: "image_drag", imageFileId: photo, config: trimmed }, "[]", open.id) === "Sin respuesta");
+
     const copyId = examsSvc.duplicateQuestion(exam.id, qDrag);
     const copied = examsSvc.listQuestions(exam.id).find((q) => q.id === copyId);
     check("Duplicar dentro del examen comparte la foto", copied?.imageFileId === photo && JSON.stringify(copied?.config) === JSON.stringify(drag));
 
-    // ─── Copiar la lección/examen: la foto y los íconos se comparten (Tarea 3) ─
+    // ─── Copiar la lección/examen: la foto y los íconos se comparten ──────────
     const examCopy = await tree.duplicateItem({
       sourceItemId: exam.id,
       targetCourseId: course.id,

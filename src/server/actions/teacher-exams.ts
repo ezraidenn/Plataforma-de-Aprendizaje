@@ -9,10 +9,8 @@ function cleanRich(s: string): string {
 
 import { revalidatePath } from "next/cache";
 import { requireTeacher } from "@/server/auth/guards";
-import { getOwnedCourse } from "@/server/services/courses";
-import { getItem } from "@/server/services/tree";
+import { ownedExamItem } from "@/server/services/exam-access";
 import {
-  getExam,
   listQuestions,
   createQuestion,
   updateQuestion,
@@ -26,6 +24,7 @@ import {
 import { setExamResultsPublished } from "@/server/services/exam-results";
 import { audit } from "@/server/services/audit";
 import { isImageQuestionType, sanitizeImageConfig } from "@/lib/image-questions";
+import { questionProblem } from "@/lib/question-validation";
 
 // ─── Guard común: el ítem debe ser un examen de un curso del maestro ─────────
 
@@ -42,14 +41,8 @@ function checkExamItem(
   courseId: string,
   itemId: string
 ): { error: string } | null {
-  const course = getOwnedCourse(courseId, user);
-  if (!course) return { error: "No encontramos este curso o no te pertenece" };
-
-  const item = getItem(itemId);
-  if (!item || item.courseId !== courseId || item.kind !== "exam" || !getExam(itemId)) {
-    return { error: "No encontramos este examen" };
-  }
-  return null;
+  const owned = ownedExamItem(user, courseId, itemId);
+  return "error" in owned ? owned : null;
 }
 
 function errorMessage(err: unknown, fallback: string): string {
@@ -278,10 +271,13 @@ export async function createQuestionAction(
 
   const serviceInput = toServiceInput(input);
   if ("error" in serviceInput) return serviceInput;
-  const filesError = imageFilesError(user, serviceInput);
-  if (filesError) return filesError;
+  // Primero la pregunta (sin tocar la base); los archivos, solo si ya está completa
+  const problem = questionProblem(serviceInput);
+  if (problem) return { error: problem };
 
   try {
+    const filesError = imageFilesError(user, serviceInput);
+    if (filesError) return filesError;
     const questionId = createQuestion(itemId, serviceInput);
     revalidateExam(courseId, itemId);
     return { ok: true, questionId };
@@ -303,10 +299,12 @@ export async function updateQuestionAction(
 
   const serviceInput = toServiceInput(input);
   if ("error" in serviceInput) return serviceInput;
-  const filesError = imageFilesError(user, serviceInput, questionId);
-  if (filesError) return filesError;
+  const problem = questionProblem(serviceInput);
+  if (problem) return { error: problem };
 
   try {
+    const filesError = imageFilesError(user, serviceInput, questionId);
+    if (filesError) return filesError;
     updateQuestion(questionId, serviceInput);
     revalidateExam(courseId, itemId);
     return { ok: true, questionId };

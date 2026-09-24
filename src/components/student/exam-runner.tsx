@@ -244,7 +244,7 @@ export function ExamRunner({
   const [phase, setPhase] = useState<"start" | "running" | "results">("start");
   const [attempt, setAttempt] = useState<AttemptDto | null>(null);
   // Las preguntas llegan al iniciar/reanudar el intento (nunca en la pantalla
-  // de inicio): el banco no viaja sin intento (C4).
+  // de inicio): el banco no viaja sin intento.
   const [questions, setQuestions] = useState<RunnerQuestion[]>(
     data.resume?.questions ?? []
   );
@@ -267,7 +267,7 @@ export function ExamRunner({
   const attemptRef = useRef(attempt);
   attemptRef.current = attempt;
 
-  // C1: el orden renderizado es EXACTAMENTE questionOrder mapeado sobre las
+  // El orden renderizado es EXACTAMENTE questionOrder mapeado sobre las
   // preguntas recibidas; si falta alguna en el payload se ignora (nunca se
   // anexa nada fuera del sorteo).
   const orderedQuestions = useMemo(() => {
@@ -379,7 +379,7 @@ export function ExamRunner({
       submittedRef.current = true;
       setSubmitting(true);
       await flushAll();
-      // M2: si quedaron respuestas sin guardar y NO es el autoenvío del timer,
+      // Si quedaron respuestas sin guardar y NO es el autoenvío del timer,
       // no enviamos un intento incompleto.
       if (!auto && dirtyRef.current.size > 0) {
         submittedRef.current = false;
@@ -588,10 +588,10 @@ export function ExamRunner({
     const passed =
       result.scorePercent !== null &&
       (data.passScore === null || result.scorePercent >= data.passScore);
-    // M3: attemptsUsed viene fresco del servidor (ya incluye este envío)
+    // attemptsUsed viene fresco del servidor (ya incluye este envío)
     const remainingAttempts =
       data.maxAttempts === null ? null : Math.max(0, data.maxAttempts - attemptsUsed);
-    // B5: la ventana se recalcula con el reloj del servidor (offset), no con
+    // La ventana se recalcula con el reloj del servidor (offset), no con
     // el windowState congelado al cargar la página.
     const nowMs = Date.now() + offsetRef.current;
     const windowOpen =

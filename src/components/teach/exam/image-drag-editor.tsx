@@ -650,7 +650,7 @@ export function DragEditor({
                 onClick={() => uploading === null && iconInput.current?.click()}
               >
                 {uploading === "icon" ? <Loader2 className="animate-spin" aria-hidden /> : <Plus aria-hidden />}
-                {uploading === "icon" ? "Subiendo…" : "Ícono (PNG)"}
+                {uploading === "icon" ? "Subiendo…" : "Ícono"}
               </Button>
               <Button
                 type="button"

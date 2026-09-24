@@ -38,7 +38,7 @@ export async function loginAction(_prev: LoginState, formData: FormData): Promis
 
   db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, user.id)).run();
 
-  // B3: si el middleware mandó a /login con ?next=<ruta>, volver ahí tras
+  // Si el middleware mandó a /login con ?next=<ruta>, volver ahí tras
   // entrar. El action se POSTea desde /login?next=..., así que la ruta viene
   // en el referer (misma origin: el navegador manda la URL completa). Solo se
   // aceptan rutas internas ("/..." pero no "//...": nada de dominios externos).

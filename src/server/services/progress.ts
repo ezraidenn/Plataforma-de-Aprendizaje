@@ -381,7 +381,7 @@ export function courseProgress(courseId: string, studentId: string): CourseProgr
   const nextItem =
     lastInProgress ?? order.find((i) => progress.get(i.id)?.status !== "completed") ?? null;
 
-  // B7: en un curso 100% opcional (sin ítems requeridos) el % se calcula con
+  // En un curso 100% opcional (sin ítems requeridos) el % se calcula con
   // los ítems visibles no requeridos, para que no quede en 0% eterno.
   let percent = 0;
   if (required.length > 0) {

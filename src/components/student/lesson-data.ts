@@ -78,7 +78,7 @@ export function answersForAttempt(attemptId: string): SavedAnswer[] {
  * questionOrder del intento, en ese orden. Viajan SIN isCorrect ni respuestas
  * aceptadas; el matching baraja las derechas identificadas por un token opaco
  * por intento (formato de respuesta {leftIndex: token}). El banco completo
- * nunca sale del servidor (C4/C2).
+ * nunca sale del servidor.
  */
 export function buildRunnerQuestions(attempt: ExamAttempt): RunnerQuestion[] {
   const qs = listQuestions(attempt.examItemId);
@@ -125,7 +125,7 @@ export function buildRunnerQuestions(attempt: ExamAttempt): RunnerQuestion[] {
         aspect: c.aspect,
         iconSize: c.iconSize,
         // Revueltos: el orden no puede delatar a qué elemento pertenece cada lugar
-        zones: shuffle(c.zones.map((z, i) => ({ token: imageZoneToken(attempt.id, q.id, i), x: z.x, y: z.y }))),
+        zones: shuffle(c.zones.map((z) => ({ token: imageZoneToken(attempt.id, q.id, z), x: z.x, y: z.y }))),
         items: shuffle(
           dragCopies(c).map((cp) => {
             const e = c.elements[cp.elementIndex];

@@ -81,7 +81,7 @@ type UpcomingExam = {
 };
 
 function closesText(ms: number, now: number): string {
-  // B2: "hoy"/"mañana" por día CALENDARIO, no por delta de 24 h (un examen
+  // "hoy"/"mañana" por día CALENDARIO, no por delta de 24 h (un examen
   // que cierra mañana a mediodía no "cierra hoy" aunque falten <24 h).
   const startOfDay = (t: number) => {
     const d = new Date(t);
@@ -95,7 +95,7 @@ function closesText(ms: number, now: number): string {
 
 /**
  * Exámenes de mis cursos que cierran en ≤ 7 días y aún no están aprobados.
- * B1: se excluyen los bloqueados por candado y los que ya no tienen intentos.
+ * Se excluyen los bloqueados por candado y los que ya no tienen intentos.
  */
 function upcomingExams(entries: CourseEntry[], studentId: string, now: number): UpcomingExam[] {
   const soon = now + 7 * DAY_MS;

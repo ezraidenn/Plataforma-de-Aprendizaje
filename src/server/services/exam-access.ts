@@ -7,7 +7,8 @@ export type ExamItem = NonNullable<ReturnType<typeof getItem>>;
 
 /**
  * El ítem debe ser un examen de un curso del usuario (o de cualquiera, si es
- * admin). La usan las acciones de «Importar con IA» y la ruta de visión.
+ * admin). La usan las acciones del editor de exámenes, las de «Importar con
+ * IA» y la ruta de visión.
  */
 export function ownedExamItem(
   user: { id: string; role: string },

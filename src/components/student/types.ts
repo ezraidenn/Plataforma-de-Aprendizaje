@@ -1,9 +1,11 @@
 // Tipos serializables que viajan de server components a client components.
 
-import type { IconSize, ImageElement } from "@/lib/image-questions";
+import type { IconSize, ImageItemView } from "@/lib/image-questions";
+import type { ReviewBoard } from "@/lib/image-boards";
 
-/** Un elemento de «arrastrar a la imagen» tal como se dibuja: sin su id. */
-export type ImageItemView = Omit<ImageElement, "id">;
+// Viven en src/lib (las usan también la revisión y la vista previa, sin UI);
+// se reexportan para quien ya las importa de aquí
+export type { ImageItemView, ReviewBoard };
 
 export type StudentItemStatus = "completed" | "in_progress" | "available" | "locked";
 
@@ -128,7 +130,7 @@ export type RunnerQuestion = {
   options: { id: string; text: string }[];
   /**
    * matching: izquierda fija; derechas barajadas identificadas por un token
-   * opaco por intento (el DOM no revela el índice original, C2).
+   * opaco por intento (el DOM no revela el índice original).
    */
   matching: {
     lefts: string[];
@@ -203,7 +205,7 @@ export type ExamLessonData = {
   /**
    * Intento en curso (con sus respuestas guardadas) para retomar. Las
    * preguntas viajan SOLO aquí o en la respuesta de startAttemptAction:
-   * la pantalla de inicio nunca recibe el banco (C4).
+   * la pantalla de inicio nunca recibe el banco.
    */
   resume: {
     attempt: AttemptDto;
@@ -290,23 +292,3 @@ export type ReviewEntry = {
   /** Preguntas sobre imagen: lo que puso el alumno y la solución, para dibujarlos. */
   board?: ReviewBoard;
 };
-
-/** Tablero de revisión de una pregunta sobre imagen (solo viaja con resultados visibles). */
-export type ReviewBoard =
-  | {
-      kind: "drag";
-      image: string;
-      aspect: number;
-      iconSize: IconSize;
-      zones: { x: number; y: number; correct: boolean; placed: ImageItemView | null; expected: ImageItemView }[];
-      /** Archivos de todos los íconos de la pregunta, para numerar «Ícono N» como el alumno. */
-      iconFiles: string[];
-    }
-  | {
-      kind: "click";
-      image: string;
-      aspect: number;
-      radius: number;
-      spots: { x: number; y: number; hit: boolean }[];
-      marks: { x: number; y: number }[];
-    };

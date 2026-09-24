@@ -64,15 +64,23 @@ export function orderingToken(attemptId: string, questionId: string, originalInd
   return opaqueToken("order", attemptId, questionId, originalIndex);
 }
 
-/** Ficha opaca de un lugar de «arrastrar a la imagen». */
-export function imageZoneToken(attemptId: string, questionId: string, zoneIndex: number): string {
-  return opaqueToken("imgzone", attemptId, questionId, zoneIndex);
+/**
+ * Ficha opaca de un lugar de «arrastrar a la imagen». Va por las coordenadas
+ * del lugar tal como están guardadas (no hay dos iguales: la validación los
+ * separa al menos MIN_ZONE_GAP), no por su posición en `config.zones`: si el
+ * maestro quita o mueve un lugar con un intento en curso, ese lugar queda
+ * vacío y los demás siguen valiendo, en vez de correrse y acreditar otro.
+ */
+export function imageZoneToken(attemptId: string, questionId: string, zone: { x: number; y: number }): string {
+  return opaqueToken("imgzone", attemptId, questionId, `${zone.x},${zone.y}`);
 }
 
 /**
- * Ficha opaca de una copia de un elemento de «arrastrar a la imagen». Va por
- * el id del elemento (el HMAC lo oculta), no por su posición: si el maestro
- * reordena o borra elementos con un intento en curso, las demás fichas valen.
+ * Ficha opaca de una copia de un elemento de «arrastrar a la imagen». Como la
+ * del lugar, no depende de posiciones: va por el id del elemento (el HMAC lo
+ * oculta) y el número de copia. Si el maestro reordena o borra elementos con
+ * un intento en curso, las demás fichas siguen valiendo; si un elemento se
+ * queda con menos lugares, sus copias de más dejan de contar.
  */
 export function imageItemToken(attemptId: string, questionId: string, elementId: string, copy: number): string {
   return opaqueToken("imgitem", attemptId, questionId, elementId, copy);
@@ -90,7 +98,7 @@ export function imageDragPlacement(
   questionId: string
 ): (string | undefined)[] {
   const answer = parseDragAnswer(answerText);
-  const zoneIndex = new Map(config.zones.map((_, i) => [imageZoneToken(attemptId, questionId, i), i]));
+  const zoneIndex = new Map(config.zones.map((z, i) => [imageZoneToken(attemptId, questionId, z), i]));
   const elementOf = new Map(
     dragCopies(config).map((cp) => [imageItemToken(attemptId, questionId, cp.elementId, cp.copy), cp.elementId])
   );

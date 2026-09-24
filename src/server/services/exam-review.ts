@@ -12,8 +12,8 @@ import {
   type QuestionOption,
 } from "./exams";
 import { parseClickAnswer, readImageClick, readImageDrag } from "@/lib/image-questions";
-import { clickReviewBoard, dragReviewBoard } from "@/lib/image-boards";
-import type { ReviewBoard, ReviewEntry, ReviewResult } from "@/components/student/types";
+import { clickReviewBoard, dragReviewBoard, type ReviewBoard } from "@/lib/image-boards";
+import type { ReviewEntry, ReviewResult } from "@/components/student/types";
 
 /**
  * Desglose por pregunta de un intento calificado. Lleva la solución: quien lo
@@ -34,7 +34,7 @@ export function buildReview(attempt: ExamAttempt): ReviewEntry[] {
     .all();
   const ansByQ = new Map(answers.map((a) => [a.questionId, a]));
 
-  // A4: iterar una COPIA del sorteo, sin mutar attempt.questionOrder y sin
+  // Se recorre una COPIA del sorteo, sin mutar attempt.questionOrder y sin
   // anexar preguntas del banco que no cayeron en este intento.
   const order = [...((attempt.questionOrder as string[] | null) ?? qs.map((q) => q.id))];
 
@@ -47,15 +47,61 @@ export function buildReview(attempt: ExamAttempt): ReviewEntry[] {
   return entries;
 }
 
+/** Lo que se lee cuando el alumno no contestó (o nada de lo que mandó cuenta). */
+export const NO_ANSWER = "Sin respuesta";
+
+type ImageQuestion = Pick<Question, "id" | "type" | "imageFileId" | "config">;
+
+/**
+ * Respuesta a una pregunta sobre imagen, leída igual que al calificar: el
+ * resumen en texto y el tablero para dibujarla. Una pregunta que no se puede
+ * mostrar (incompleta) queda sin tablero y en «Sin respuesta».
+ */
+function imageAnswer(
+  q: ImageQuestion,
+  answerText: string | null | undefined,
+  attemptId: string
+): { summary: string; board: ReviewBoard | null } {
+  const drag = q.type === "image_drag" ? readImageDrag(q) : null;
+  if (drag) {
+    // Misma lectura de la respuesta que la calificación
+    const placed = imageDragPlacement(drag.config, answerText, attemptId, q.id);
+    const board = dragReviewBoard(drag.image, drag.config, placed);
+    const summary = placed.some((p) => p !== undefined)
+      ? `${board.zones.filter((z) => z.correct).length} de ${board.zones.length} lugares correctos`
+      : NO_ANSWER;
+    return { summary, board };
+  }
+  const click = q.type === "image_click" ? readImageClick(q) : null;
+  if (click) {
+    const marks = parseClickAnswer(answerText, click.config.spots.length);
+    // Mismo emparejamiento que la calificación: cada marca acredita un solo punto
+    const board = clickReviewBoard(click.image, click.config, marks);
+    const summary =
+      marks.length > 0 ? `${board.spots.filter((s) => s.hit).length} de ${board.spots.length} puntos señalados` : NO_ANSWER;
+    return { summary, board };
+  }
+  return { summary: NO_ANSWER, board: null };
+}
+
+/**
+ * Resumen de la respuesta a una pregunta sobre imagen: «N de M lugares
+ * correctos», «N de M puntos señalados» o «Sin respuesta». Lo leen igual el
+ * alumno en su revisión y el maestro al calificar.
+ */
+export function imageAnswerSummary(q: ImageQuestion, answerText: string | null | undefined, attemptId: string): string {
+  return imageAnswer(q, answerText, attemptId).summary;
+}
+
 function selectedText(q: FullQuestion, ids: string[] | null): string {
-  if (!ids || ids.length === 0) return "Sin respuesta";
+  if (!ids || ids.length === 0) return NO_ANSWER;
   return ids
     .map((id) => q.options.find((o) => o.id === id)?.textMd ?? "—")
     .join(", ");
 }
 
 function reviewEntry(q: FullQuestion, ans: AnswerRow | null, attemptId: string): ReviewEntry {
-  let yourAnswer = "Sin respuesta";
+  let yourAnswer = NO_ANSWER;
   let correctAnswer: string | null = null;
   let board: ReviewBoard | undefined;
 
@@ -71,7 +117,7 @@ function reviewEntry(q: FullQuestion, ans: AnswerRow | null, attemptId: string):
       break;
     }
     case "short_text": {
-      yourAnswer = ans?.answerText?.trim() || "Sin respuesta";
+      yourAnswer = ans?.answerText?.trim() || NO_ANSWER;
       const accepted = (q.config as { accepted?: string[] } | null)?.accepted ?? [];
       correctAnswer = accepted.filter((a) => a.trim()).join(" · ");
       break;
@@ -116,38 +162,21 @@ function reviewEntry(q: FullQuestion, ans: AnswerRow | null, attemptId: string):
       yourAnswer =
         Array.isArray(tokens) && tokens.length > 0
           ? tokens.map((t, i) => `${i + 1}. ${textOf(t)}`).join(" · ")
-          : "Sin respuesta";
+          : NO_ANSWER;
       correctAnswer = steps.map((st, i) => `${i + 1}. ${st}`).join(" · ");
       break;
     }
-    case "image_drag": {
-      const drag = readImageDrag(q);
-      if (!drag) break;
-      // Misma lectura de la respuesta que la calificación
-      const placed = imageDragPlacement(drag.config, ans?.answerText, attemptId, q.id);
-      const dragBoard = dragReviewBoard(drag.image, drag.config, placed);
-      if (placed.some((p) => p !== undefined)) {
-        yourAnswer = `${dragBoard.zones.filter((z) => z.correct).length} de ${dragBoard.zones.length} lugares correctos`;
-      }
-      correctAnswer = "Mira la imagen con la solución";
-      board = dragBoard;
-      break;
-    }
+    case "image_drag":
     case "image_click": {
-      const click = readImageClick(q);
-      if (!click) break;
-      const marks = parseClickAnswer(ans?.answerText, click.config.spots.length);
-      // Mismo emparejamiento que la calificación: cada marca acredita un solo punto
-      const clickBoard = clickReviewBoard(click.image, click.config, marks);
-      if (marks.length > 0) {
-        yourAnswer = `${clickBoard.spots.filter((s) => s.hit).length} de ${clickBoard.spots.length} puntos señalados`;
-      }
+      const image = imageAnswer(q, ans?.answerText, attemptId);
+      if (!image.board) break;
+      yourAnswer = image.summary;
       correctAnswer = "Mira la imagen con la solución";
-      board = clickBoard;
+      board = image.board;
       break;
     }
     case "open_text": {
-      yourAnswer = ans?.answerText?.trim() || "Sin respuesta";
+      yourAnswer = ans?.answerText?.trim() || NO_ANSWER;
       correctAnswer = null;
       break;
     }

@@ -1,7 +1,7 @@
-import type { QuestionKind, ReviewBoard, RunnerQuestion } from "@/components/student/types";
+import type { QuestionKind, RunnerQuestion } from "@/components/student/types";
 import type { QuestionDraft } from "./question-draft";
 import { shuffledOrder } from "./ordering";
-import { clickReviewBoard, dragReviewBoard } from "./image-boards";
+import { clickReviewBoard, dragReviewBoard, type ReviewBoard } from "./image-boards";
 import {
   dragCopies,
   isImageQuestionType,
@@ -145,7 +145,7 @@ export function questionsToPreview(
 }
 
 /** Pregunta guardada en la BD → borrador (para «Ver como alumno» del examen actual). */
-export function questionToDraft(q: {
+function questionToDraft(q: {
   id: string;
   type: QuestionDraft["type"];
   promptMd: string;

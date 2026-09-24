@@ -10,6 +10,8 @@ export type Precision = "sm" | "md" | "lg";
 export type Point = { x: number; y: number };
 
 export type ImageElement = { id: string; kind: "icon" | "text"; fileId?: string; text?: string };
+/** Un elemento de «arrastrar a la imagen» tal como se dibuja: sin su id. */
+export type ImageItemView = Omit<ImageElement, "id">;
 export type ImageZone = Point & { elementId: string };
 export type ImageDragConfig = { aspect: number; iconSize: IconSize; elements: ImageElement[]; zones: ImageZone[] };
 export type ImageClickConfig = { aspect: number; precision: Precision; spots: Point[] };
@@ -21,6 +23,10 @@ export function isImageQuestionType(t: string): t is ImageQuestionType {
   return (IMAGE_QUESTION_TYPES as readonly string[]).includes(t);
 }
 
+// Reglas de autoría (estos máximos, MIN_ZONE_GAP, validAspect y lo que piden
+// imageDragProblem/imageClickProblem). readImageDrag/readImageClick las vuelven
+// a aplicar al leer: endurecerlas invalida preguntas ya guardadas, que se
+// leerían como «no se puede mostrar» y valdrían 0. Aflojarlas no rompe nada.
 export const MAX_ELEMENTS = 20;
 export const MAX_ZONES = 30;
 export const MAX_SPOTS = 10;
@@ -178,7 +184,7 @@ export function imageClickProblem(config: unknown, hasImage: boolean): string | 
   if (!validAspect(c.aspect)) return "Vuelve a subir la foto";
   if (!["sm", "md", "lg"].includes(c.precision as string)) return "Elige la precisión";
   if (c.spots.length === 0) return "Marca al menos un punto en la foto";
-  if (c.spots.length > MAX_SPOTS) return "Usa como máximo diez puntos";
+  if (c.spots.length > MAX_SPOTS) return `Usa como máximo ${MAX_SPOTS} puntos`;
   if (c.spots.some((s) => !s || !unit(s.x) || !unit(s.y))) return "Hay un punto fuera de la foto";
   return null;
 }
@@ -186,6 +192,7 @@ export function imageClickProblem(config: unknown, hasImage: boolean): string | 
 /**
  * Pregunta guardada → su foto y su config, o null si no está completa. Es el
  * único criterio para lo que ve el alumno, la calificación y la revisión.
+ * Usa las mismas reglas que al guardar (ver la advertencia junto a MAX_ELEMENTS).
  */
 export function readImageDrag(q: { imageFileId: string | null; config: unknown }): { image: string; config: ImageDragConfig } | null {
   if (imageDragProblem(q.config, !!q.imageFileId) || !q.imageFileId) return null;
@@ -292,12 +299,11 @@ export function imageClickHits(config: ImageClickConfig, marks: Point[]): boolea
   return spots.map((_, i) => augment(i, new Array<boolean>(used.length).fill(false)));
 }
 
-/** Sombra libre más cercana al punto dentro de SNAP_RADIUS, o null. */
-export function nearestZone(zones: Point[], p: Point, aspect: number, isFree: (i: number) => boolean): number | null {
+/** Índice del lugar más cercano al punto dentro de SNAP_RADIUS, libre u ocupado; null si no hay. */
+export function nearestZone(zones: Point[], p: Point, aspect: number): number | null {
   let best: number | null = null;
   let bestD = SNAP_RADIUS;
   for (let i = 0; i < zones.length; i++) {
-    if (!isFree(i)) continue;
     const d = relDistance(zones[i], p, aspect);
     if (d <= bestD) {
       bestD = d;
