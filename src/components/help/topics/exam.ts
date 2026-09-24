@@ -11,6 +11,8 @@ export type ExamValues = {
   "exam.results": { mode: ResultsMode };
   "exam.openQuestion": NoValue;
   "exam.ordering": NoValue;
+  "exam.imageDrag": NoValue;
+  "exam.imageClick": NoValue;
 };
 
 const POLICY_PHRASE = {
@@ -116,6 +118,22 @@ export const EXAM_TOPICS: TopicsOf<ExamValues> = {
     kicker: "Cómo se califica",
     caption: () =>
       "El alumno acomoda los pasos revueltos. Se cuentan los **pares de pasos seguidos** que quedaron bien: si uno está fuera de lugar, solo pierde lo que ese paso rompe.",
+    example: {},
+  },
+  "exam.imageDrag": {
+    label: "Arrastrar a la imagen",
+    where: "Examen › Preguntas",
+    kicker: "Qué ve el alumno",
+    caption: () =>
+      "El alumno ve la foto con **lugares idénticos**; al tomar una ficha, **todos los lugares libres toman su forma**, así ninguno delata la respuesta. Cada lugar bien puesto vale su parte; los elementos sin lugar son **distractores**.",
+    example: {},
+  },
+  "exam.imageClick": {
+    label: "Señalar en la imagen",
+    where: "Examen › Preguntas",
+    kicker: "Cómo se califica",
+    caption: () =>
+      "El alumno pone tantas marcas como puntos hay. Cada punto cuenta si una marca cae **dentro de su círculo**; la **precisión** decide el tamaño del círculo, y una marca solo vale por un punto.",
     example: {},
   },
 };

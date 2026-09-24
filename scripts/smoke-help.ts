@@ -29,6 +29,7 @@ import {
   windowStory,
 } from "../src/components/help/scenes/exam.story";
 import { OPEN_ANSWER, openQuestionStory, orderingStory, poolStory, shuffleStory } from "../src/components/help/scenes/exam-bank.story";
+import { DRAG_PIECES, imageClickStory, imageDragStory } from "../src/components/help/scenes/exam-image.story";
 import { fileTypesStory, lateStory, replaceStory } from "../src/components/help/scenes/assignment.story";
 import { groupCloseStory, importStory, renewalsStory, trashStory } from "../src/components/help/scenes/people.story";
 import { templateFieldsStory } from "../src/components/help/scenes/certificates.story";
@@ -61,7 +62,7 @@ check("between es [a, b)", between(0.5, 0.5, 0.9) && !between(0.9, 0.5, 0.9));
 
 console.log("\n— Temas y frases");
 const ids = Object.keys(HELP_TOPICS) as HelpTopicId[];
-check("Hay 35 temas (todas las fases)", ids.length === 35, ids);
+check("Hay 37 temas (todas las fases)", ids.length === 37, ids);
 for (const id of ids) {
   const t = HELP_TOPICS[id];
   const text = (t.caption as (v: unknown) => string)(t.example);
@@ -403,6 +404,36 @@ console.log("\n— Historia: dónde se ve la portada");
 check("Solo inicio de sesión", coverPlacementStory(0.1).active === "login" && coverPlacementStory(0.1).inLogin && !coverPlacementStory(0.1).inDashboard);
 check("Solo panel", coverPlacementStory(0.5).active === "dashboard" && !coverPlacementStory(0.5).inLogin && coverPlacementStory(0.5).inDashboard);
 check("Ambas", coverPlacementStory(0.9).inLogin && coverPlacementStory(0.9).inDashboard);
+
+console.log("\n— Historia: arrastrar a la imagen");
+const dragRest = imageDragStory(0.02);
+check("Arrastrar: en reposo los 3 lugares son el mismo círculo", dragRest.held === null && dragRest.shadows.every((sh) => sh === "circle"), dragRest.shadows);
+const dragIcon = imageDragStory(0.12);
+check(
+  "Arrastrar: al tomar el ícono los 3 lugares se vuelven cuadrados",
+  dragIcon.held !== null && DRAG_PIECES[dragIcon.held].kind === "icon" && dragIcon.shadows.every((sh) => sh === "icon"),
+  dragIcon
+);
+check("Arrastrar: el lugar se ilumina antes de encajar", imageDragStory(0.27).hot === imageDragStory(0.27).target && imageDragStory(0.2).hot === null);
+const dragText = imageDragStory(0.42);
+check(
+  "Arrastrar: con la etiqueta, los libres se vuelven píldoras",
+  dragText.held !== null && DRAG_PIECES[dragText.held].kind === "text" && dragText.shadows.join() === ",text,text",
+  dragText.shadows
+);
+check("Arrastrar: al soltar, los libres vuelven al círculo", imageDragStory(0.34).held === null && imageDragStory(0.34).shadows.join() === ",circle,circle");
+const dragEnd = imageDragStory(0.97);
+check("Arrastrar: termina 2 de 3 con un lugar vacío", dragEnd.graded && dragEnd.ok === 2 && dragEnd.total === 3 && dragEnd.placed[2] === null, dragEnd);
+check("Arrastrar: el distractor no tiene lugar", DRAG_PIECES.some((p) => p.zone === null) && !dragEnd.placed.includes(DRAG_PIECES.findIndex((p) => p.zone === null)));
+check("Arrastrar: la frase dice que los lugares toman la forma", HELP_TOPICS["exam.imageDrag"].caption({}).includes("toman su forma"));
+
+console.log("\n— Historia: señalar en la imagen");
+check("Señalar: empieza sin marcas ni círculos", imageClickStory(0.02).marks === 0 && !imageClickStory(0.02).revealed);
+check("Señalar: pone las marcas una a una", imageClickStory(0.3).marks === 1 && imageClickStory(0.5).marks === 2);
+check("Señalar: los círculos aparecen después de marcar", !imageClickStory(0.5).revealed && imageClickStory(0.6).revealed);
+const clickEnd = imageClickStory(0.97);
+check("Señalar: una dentro y otra fuera → 1 de 2", clickEnd.graded && clickEnd.hits.join() === "true,false" && clickEnd.ok === 1 && clickEnd.total === 2, clickEnd);
+check("Señalar: la frase explica el círculo", HELP_TOPICS["exam.imageClick"].caption({}).includes("dentro de su círculo"));
 
 // ── Las tareas siguientes agregan sus secciones ARRIBA de este bloque ──
 console.log("\n— Historia: ordenar pasos");

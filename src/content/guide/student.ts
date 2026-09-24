@@ -80,7 +80,7 @@ export const STUDENT_GUIDE: RoleGuide = {
         },
         {
           title: "Responde y envía",
-          text: "Puedes moverte entre preguntas y ver cuáles faltan. Al enviar, las de opción múltiple se califican al instante; las abiertas las revisa tu instructor y verás «Pendiente de revisión» hasta entonces. En las preguntas de ordenar pasos, acomódalos arrastrándolos o con las flechas.",
+          text: "Puedes moverte entre preguntas y ver cuáles faltan. Al enviar, las de opción múltiple se califican al instante; las abiertas las revisa tu instructor y verás «Pendiente de revisión» hasta entonces. En las preguntas de ordenar pasos, acomódalos arrastrándolos o con las flechas. En las preguntas sobre una imagen, arrastra cada ficha a su lugar (o tócala y luego toca el lugar) o marca los puntos que se piden.",
           scene: "student-examen-2",
           ui: ["Enviar respuestas", "Pendiente de revisión"],
         },

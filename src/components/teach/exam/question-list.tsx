@@ -487,8 +487,12 @@ function QuestionEditor({
       aria-label={`Editor de pregunta: ${TYPE_LABEL[type]}`}
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="inline-flex items-center rounded-md bg-kind-exam-tint px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-kind-exam-strong">
-          {TYPE_LABEL[type]}
+        <span className="flex items-center gap-1.5">
+          <span className="inline-flex items-center rounded-md bg-kind-exam-tint px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-kind-exam-strong">
+            {TYPE_LABEL[type]}
+          </span>
+          {type === "image_drag" && <HelpTip topic="exam.imageDrag" />}
+          {type === "image_click" && <HelpTip topic="exam.imageClick" />}
         </span>
         {type === "open_text" && (
           <span className="flex items-center gap-1.5">
