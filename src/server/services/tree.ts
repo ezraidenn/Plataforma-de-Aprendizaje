@@ -387,8 +387,9 @@ export async function duplicateItem(opts: {
             }
             for (const q of db.select().from(questions).where(eq(questions.examItemId, it.id)).all()) {
               const qid = nanoid();
+              // imageFileId viaja tal cual: la foto y los íconos se comparten
               db.insert(questions)
-                .values(withoutTimestamps({ ...q, id: qid, examItemId: id, imageFileId: null }))
+                .values(withoutTimestamps({ ...q, id: qid, examItemId: id }))
                 .run();
               for (const o of db.select().from(questionOptions).where(eq(questionOptions.questionId, q.id)).all()) {
                 db.insert(questionOptions).values({ ...o, id: nanoid(), questionId: qid }).run();

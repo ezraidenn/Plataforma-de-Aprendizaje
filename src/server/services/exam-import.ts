@@ -7,7 +7,9 @@ import { audit } from "./audit";
 /**
  * Importa preguntas ya interpretadas (del CSV o de la IA). Todo ocurre en una
  * transacción: si algo falla al crearlas, el examen queda como estaba (ni
- * siquiera «reemplazar» borra nada). La auditoría guarda conteos, nunca el
+ * siquiera «reemplazar» borra nada). Las preguntas sobre imagen no se pueden
+ * expresar en CSV ni las crea la IA, así que «reemplazar» las conserva tal
+ * cual en vez de borrarlas (`kept`). La auditoría guarda conteos, nunca el
  * contenido.
  */
 export function importQuestionInputs(opts: {
@@ -18,14 +20,21 @@ export function importQuestionInputs(opts: {
   source: "csv" | "ai";
   /** Filas que ya se descartaron antes (p. ej. renglones inválidos del CSV) */
   alreadySkipped?: number;
-}): { imported: number; skipped: number } {
+}): { imported: number; skipped: number; kept: number } {
   const valid = opts.inputs.filter((input) => questionProblem(input) === null);
   const skipped = opts.inputs.length - valid.length + (opts.alreadySkipped ?? 0);
   if (valid.length === 0) throw new Error("No hay preguntas válidas para importar");
 
+  let kept = 0;
   db.transaction(() => {
     if (opts.mode === "replace") {
-      for (const q of listQuestions(opts.examItemId)) deleteQuestion(opts.examItemId, q.id);
+      for (const q of listQuestions(opts.examItemId)) {
+        if (q.type === "image_drag" || q.type === "image_click") {
+          kept++;
+          continue;
+        }
+        deleteQuestion(opts.examItemId, q.id);
+      }
     }
     for (const input of valid) createQuestion(opts.examItemId, input);
   });
@@ -35,6 +44,7 @@ export function importQuestionInputs(opts: {
     mode: opts.mode,
     imported,
     skipped,
+    kept,
   });
-  return { imported, skipped };
+  return { imported, skipped, kept };
 }

@@ -14,6 +14,9 @@ import * as courses from "../src/server/services/courses";
 import * as tree from "../src/server/services/tree";
 import * as examsSvc from "../src/server/services/exams";
 import { buildReview } from "../src/server/services/exam-review";
+import { exportExamCsv, countImageQuestions } from "../src/server/services/exam-csv";
+import { importQuestionInputs } from "../src/server/services/exam-import";
+import { parseCsv } from "../src/server/services/csv-core";
 import { deleteFile, saveStream } from "../src/server/services/storage";
 import { buildRunnerQuestions } from "../src/components/student/lesson-data";
 import { cleanupSmokeNotifications } from "./lib/smoke-cleanup";
@@ -343,6 +346,78 @@ async function endToEnd() {
     const copyId = examsSvc.duplicateQuestion(exam.id, qDrag);
     const copied = examsSvc.listQuestions(exam.id).find((q) => q.id === copyId);
     check("Duplicar dentro del examen comparte la foto", copied?.imageFileId === photo && JSON.stringify(copied?.config) === JSON.stringify(drag));
+
+    // ─── Copiar la lección/examen: la foto y los íconos se comparten (Tarea 3) ─
+    const examCopy = await tree.duplicateItem({
+      sourceItemId: exam.id,
+      targetCourseId: course.id,
+      parentId: null,
+      index: 99,
+      uploadedBy: teacher,
+    });
+    const copiedQs = examCopy ? examsSvc.listQuestions(examCopy.item.id) : [];
+    const copiedDrag = copiedQs.find((q) => q.type === "image_drag" && q.promptMd === "Coloca cada señal");
+    const copiedClick = copiedQs.find((q) => q.type === "image_click");
+    check("Copiar el examen: la copia tiene las 3 preguntas (arrastrar, señalar y su copia)", copiedQs.length === 3, copiedQs.length);
+    check("Copiar el examen: arrastrar conserva la foto y la config", copiedDrag?.imageFileId === photo && JSON.stringify(copiedDrag?.config) === JSON.stringify(drag), copiedDrag);
+    check("Copiar el examen: señalar conserva la foto y la config", copiedClick?.imageFileId === photo && JSON.stringify(copiedClick?.config) === JSON.stringify(click), copiedClick);
+    check("Copiar el examen: el alumno puede ver la copia (readImageDrag no nulo)", !!copiedDrag && readImageDrag(copiedDrag) !== null);
+    check("Copiar el examen: no faltó ningún archivo", examCopy.missingFiles === 0, examCopy.missingFiles);
+
+    // La copia a OTRO curso del mismo maestro también comparte la foto
+    const course2 = courses.createCourse({ ownerId: teacher, title: `${P} Curso destino` });
+    const examCopy2 = await tree.duplicateItem({
+      sourceItemId: exam.id,
+      targetCourseId: course2.id,
+      parentId: null,
+      index: 0,
+      uploadedBy: teacher,
+    });
+    const copiedQs2 = examsSvc.listQuestions(examCopy2.item.id);
+    check("Copiar a otro curso también comparte la foto", copiedQs2.length === 3 && copiedQs2.every((q) => q.imageFileId === photo), copiedQs2.map((q) => q.imageFileId));
+
+    // ─── CSV: las preguntas sobre imagen no caben — se omiten y se cuentan ────
+    check("countImageQuestions cuenta las 3 preguntas sobre imagen", countImageQuestions(exam.id) === 3, countImageQuestions(exam.id));
+    const csvExport = exportExamCsv(exam.id);
+    check("exportExamCsv las omite (CSV sin filas)", parseCsv(csvExport, { maxRows: 10 }).rows.length === 0, csvExport);
+
+    // ─── Reemplazar por CSV: borra solo lo que el CSV puede representar ───────
+    examsSvc.createQuestion(exam.id, {
+      type: "single_choice",
+      promptMd: `${P} Pregunta de opción`,
+      points: 1,
+      options: [
+        { textMd: "A", isCorrect: true },
+        { textMd: "B", isCorrect: false },
+      ],
+    });
+    check("Antes de reemplazar: 4 preguntas (3 de imagen + 1 de opción)", examsSvc.listQuestions(exam.id).length === 4);
+    const replaced = importQuestionInputs({
+      actorId: teacher,
+      examItemId: exam.id,
+      inputs: [
+        {
+          type: "single_choice",
+          promptMd: `${P} Pregunta nueva`,
+          points: 2,
+          options: [
+            { textMd: "X", isCorrect: true },
+            { textMd: "Y", isCorrect: false },
+          ],
+        },
+      ],
+      mode: "replace",
+      source: "csv",
+    });
+    check("Reemplazar conserva las 3 preguntas sobre imagen (kept)", replaced.kept === 3, replaced);
+    check("Reemplazar importa la nueva sin saltarse ninguna", replaced.imported === 1 && replaced.skipped === 0, replaced);
+    const afterReplace = examsSvc.listQuestions(exam.id);
+    check("Después de reemplazar: 4 preguntas (3 de imagen + la nueva)", afterReplace.length === 4, afterReplace.length);
+    check("La pregunta de opción vieja ya no está", !afterReplace.some((q) => q.promptMd === `${P} Pregunta de opción`));
+    check(
+      "Las preguntas sobre imagen siguen con su foto tras reemplazar",
+      afterReplace.filter((q) => q.type === "image_drag" || q.type === "image_click").every((q) => q.imageFileId === photo)
+    );
   } finally {
     await cleanupDb();
     const left =

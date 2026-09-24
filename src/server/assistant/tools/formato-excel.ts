@@ -5,7 +5,7 @@ import { getExam } from "@/server/services/exams";
 import { CSV_TEMPLATE } from "@/server/services/csv-import";
 import { exportRosterCsv } from "@/server/services/bulk-roster";
 import { exportLessonsCsv } from "@/server/services/bulk-lessons";
-import { EXAM_CSV_TEMPLATE, exportExamCsv } from "@/server/services/exam-csv";
+import { EXAM_CSV_TEMPLATE, exportExamCsv, countImageQuestions } from "@/server/services/exam-csv";
 import { BOM, csvLine, parseCsv } from "@/server/services/csv-core";
 import { buildXlsx, type Cell, type SheetSpec } from "@/server/services/xlsx";
 import type { AssistantBlock } from "@/lib/assistant-blocks";
@@ -70,6 +70,8 @@ type Plantilla = {
   notas: string[];
   /** Qué tiene que hacer el usuario con el archivo */
   pista: string;
+  /** Preguntas sobre imagen del examen que no caben aquí (solo tipo «examen»). */
+  omitidas?: number;
 };
 
 /** CSV ya generado → hoja con formato, respetando qué columnas son informativas. */
@@ -191,18 +193,23 @@ function plantillaLecciones(titulo: string, courseId: string): Plantilla | null 
 function plantillaExamen(examen: { id: string; title: string } | null): Plantilla {
   const actual = examen ? exportExamCsv(examen.id) : "";
   const conPreguntas = !!actual && parseCsv(actual, { maxRows: MAX_ROWS }).rows.length > 0;
+  // No caben en el Excel: el examen las conserva, pero hay que decirlo
+  const imagenes = examen ? countImageQuestions(examen.id) : 0;
   if (!conPreguntas) {
     return {
       hoja: "Preguntas",
       csv: EXAM_CSV_TEMPLATE,
       ejemplo: true,
       notas: [
-        examen
-          ? "Ese examen todavía no tiene preguntas: las filas grises son un ejemplo de cada tipo."
-          : "Las filas grises son un ejemplo de cada tipo: bórralas o escribe encima.",
+        imagenes > 0
+          ? `Ese examen ya tiene ${imagenes} pregunta(s) sobre imagen, que no caben en este Excel y se quedan como están; las filas grises son un ejemplo de los demás tipos.`
+          : examen
+            ? "Ese examen todavía no tiene preguntas: las filas grises son un ejemplo de cada tipo."
+            : "Las filas grises son un ejemplo de cada tipo: bórralas o escribe encima.",
         ...NOTAS_EXAMEN,
       ],
       pista: "Escribe tus preguntas y suéltalo aquí otra vez, diciéndome a qué examen van: te pregunto si reemplazo las que tenga o las agrego al final.",
+      omitidas: imagenes,
     };
   }
   return {
@@ -210,9 +217,13 @@ function plantillaExamen(examen: { id: string; title: string } | null): Plantill
     csv: actual,
     notas: [
       "Al devolverme este archivo te pregunto qué hacer: REEMPLAZAR las preguntas que tiene el examen por las de aquí, o AGREGARLAS al final. Si solo corriges estas, lo tuyo es reemplazar: agregarlas las dejaría duplicadas.",
+      ...(imagenes > 0
+        ? [`${imagenes} pregunta(s) sobre imagen no caben en este Excel; al reemplazar se conservan tal como están.`]
+        : []),
       ...NOTAS_EXAMEN,
     ],
     pista: `Edita o agrega preguntas de ${examen!.title} y suéltalo aquí otra vez: te pregunto si reemplazo las que tiene o las agrego al final.`,
+    omitidas: imagenes,
   };
 }
 
@@ -282,6 +293,9 @@ export const formatoExcel: AssistantTool = {
     const filas = parseCsv(plantilla.csv, { maxRows: MAX_ROWS }).rows.length;
     const cuantas = `${filas} ${filas === 1 ? "fila" : "filas"}`;
     const blocks: AssistantBlock[] = [];
+    const avisoImagenes = plantilla.omitidas
+      ? ` ${plantilla.omitidas} pregunta(s) sobre imagen no caben en el Excel; en el examen se quedan como están.`
+      : "";
 
     try {
       const bytes = await buildXlsx([sheetOf(plantilla)]);
@@ -293,7 +307,7 @@ export const formatoExcel: AssistantTool = {
         detail: `${Math.max(1, Math.round(bytes.length / 1024))} KB · ${cuantas} · caduca en 24 horas`,
       });
       blocks.push({ type: "text", text: plantilla.pista });
-      return { forModel: `Le dejé el formato de ${FORMAT_LABELS[tipo]}${de} (${cuantas}) para descargar, con sus notas. Descarga: ${exportId}.`, blocks };
+      return { forModel: `Le dejé el formato de ${FORMAT_LABELS[tipo]}${de} (${cuantas}) para descargar, con sus notas.${avisoImagenes} Descarga: ${exportId}.`, blocks };
     } catch {
       // Sin LibreOffice no hay Excel; el CSV lleva exactamente las mismas columnas
       const exportId = createExport(ctx.conversationId, exportFileName(nombre), plantilla.csv);
@@ -305,7 +319,7 @@ export const formatoExcel: AssistantTool = {
       });
       blocks.push({ type: "text", text: `${plantilla.pista} ${plantilla.notas[0]}` });
       return {
-        forModel: `No se pudo generar el Excel, así que le dejé el mismo formato en CSV (${cuantas}). Descarga: ${exportId}.`,
+        forModel: `No se pudo generar el Excel, así que le dejé el mismo formato en CSV (${cuantas}).${avisoImagenes} Descarga: ${exportId}.`,
         blocks,
       };
     }

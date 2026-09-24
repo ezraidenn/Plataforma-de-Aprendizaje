@@ -39,7 +39,15 @@ type Preview = {
   okCount: number;
   invalid: number;
   currentCount: number;
+  currentImageCount: number;
 };
+
+/** "1 pregunta sobre imagen no cabe..." / "N preguntas sobre imagen no caben...", con la concordancia correcta. */
+function imageOmittedText(n: number): string {
+  return n === 1
+    ? "1 pregunta sobre imagen no cabe en el Excel; en el examen se queda como está."
+    : `${n} preguntas sobre imagen no caben en el Excel; en el examen se quedan como están.`;
+}
 
 /**
  * Encabezado del editor de examen: "Exportar CSV" (descarga directa) e
@@ -63,6 +71,7 @@ export function ExamCsvActions({
       }
       downloadTextFile(result.filename, result.csv);
       toast.success("Examen exportado. Edítalo en Excel y vuelve a subirlo.");
+      if (result.omitted > 0) toast.info(imageOmittedText(result.omitted));
     });
   }
 
@@ -93,7 +102,7 @@ export function ExamCsvDialog({ itemId }: { itemId: string }) {
   const [csvText, setCsvText] = useState("");
   const [preview, setPreview] = useState<Preview | null>(null);
   const [mode, setMode] = useState<ExamImportMode>("replace");
-  const [outcome, setOutcome] = useState<{ imported: number; skipped: number } | null>(null);
+  const [outcome, setOutcome] = useState<{ imported: number; skipped: number; kept: number } | null>(null);
   const [downloadingTemplate, startTemplate] = useTransition();
   const [validating, startValidate] = useTransition();
   const [importing, startImport] = useTransition();
@@ -128,6 +137,7 @@ export function ExamCsvDialog({ itemId }: { itemId: string }) {
         okCount: result.okCount,
         invalid: result.invalid,
         currentCount: result.currentCount,
+        currentImageCount: result.currentImageCount,
       });
       setStep(2);
     });
@@ -141,7 +151,7 @@ export function ExamCsvDialog({ itemId }: { itemId: string }) {
         toast.error(result.error);
         return;
       }
-      setOutcome({ imported: result.imported, skipped: result.skipped });
+      setOutcome({ imported: result.imported, skipped: result.skipped, kept: result.kept });
       setStep(3);
       router.refresh();
       toast.success(
@@ -309,14 +319,22 @@ export function ExamCsvDialog({ itemId }: { itemId: string }) {
                   </span>
                 </label>
               </RadioGroup>
-              {mode === "replace" && preview.currentCount > 0 && (
+              {mode === "replace" && (preview.currentCount > 0 || preview.currentImageCount > 0) && (
                 <p className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm">
                   <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
                   <span>
-                    Se {preview.currentCount === 1
-                      ? "borrará la pregunta actual"
-                      : `borrarán las ${preview.currentCount} preguntas actuales`}
-                    ; los intentos ya enviados conservan sus preguntas.
+                    {preview.currentCount > 0 && (
+                      <>
+                        Se {preview.currentCount === 1
+                          ? "borrará la pregunta actual"
+                          : `borrarán las ${preview.currentCount} preguntas actuales`}
+                        ; los intentos ya enviados conservan sus preguntas.{" "}
+                      </>
+                    )}
+                    {preview.currentImageCount > 0 &&
+                      (preview.currentImageCount === 1
+                        ? "1 pregunta sobre imagen se conserva tal como está: el CSV no la puede traer."
+                        : `${preview.currentImageCount} preguntas sobre imagen se conservan tal como están: el CSV no las puede traer.`)}
                   </span>
                 </p>
               )}
@@ -371,6 +389,9 @@ export function ExamCsvDialog({ itemId }: { itemId: string }) {
                 mode === "replace"
                   ? "El examen quedó con las preguntas del archivo"
                   : "Se agregaron al final del examen",
+                mode === "replace" && outcome.kept > 0
+                  ? `se conservaron ${outcome.kept} ${outcome.kept === 1 ? "pregunta sobre imagen" : "preguntas sobre imagen"}`
+                  : null,
                 outcome.skipped > 0
                   ? `${outcome.skipped} ${outcome.skipped === 1 ? "fila omitida" : "filas omitidas"}`
                   : null,

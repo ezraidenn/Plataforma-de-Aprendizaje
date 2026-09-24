@@ -9,7 +9,7 @@ import { audit } from "@/server/services/audit";
 import { BOM, csvLine } from "@/server/services/csv-core";
 import { validateRosterCsv, importRosterCsv } from "@/server/services/bulk-roster";
 import { validateLessonsCsv, importLessonsCsv } from "@/server/services/bulk-lessons";
-import { validateExamCsv } from "@/server/services/exam-csv";
+import { validateExamCsv, countImageQuestions } from "@/server/services/exam-csv";
 import { importQuestionInputs } from "@/server/services/exam-import";
 import { attachmentBytes, attachmentsOf, type StoredAttachment } from "@/server/services/attachment-intake";
 import { readSheetRows, type SheetData } from "@/server/services/sheet-colors";
@@ -197,7 +197,7 @@ function lessonRows(courseId: string, csv: string): { rows: ProposalRow[]; resum
   return { rows: proposalRows, resumen: partes.join(", ") };
 }
 
-function examRows(csv: string, modo: Modo): { rows: ProposalRow[]; resumen: string } {
+function examRows(csv: string, modo: Modo, imagenesConservadas: number): { rows: ProposalRow[]; resumen: string } {
   const { rows, ok, invalid } = validateExamCsv(csv);
   const reemplaza = modo === "reemplazar";
   const proposalRows = rows.map((r): ProposalRow => {
@@ -210,6 +210,8 @@ function examRows(csv: string, modo: Modo): { rows: ProposalRow[]; resumen: stri
     return r.status === "ok" ? { id: rowId(r.line), cells } : { id: rowId(r.line), cells, warning: r.message, blocked: true };
   });
   const partes = [reemplaza ? `${ok} que reemplazan a las actuales` : `${ok} por agregar`];
+  // El CSV no puede traer preguntas sobre imagen: "reemplazar" las conserva, no las borra
+  if (reemplaza && imagenesConservadas > 0) partes.push(`${imagenesConservadas} sobre imagen se conservan`);
   if (invalid > 0) partes.push(`${invalid} con problema`);
   return { rows: proposalRows, resumen: partes.join(", ") };
 }
@@ -249,7 +251,7 @@ export const aplicarExcel: AssistantTool = {
       [...FORMATOS]
     ),
     modo: strEnum(
-      'SOLO para preguntas de examen: «reemplazar» borra las preguntas que tiene el examen y deja las del archivo; «agregar» las suma al final. Déjalo en «» la primera vez: el servidor te dirá que se lo preguntes al usuario',
+      'SOLO para preguntas de examen: «reemplazar» borra las preguntas que tiene el examen (las que son sobre imagen se conservan: el CSV no las puede traer) y deja las del archivo; «agregar» las suma al final. Déjalo en «» la primera vez: el servidor te dirá que se lo preguntes al usuario',
       [...MODOS]
     ),
   }),
@@ -340,12 +342,16 @@ export const aplicarExcel: AssistantTool = {
         // desde aquí. Lo decide el usuario, no la IA.
         if (!modo) {
           const actuales = listQuestions(examen.id).length;
+          const imagenes = countImageQuestions(examen.id);
+          const notaImagenes = imagenes > 0
+            ? ` (las ${imagenes} sobre imagen no las trae el CSV: reemplazar las conserva tal como están, no las borra)`
+            : "";
           return {
-            forModel: `Ese archivo trae ${hoja.rows.length} pregunta(s) para ${examen.title}, que ahora tiene ${actuales}. No propuse nada todavía: pregúntale al usuario, con estas dos opciones, qué hacer — «reemplazar todas las preguntas del examen» (modo "reemplazar") o «agregarlas a las que ya hay» (modo "agregar"). Si el archivo salió de ese mismo examen, lo normal es reemplazar: agregar las dejaría duplicadas. Vuelve a llamar a aplicar_excel con el modo que elija.${discrepa}`,
+            forModel: `Ese archivo trae ${hoja.rows.length} pregunta(s) para ${examen.title}, que ahora tiene ${actuales}. No propuse nada todavía: pregúntale al usuario, con estas dos opciones, qué hacer — «reemplazar todas las preguntas del examen»${notaImagenes} (modo "reemplazar") o «agregarlas a las que ya hay» (modo "agregar"). Si el archivo salió de ese mismo examen, lo normal es reemplazar: agregar las dejaría duplicadas. Vuelve a llamar a aplicar_excel con el modo que elija.${discrepa}`,
           };
         }
         title = modo === "reemplazar" ? `Reemplazar las preguntas de ${examen.title}` : `Agregar preguntas a ${examen.title}`;
-        ({ rows, resumen } = examRows(csv, modo));
+        ({ rows, resumen } = examRows(csv, modo, countImageQuestions(examen.id)));
         payload.itemId = examen.id;
         payload.modo = modo;
       } else {
@@ -424,24 +430,24 @@ export const aplicarExcel: AssistantTool = {
         // que existiera el parámetro se aplican como siempre (agregar)
         const reemplaza = payload.modo === "reemplazar";
         const antes = reemplaza ? listQuestions(examen.id).length : 0;
-        const { imported, skipped } = importQuestionInputs({
+        const { imported, skipped, kept } = importQuestionInputs({
           actorId: ctx.user.id,
           examItemId: examen.id,
           inputs,
           // «replace» borra las anteriores dentro de la misma transacción: ese
-          // borrado no se reescribe aquí
+          // borrado no se reescribe aquí (conserva las preguntas sobre imagen)
           mode: reemplaza ? "replace" : "append",
           source: "csv",
           alreadySkipped: revisadas.length - inputs.length,
         });
-        audit(ctx.user.id, "assistant_aplicar_excel", "exams", examen.id, { formato, modo: reemplaza ? "replace" : "append", imported, skipped });
+        audit(ctx.user.id, "assistant_aplicar_excel", "exams", examen.id, { formato, modo: reemplaza ? "replace" : "append", imported, skipped, kept });
         blocks.push({
           type: "links",
           links: [{ label: `Ver ${examen.title}`, href: `/teach/courses/${examen.courseId}/items/${examen.id}/edit`, icon: "page" }],
         });
         return {
           text: reemplaza
-            ? `${examen.title} quedó con ${imported} pregunta(s): las del archivo reemplazaron a las ${antes} que tenía${skipped > 0 ? `; ${skipped} omitida(s)` : ""}.`
+            ? `${examen.title} quedó con ${imported + kept} pregunta(s): ${imported} del archivo reemplazaron a las ${antes - kept} que tenía${kept > 0 ? `; se conservaron ${kept} sobre imagen` : ""}${skipped > 0 ? `; ${skipped} omitida(s)` : ""}.`
             : `${imported} pregunta(s) agregada(s) al final de ${examen.title}${skipped > 0 ? `; ${skipped} omitida(s)` : ""}.`,
           blocks,
         };

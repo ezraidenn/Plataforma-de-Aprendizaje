@@ -18,7 +18,11 @@ import { importQuestionInputs } from "./exam-import";
  *   columna es opcional: un CSV sin ella sirve para los demás tipos.
  */
 
-const TYPE_TO_CSV: Record<string, string> = {
+/**
+ * Tipado exhaustivo: si se agrega un tipo de pregunta, el compilador obliga a
+ * decidir aquí su columna CSV (o a excluirlo, como las preguntas sobre imagen).
+ */
+const TYPE_TO_CSV: Record<Exclude<QuestionInput["type"], "image_drag" | "image_click">, string> = {
   single_choice: "opcion_unica",
   multiple_choice: "opcion_multiple",
   true_false: "verdadero_falso",
@@ -70,12 +74,15 @@ export const EXAM_CSV_TEMPLATE =
 
 /**
  * Preguntas (ya en la forma del servicio) → CSV del mismo formato que la
- * plantilla. Lo usan la exportación y «Descargar como CSV» de la IA.
+ * plantilla. Lo usan la exportación y «Descargar como CSV» de la IA. Las
+ * preguntas sobre imagen no caben en el CSV: se omiten (la IA nunca las crea,
+ * así que solo importa para la exportación real del examen).
  */
 export function inputsToCsv(inputs: QuestionInput[]): string {
   const lines = [csvLine(HEADER)];
 
   for (const q of inputs) {
+    if (q.type === "image_drag" || q.type === "image_click") continue;
     const opts = q.options ?? [];
     const options = ["", "", "", "", "", ""];
     let correctas = "";
@@ -123,6 +130,11 @@ export function exportExamCsv(examItemId: string): string {
       options: q.options.map((o) => ({ textMd: o.textMd, isCorrect: o.isCorrect })),
     }))
   );
+}
+
+/** Cuántas preguntas del examen son sobre imagen: no caben en el CSV/Excel. */
+export function countImageQuestions(examItemId: string): number {
+  return listQuestions(examItemId).filter((q) => q.type === "image_drag" || q.type === "image_click").length;
 }
 
 // ─── Validación e import ─────────────────────────────────────────────────────
@@ -274,7 +286,8 @@ export function validateExamCsv(text: string): {
 
 /**
  * Importa las filas válidas al examen. mode "replace" borra las preguntas
- * actuales primero (los intentos ya enviados conservan su snapshot);
+ * actuales primero (los intentos ya enviados conservan su snapshot; las
+ * preguntas sobre imagen se conservan porque el CSV no las puede representar);
  * "append" agrega al final.
  */
 export function importExamCsv(opts: {
@@ -282,7 +295,7 @@ export function importExamCsv(opts: {
   examItemId: string;
   csvText: string;
   mode: "replace" | "append";
-}): { imported: number; skipped: number } {
+}): { imported: number; skipped: number; kept: number } {
   const { rows, ok } = validateExamCsv(opts.csvText);
   if (ok === 0) throw new Error("No hay filas válidas para importar");
   const inputs = rows.flatMap((r) => (r.status === "ok" && r.input ? [r.input] : []));

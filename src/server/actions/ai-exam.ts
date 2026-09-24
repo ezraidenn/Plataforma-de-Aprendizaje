@@ -112,7 +112,7 @@ export async function analyzeChunkAction(input: {
   }
 }
 
-export type ImportAiResult = { ok: true; imported: number; skipped: number } | { error: string };
+export type ImportAiResult = { ok: true; imported: number; skipped: number; kept: number } | { error: string };
 
 export async function importAiQuestionsAction(input: {
   courseId: string;

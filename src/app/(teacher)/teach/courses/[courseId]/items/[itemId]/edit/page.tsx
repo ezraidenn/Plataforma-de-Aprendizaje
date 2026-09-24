@@ -34,7 +34,8 @@ export default async function ExamEditPage({
   const exam = getExam(itemId);
   if (!exam) notFound();
 
-  const questions: QuestionData[] = listQuestions(itemId).map((q) => {
+  const rawQuestions = listQuestions(itemId);
+  const questions: QuestionData[] = rawQuestions.map((q) => {
     const config = (q.config ?? {}) as {
       accepted?: string[];
       pairs?: { left: string; right: string }[];
@@ -51,6 +52,8 @@ export default async function ExamEditPage({
       steps: Array.isArray(config.steps) ? config.steps : [],
     };
   });
+  // La IA nunca crea preguntas sobre imagen; "reemplazar" solo borra las demás
+  const imageQuestionCount = rawQuestions.filter((q) => q.type === "image_drag" || q.type === "image_click").length;
 
   return (
     <div className="space-y-4">
@@ -82,7 +85,12 @@ export default async function ExamEditPage({
         <div className="flex flex-wrap items-center gap-2">
           <PreviewButton courseId={courseId} itemId={itemId} disabled={questions.length === 0} />
           {getAiSettings().configured && (
-            <AiImportDialog courseId={courseId} itemId={itemId} currentCount={questions.length} />
+            <AiImportDialog
+              courseId={courseId}
+              itemId={itemId}
+              currentCount={questions.length - imageQuestionCount}
+              imageCount={imageQuestionCount}
+            />
           )}
           <ExamCsvActions itemId={itemId} questionCount={questions.length} />
         </div>

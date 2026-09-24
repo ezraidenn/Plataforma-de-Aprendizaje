@@ -403,7 +403,7 @@ function importChecks() {
   const first = logged.find((r) => (r.detail as { mode?: string } | null)?.mode === "append");
   check(
     "Auditoría «ai_import_exam» con modo, importadas y omitidas",
-    logged.length === 2 && logged.every((r) => r.action === "ai_import_exam") && JSON.stringify(first?.detail) === JSON.stringify({ mode: "append", imported: 3, skipped: 1 }),
+    logged.length === 2 && logged.every((r) => r.action === "ai_import_exam") && JSON.stringify(first?.detail) === JSON.stringify({ mode: "append", imported: 3, skipped: 1, kept: 0 }),
     logged.map((r) => [r.action, r.detail])
   );
 

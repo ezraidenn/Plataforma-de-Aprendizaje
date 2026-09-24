@@ -184,10 +184,14 @@ export function AiImportDialog({
   courseId,
   itemId,
   currentCount,
+  imageCount = 0,
 }: {
   courseId: string;
   itemId: string;
+  /** Preguntas que "reemplazar" SÍ borra (la IA nunca crea sobre imagen). */
   currentCount: number;
+  /** Preguntas sobre imagen que ya tiene el examen: "reemplazar" las conserva. */
+  imageCount?: number;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -358,6 +362,13 @@ export function AiImportDialog({
         `Se ${result.imported === 1 ? "importó 1 pregunta" : `importaron ${result.imported} preguntas`}` +
           (blocked > 0 ? ` (${blocked} con problemas se omitieron)` : "")
       );
+      if (mode === "replace" && result.kept > 0) {
+        toast.info(
+          result.kept === 1
+            ? "1 pregunta sobre imagen se conservó tal como está"
+            : `${result.kept} preguntas sobre imagen se conservaron tal como están`
+        );
+      }
       setOpen(false);
       reset();
       router.refresh();
@@ -567,6 +578,10 @@ export function AiImportDialog({
               {mode === "replace" && currentCount > 0 && (
                 <p className="text-[13px] text-destructive">
                   Se borrarán las {currentCount} preguntas que tiene hoy el examen.
+                  {imageCount > 0 &&
+                    (imageCount === 1
+                      ? " 1 pregunta sobre imagen se conserva."
+                      : ` ${imageCount} preguntas sobre imagen se conservan.`)}
                 </p>
               )}
               <DialogFooter className="gap-2">

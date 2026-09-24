@@ -8,6 +8,7 @@ import { getExam, listQuestions } from "@/server/services/exams";
 import {
   EXAM_CSV_TEMPLATE,
   exportExamCsv,
+  countImageQuestions,
   validateExamCsv,
   importExamCsv,
 } from "@/server/services/exam-csv";
@@ -83,7 +84,11 @@ export async function examCsvTemplateAction(): Promise<CsvTemplateResult> {
   return { template: EXAM_CSV_TEMPLATE };
 }
 
-export async function exportExamCsvAction(itemId: string): Promise<CsvExportResult> {
+export type ExamCsvExportResult =
+  | { csv: string; filename: string; /** Preguntas sobre imagen que no salieron en el CSV */ omitted: number }
+  | { error: string };
+
+export async function exportExamCsvAction(itemId: string): Promise<ExamCsvExportResult> {
   const guard = await guardExamItem(itemId);
   if ("error" in guard) return guard;
 
@@ -91,6 +96,7 @@ export async function exportExamCsvAction(itemId: string): Promise<CsvExportResu
     return {
       csv: exportExamCsv(itemId),
       filename: `examen-${slugifyFilename(guard.examTitle)}.csv`,
+      omitted: countImageQuestions(itemId),
     };
   } catch (err) {
     return { error: errorMessage(err, "No se pudo exportar el examen. Intenta de nuevo.") };
@@ -103,8 +109,10 @@ export type ValidateExamCsvResult =
       rows: ExamCsvPreviewRow[];
       okCount: number;
       invalid: number;
-      /** Preguntas que hay HOY en el examen (para el aviso de "reemplazar"). */
+      /** Preguntas que hay HOY en el examen y que "reemplazar" SÍ borra. */
       currentCount: number;
+      /** Preguntas sobre imagen que ya tiene el examen: "reemplazar" las conserva. */
+      currentImageCount: number;
     }
   | { error: string };
 
@@ -118,6 +126,7 @@ export async function validateExamCsvAction(
 
   try {
     const { rows, ok, invalid } = validateExamCsv(csvText);
+    const currentImageCount = countImageQuestions(itemId);
     return {
       ok: true,
       // Solo lo que la vista previa necesita (sin el input interno de cada fila)
@@ -130,7 +139,8 @@ export async function validateExamCsvAction(
       })),
       okCount: ok,
       invalid,
-      currentCount: listQuestions(itemId).length,
+      currentCount: listQuestions(itemId).length - currentImageCount,
+      currentImageCount,
     };
   } catch (err) {
     return { error: errorMessage(err, "No se pudo leer el archivo. Revisa el formato.") };
@@ -138,7 +148,7 @@ export async function validateExamCsvAction(
 }
 
 export type ImportExamCsvResult =
-  | { ok: true; imported: number; skipped: number }
+  | { ok: true; imported: number; skipped: number; kept: number }
   | { error: string };
 
 export async function importExamCsvAction(input: {
