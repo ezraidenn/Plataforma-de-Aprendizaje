@@ -160,7 +160,7 @@ export function ImageQuestionEditor({
     [record, type]
   );
 
-  /** Deshacer o rehacer; si el botón que tenía el foco desaparece, el foco se queda en el editor. */
+  /** Deshacer o rehacer; si lo que tenía el foco desaparece, el foco se queda en el editor (en el de lugares, si lo hay). */
   function travel(to: "undo" | "redo") {
     const root = rootRef.current;
     const hadFocus = !!root?.contains(document.activeElement);
@@ -169,7 +169,9 @@ export function ImageQuestionEditor({
     announce(done ? (to === "undo" ? "Cambio deshecho" : "Cambio rehecho") : to === "undo" ? "Nada que deshacer" : "Nada que rehacer");
     if (hadFocus) {
       requestAnimationFrame(() => {
-        if (root && !root.contains(document.activeElement)) root.focus({ preventScroll: true });
+        if (root && !root.contains(document.activeElement)) {
+          (root.querySelector<HTMLElement>("[data-drag-editor]") ?? root).focus({ preventScroll: true });
+        }
       });
     }
   }
@@ -212,8 +214,10 @@ export function ImageQuestionEditor({
   return (
     <div
       ref={rootRef}
-      // Enfocable solo por código: si lo enfocado desaparece al deshacer, los atajos siguen aquí
+      // Enfocable solo por código (o con un clic en un hueco): si lo enfocado desaparece al deshacer, los atajos siguen aquí
       tabIndex={-1}
+      role="group"
+      aria-label="Foto y respuestas de la pregunta"
       className="@container grid gap-3 outline-none"
       onKeyDown={(e) => {
         if (e.key === "Escape") setNotice(null);

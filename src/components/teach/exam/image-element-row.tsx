@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import { useDraggable } from "@dnd-kit/core";
 import { Crop, Crosshair, Loader2, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -13,12 +13,74 @@ import { cn } from "@/lib/utils";
 /** Lado de la miniatura de un elemento en la lista (px; el mismo de `size-[34px]`). */
 const THUMB_PX = 34;
 
+const NO_PLACES: number[] = [];
+
+type RowActions = {
+  onSelect: (id: string, e: React.MouseEvent) => void;
+  onPlace: (id: string, e: React.MouseEvent) => void;
+  onTrim: (id: string) => void;
+  onRemove: (id: string) => void;
+};
+
+/**
+ * La lista de elementos del editor de «arrastrar». Memorizada (con acciones
+ * fijas): mover lugares en la foto no la vuelve a pintar.
+ */
+export const ElementList = memo(function ElementList({
+  listed,
+  names,
+  places,
+  started,
+  selectedId,
+  placingId,
+  withMargin,
+  trimmingId,
+  busy,
+  ...actions
+}: {
+  /** Los elementos en el orden de la lista. */
+  listed: ImageElement[];
+  names: ReadonlyMap<string, string>;
+  /** Números de los lugares de cada elemento, en orden. */
+  places: ReadonlyMap<string, number[]>;
+  started: boolean;
+  /** El del panel «Seleccionado». */
+  selectedId: string | undefined;
+  /** El que se está colocando. */
+  placingId: string | null;
+  /** Íconos con margen transparente que se puede quitar. */
+  withMargin: ReadonlySet<string>;
+  trimmingId: string | null;
+  busy: boolean;
+} & RowActions) {
+  if (listed.length === 0) return null;
+  return (
+    <ul className="space-y-1.5" aria-label="Elementos">
+      {listed.map((element) => (
+        <ElementRow
+          key={element.id}
+          element={element}
+          name={names.get(element.id) ?? "Elemento"}
+          places={places.get(element.id) ?? NO_PLACES}
+          started={started}
+          selected={selectedId === element.id}
+          placing={placingId === element.id}
+          margin={withMargin.has(element.id)}
+          trimming={trimmingId === element.id}
+          busy={busy}
+          {...actions}
+        />
+      ))}
+    </ul>
+  );
+});
+
 /**
  * Un elemento de la lista. Clic: lo elige para el panel «Seleccionado» (no
  * coloca nada). Se coloca arrastrándolo a la foto o con su botón «Colocar» y
  * un clic en la foto. Un ícono con margen transparente ofrece quitárselo.
  */
-export function ElementRow({
+const ElementRow = memo(function ElementRow({
   element,
   name,
   places,
@@ -48,11 +110,7 @@ export function ElementRow({
   trimming: boolean;
   /** Hay una subida en curso. */
   busy: boolean;
-  onSelect: (e: React.MouseEvent) => void;
-  onPlace: (e: React.MouseEvent) => void;
-  onTrim: () => void;
-  onRemove: () => void;
-}) {
+} & RowActions) {
   const { setNodeRef, listeners, isDragging } = useDraggable({ id: `el:${element.id}` });
   const main = useRef<HTMLButtonElement | null>(null);
   /** Se pulsó «Quitar margen»: al desaparecer el botón, el foco pasa a la fila (y Ctrl+Z sigue a mano). */
@@ -95,7 +153,7 @@ export function ElementRow({
           type="button"
           {...listeners}
           data-element={element.id}
-          onClick={onSelect}
+          onClick={(e) => onSelect(element.id, e)}
           aria-pressed={selected}
           aria-label={`${name}: ${status}`}
           title="Clic: cambiar su tamaño y su giro. Arrástralo a la foto para colocarlo"
@@ -131,7 +189,7 @@ export function ElementRow({
           aria-pressed={placing}
           aria-label={`Colocar ${name} en la foto`}
           title="Colocar: después haz clic en la foto donde va"
-          onClick={onPlace}
+          onClick={(e) => onPlace(element.id, e)}
         >
           <Crosshair aria-hidden />
         </Button>
@@ -141,7 +199,7 @@ export function ElementRow({
           variant="ghost"
           className="shrink-0 text-muted-foreground hover:text-destructive"
           aria-label={`Quitar ${name}${n > 0 ? ` y ${plural(n, "su lugar", "sus lugares")}` : ""}`}
-          onClick={onRemove}
+          onClick={() => onRemove(element.id)}
         >
           <Trash2 aria-hidden />
         </Button>
@@ -160,7 +218,7 @@ export function ElementRow({
             onClick={() => {
               if (busy) return;
               trimClicked.current = true;
-              onTrim();
+              onTrim(element.id);
             }}
           >
             {trimming ? <Loader2 className="animate-spin" aria-hidden /> : <Crop aria-hidden />}
@@ -170,4 +228,4 @@ export function ElementRow({
       )}
     </li>
   );
-}
+});

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useSyncExternalStore } from "react";
+import { useCallback, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { Announcements, Modifier } from "@dnd-kit/core";
 import { getEventCoordinates } from "@dnd-kit/utilities";
 
@@ -22,6 +22,19 @@ const noSubscribe = () => () => {};
 /** true ya en el navegador (para llevar el fantasma del arrastre al cuerpo del documento). */
 export function useIsClient(): boolean {
   return useSyncExternalStore(noSubscribe, () => true, () => false);
+}
+
+/**
+ * Una función que no cambia entre renders y siempre llama a la versión más
+ * nueva de `fn`: así las piezas memorizadas (lugares, filas) no se vuelven a
+ * pintar en cada movimiento del puntero. Solo para eventos, no durante el render.
+ */
+export function useStableHandler<A extends unknown[], R>(fn: (...args: A) => R): (...args: A) => R {
+  const latest = useRef(fn);
+  useLayoutEffect(() => {
+    latest.current = fn;
+  });
+  return useCallback((...args: A) => latest.current(...args), []);
 }
 
 /**

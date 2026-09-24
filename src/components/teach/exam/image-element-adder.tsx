@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { Loader2, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,7 +14,7 @@ import { DUPLICATE } from "./use-editor-icons";
  * etiqueta repetida se avisa y no se agrega). Enter agrega y deja el campo
  * listo para otra; Esc lo cierra.
  */
-export function ElementAdder({
+export const ElementAdder = memo(function ElementAdder({
   elements,
   uploading,
   announce,
@@ -147,4 +147,4 @@ export function ElementAdder({
       {full && <p className="text-xs text-muted-foreground">Llegaste al máximo de {MAX_ELEMENTS} elementos.</p>}
     </>
   );
-}
+});

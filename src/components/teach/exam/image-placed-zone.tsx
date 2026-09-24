@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import { createPortal } from "react-dom";
 import { DragOverlay, useDraggable } from "@dnd-kit/core";
 import { X } from "lucide-react";
@@ -15,9 +16,10 @@ import { cn } from "@/lib/utils";
  * solución) con su número «Lugar N». Se arrastra para moverlo (con los demás
  * seleccionados, si lo está). Seleccionado lleva un anillo; si es el único,
  * además la «×» para quitarlo. El teclado lo atiende el editor (flechas, Supr,
- * Espacio), por el `data-zone` del botón.
+ * Espacio), por el `data-zone` del botón. Memorizado (con acciones fijas):
+ * al mover un grupo solo se vuelven a pintar los lugares que se mueven.
  */
-export function PlacedZone({
+export const PlacedZone = memo(function PlacedZone({
   index,
   at,
   element,
@@ -44,8 +46,8 @@ export function PlacedZone({
   removable: boolean;
   /** Va en la mano: se ve el fantasma, y el botón sigue montado (invisible) para no cortar el arrastre. */
   lifted: boolean;
-  onClick: (e: React.MouseEvent) => void;
-  onRemove: (e: React.MouseEvent) => void;
+  onClick: (index: number, e: React.MouseEvent) => void;
+  onRemove: (index: number, e: React.MouseEvent) => void;
 }) {
   const { setNodeRef, listeners } = useDraggable({ id: `zone:${index}` });
   const view = elementView(element);
@@ -60,7 +62,7 @@ export function PlacedZone({
         type="button"
         {...listeners}
         data-zone={index}
-        onClick={onClick}
+        onClick={(e) => onClick(index, e)}
         aria-label={label}
         aria-pressed={selected}
         title="Clic: seleccionarlo (Mayús+clic: sumarlo a la selección). Arrástralo para moverlo, o fuera de la foto para quitarlo"
@@ -89,7 +91,7 @@ export function PlacedZone({
             type="button"
             aria-label={`Quitar el lugar ${number}`}
             title="Quitar este lugar"
-            onClick={onRemove}
+            onClick={(e) => onRemove(index, e)}
             style={upright}
             className="pointer-events-auto absolute -left-2.5 -top-2.5 flex size-5 items-center justify-center rounded-full bg-destructive text-white shadow ring-2 ring-white outline-none hover:bg-destructive/90 focus-visible:ring-4 focus-visible:ring-destructive/40"
           >
@@ -99,7 +101,7 @@ export function PlacedZone({
       )}
     </BoardSpot>
   );
-}
+});
 
 /**
  * El fantasma de lo que va en la mano (un elemento de la lista o un lugar

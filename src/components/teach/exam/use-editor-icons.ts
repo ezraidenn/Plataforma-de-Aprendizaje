@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { uploadFile } from "@/lib/upload-client";
 import { MAX_ELEMENTS, fileUrl, type ImageDragConfig, type ImageElement } from "@/lib/image-questions";
 import { DEFAULT_ICON_SIZE } from "@/lib/image-layout";
@@ -199,10 +199,15 @@ export function useEditorIcons({
       const prepared = candidate(icon.blob);
       if (await iconExists([prepared], id)) return warn(SAME_TRIMMED);
       const fileId = await uploadIcon(icon, prepared);
-      setConfig((c) => ({
-        ...c,
-        elements: c.elements.map((e) => (e.id === id ? { ...e, fileId, ratio: icon.ratio } : e)),
-      }));
+      // Mientras subía se pudo deshacer su alta (o cambiar su archivo): entonces no se toca nada,
+      // ni se crea un paso vacío ni se pierde lo que había para rehacer
+      let applied = false as boolean;
+      setConfig((c) => {
+        if (!c.elements.some((e) => e.id === id && e.fileId === element.fileId)) return c;
+        applied = true;
+        return { ...c, elements: c.elements.map((e) => (e.id === id ? { ...e, fileId, ratio: icon.ratio } : e)) };
+      });
+      if (!applied) return;
       // El tamaño es el lado mayor: sin el margen, el dibujo lo ocupa entero y se ve más grande
       announce(`${nameOf(id)}: margen quitado, ahora se ve solo su dibujo. Si quedó muy grande, ajusta su tamaño en «Seleccionado»`);
     } catch (err) {
@@ -213,8 +218,11 @@ export function useEditorIcons({
     }
   }
 
-  /** El ícono tiene margen transparente que se le puede quitar. */
-  const hasMargin = (e: ImageElement) => e.kind === "icon" && !!e.fileId && !!inspected.get(e.fileId)?.margin;
+  /** Los íconos (ids) con margen transparente que se les puede quitar. */
+  const withMargin = useMemo(
+    () => new Set(elements.flatMap((e) => (e.kind === "icon" && e.fileId && inspected.get(e.fileId)?.margin ? [e.id] : []))),
+    [elements, inspected]
+  );
 
-  return { addIcon, trimIcon, trimming, hasMargin };
+  return { addIcon, trimIcon, trimming, withMargin };
 }

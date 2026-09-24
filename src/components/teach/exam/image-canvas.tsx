@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type ComponentProps } from "react";
+import { useEffect, useRef, useState, type ComponentProps } from "react";
 import { ImageBoard, relToRect } from "@/components/exam/image-board";
 import { clamp01, type Point } from "@/lib/image-questions";
 
@@ -13,7 +13,9 @@ import { clamp01, type Point } from "@/lib/image-questions";
  * Recuadro de selección: arrastrar sobre un área vacía de la foto (no sobre un
  * lugar) dibuja un rectángulo; al soltar, `onMarquee` recibe su área en
  * coordenadas de la foto y si iba con Mayús (sumar a lo seleccionado). El
- * clic que el navegador manda al soltar no cuenta como clic en la foto.
+ * clic que el navegador manda al soltar no cuenta como clic en la foto. Esc
+ * lo cancela a medio dibujar, y también se cancela si el botón se soltó
+ * fuera sin que la foto se enterara.
  */
 
 /** Rectángulo en coordenadas de la foto (0–1). */
@@ -36,6 +38,29 @@ export function ImageCanvas({
   /** El clic que sigue a un recuadro no es un clic en la foto. */
   const swallowClick = useRef(false);
   const [area, setArea] = useState<Area | null>(null);
+
+  /** Deja el recuadro sin seleccionar nada; el clic que llegue al soltar tampoco cuenta. */
+  const cancel = () => {
+    if (drag.current?.moved) swallowClick.current = true;
+    drag.current = null;
+    setArea(null);
+  };
+
+  // Esc a medio dibujar: se cancela solo el recuadro (lo demás del editor no se entera)
+  const drawing = area !== null;
+  useEffect(() => {
+    if (!drawing) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (drag.current?.moved) swallowClick.current = true;
+      drag.current = null;
+      setArea(null);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [drawing]);
 
   const areaTo = (e: React.PointerEvent<HTMLDivElement>, start: Point): Area => {
     const p = relToRect(e.clientX, e.clientY, e.currentTarget.getBoundingClientRect());
@@ -83,6 +108,12 @@ export function ImageCanvas({
           board.onPointerMove?.(e);
           const d = drag.current;
           if (!d) return;
+          // Se soltó fuera sin captura: la foto no vio el pointerup
+          if (e.buttons === 0) {
+            drag.current = null;
+            setArea(null);
+            return;
+          }
           if (!d.moved && Math.hypot(e.clientX - d.x, e.clientY - d.y) < MARQUEE_START_PX) return;
           d.moved = true;
           setArea(areaTo(e, d.start));
@@ -98,8 +129,7 @@ export function ImageCanvas({
         }}
         onPointerCancel={(e) => {
           board.onPointerCancel?.(e);
-          drag.current = null;
-          setArea(null);
+          cancel();
         }}
       >
         {/* Cuadrícula (tarea 7) */}

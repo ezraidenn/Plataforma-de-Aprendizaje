@@ -1,18 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  DndContext,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-  type DragStartEvent,
-} from "@dnd-kit/core";
-import { getEventCoordinates } from "@dnd-kit/utilities";
+import { DndContext, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { TriangleAlert } from "lucide-react";
-import { BoardCursor, relToRect, useCrosshair, useElementWidth } from "@/components/exam/image-board";
-import { DropVeil, QUIET_ANNOUNCEMENTS, useFileDrop } from "@/components/exam/image-dnd";
+import { BoardCursor, useCrosshair, useElementWidth } from "@/components/exam/image-board";
+import { DropVeil, QUIET_ANNOUNCEMENTS, useFileDrop, useStableHandler } from "@/components/exam/image-dnd";
+import { useMediaQuery } from "@/components/help/use-media-query";
 import { plural } from "@/lib/plural";
 import {
   MAX_ELEMENTS,
@@ -29,12 +22,14 @@ import {
 } from "@/lib/image-questions";
 import { DEFAULT_TEXT_SIZE } from "@/lib/image-layout";
 import { cn } from "@/lib/utils";
+import { dragEditorHint } from "./drag-editor-hint";
 import { ImageCanvas } from "./image-canvas";
 import { ElementAdder } from "./image-element-adder";
 import { ElementPanel } from "./image-element-panel";
-import { ElementRow } from "./image-element-row";
+import { ElementList } from "./image-element-row";
 import { DragGhost, PlacedZone } from "./image-placed-zone";
 import { useDragSelection } from "./use-drag-selection";
+import { useEditorDrag } from "./use-editor-drag";
 import { isTypingTarget, type HistoryOptions } from "./use-editor-history";
 import { newElementId, useEditorIcons } from "./use-editor-icons";
 import { useZoneWarnings } from "./use-zone-warnings";
@@ -88,13 +83,6 @@ export function DragEditor({
   const [chosen, setChosen] = useState<string | null>(null);
   /** Elemento elegido en la lista para cambiar su tamaño y giro: no coloca nada. */
   const [panelId, setPanelId] = useState<string | null>(null);
-  /** Lo que va en la mano: `el:<id>` o `zone:<índice>`. */
-  const [active, setActive] = useState<string | null>(null);
-  /** El lugar arrastrado está fuera de la foto: al soltarlo se quita. */
-  const [outside, setOutside] = useState(false);
-  /** Puntero en pantalla durante el arrastre, y desfase entre él y el centro del lugar tomado. */
-  const pointer = useRef<Point>({ x: 0, y: 0 });
-  const grab = useRef<Point>({ x: 0, y: 0 });
   const focusAfter = useRef<string | null>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
@@ -102,6 +90,8 @@ export function DragEditor({
   const fullElements = elements.length >= MAX_ELEMENTS;
   const fullZones = zones.length >= MAX_ZONES;
   const dense = board.width > 0 && board.width < 480;
+  /** Puntero táctil: la pista no habla de teclas. */
+  const touch = useMediaQuery("(pointer: coarse)");
   const byId = useMemo(() => new Map(elements.map((e) => [e.id, e])), [elements]);
   const icons = useMemo(() => iconNumbers(elements.map((e) => e.fileId)), [elements]);
   const names = useMemo(() => new Map(elements.map((e) => [e.id, imageItemName(e, icons)])), [elements, icons]);
@@ -118,6 +108,12 @@ export function DragEditor({
   const numbers = useMemo(() => readingNumbers(zones, aspect), [zones, aspect]);
   /** Índices de los lugares en orden de lectura: el orden de Tab. */
   const ordered = useMemo(() => zones.map((_, i) => i).sort((a, b) => numbers[a] - numbers[b]), [zones, numbers]);
+  /** Números de los lugares de cada elemento, en orden (para su fila). */
+  const placesOf = useMemo(() => {
+    const out = new Map<string, number[]>();
+    zones.forEach((z, i) => out.set(z.elementId, [...(out.get(z.elementId) ?? []), numbers[i]].sort((a, b) => a - b)));
+    return out;
+  }, [zones, numbers]);
   const nameOf = (id: string) => names.get(id) ?? "Elemento";
   const warnings = useZoneWarnings({
     rootRef,
@@ -143,6 +139,7 @@ export function DragEditor({
       setChosen(null);
       setPanelId(null);
     },
+    endRun: gesture.commit,
   });
   const { selected, clear: clearSelection } = selection;
   const iconTools = useEditorIcons({ elements, uploading, setUploading, setError, setNotice, announce, setConfig, nameOf });
@@ -153,16 +150,6 @@ export function DragEditor({
   const boardDrop = useFileDrop(onPhotoFile, uploading === null);
   const panelDrop = useFileDrop((file) => void iconTools.addIcon(file), uploading === null && !fullElements);
 
-  // Durante el arrastre se sigue el puntero real (en captura, antes que dnd-kit)
-  useEffect(() => {
-    if (!active) return;
-    const track = (e: PointerEvent) => {
-      pointer.current = { x: e.clientX, y: e.clientY };
-    };
-    window.addEventListener("pointermove", track, true);
-    return () => window.removeEventListener("pointermove", track, true);
-  }, [active]);
-
   // Esc suelta lo elegido y lo seleccionado, esté donde esté el foco, salvo en
   // un campo (el del panel, con Esc, solo deshace lo escrito) o si ya lo
   // atendió un diálogo
@@ -171,14 +158,26 @@ export function DragEditor({
     if (!chosen && !hasSelection && !panelId) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || e.defaultPrevented || isTypingTarget(e.target)) return;
+      const root = rootRef.current;
+      const hadFocus = !!root?.contains(document.activeElement);
       setChosen(null);
       setPanelId(null);
       clearSelection();
       announce("Elección cancelada");
+      // Si lo enfocado desaparece (el deslizante del panel), el foco va a la foto y Ctrl+Z sigue a mano
+      requestAnimationFrame(() => {
+        if (hadFocus && !root?.contains(document.activeElement)) board.node?.focus({ preventScroll: true });
+      });
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [chosen, hasSelection, panelId, clearSelection, announce]);
+  }, [chosen, hasSelection, panelId, clearSelection, announce, board.node]);
+
+  // Tras deshacer, lo elegido (para colocar o en el panel) puede ya no existir
+  useEffect(() => {
+    if (chosen && !byId.has(chosen)) setChosen(null);
+    if (panelId && !byId.has(panelId)) setPanelId(null);
+  }, [byId, chosen, panelId]);
 
   // Foco tras una acción: el botón nuevo (o el que se movió) está en el siguiente render
   useEffect(() => {
@@ -190,6 +189,8 @@ export function DragEditor({
 
   function placeAt(elementId: string, p: Point, viaKeyboard: boolean) {
     setChosen(null);
+    // Un elemento que ya no está (se deshizo su alta) no deja un lugar sin nada
+    if (!byId.has(elementId)) return;
     if (fullZones) {
       const text = `Ya hay ${MAX_ZONES} lugares, el máximo: quita uno para agregar otro.`;
       setNotice(text);
@@ -205,13 +206,6 @@ export function DragEditor({
     const n = readingNumbers([...zones, zone], aspect)[zones.length];
     announce(`${nameOf(elementId)} en el lugar ${n}${at !== dropped ? ", corrido un poco para no encimarse" : ""}`);
     if (viaKeyboard) focusAfter.current = `[data-zone="${zones.length}"]`;
-  }
-
-  /** Un lugar solo, soltado en `p`: si cae encima de otro, se corre lo justo. */
-  function moveZone(i: number, p: Point) {
-    const others = zones.filter((_, j) => j !== i);
-    const at = freeSpot(p, others, aspect) ?? p;
-    setConfig((c) => ({ ...c, zones: c.zones.map((z, j) => (j === i ? { ...z, x: at.x, y: at.y } : z)) }));
   }
 
   function removeElement(id: string) {
@@ -269,57 +263,17 @@ export function DragEditor({
     if (viaKeyboard) board.node?.focus();
   }
 
-  /** Dónde quedaría lo que va en la mano; null si está fuera de la foto. */
-  function dropPoint(): Point | null {
-    const node = board.node;
-    if (!node) return null;
-    const p = relToRect(
-      pointer.current.x + grab.current.x,
-      pointer.current.y + grab.current.y,
-      node.getBoundingClientRect()
-    );
-    return p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1 ? { x: round4(p.x), y: round4(p.y) } : null;
-  }
-
-  function onDragStart(e: DragStartEvent) {
-    const id = String(e.active.id);
-    setActive(id);
-    setChosen(null);
-    setOutside(false);
-    const at = getEventCoordinates(e.activatorEvent) ?? { x: 0, y: 0 };
-    pointer.current = at;
-    // Un lugar tomado de una orilla se mueve con su centro, no salta al puntero
-    const r = e.active.rect.current.initial;
-    grab.current =
-      id.startsWith("zone:") && r
-        ? { x: r.left + r.width / 2 - at.x, y: r.top + r.height / 2 - at.y }
-        : { x: 0, y: 0 };
-    // Un lugar seleccionado con otros se lleva al grupo; si no, pasa a ser lo seleccionado
-    if (id.startsWith("zone:")) selection.startDrag(Number(id.slice(5)));
-    else clearSelection();
-  }
-
-  function onDragEnd(e: DragEndEvent) {
-    const id = String(e.active.id);
-    const p = dropPoint();
-    setActive(null);
-    setOutside(false);
-    if (selection.dropGroup(e.delta, board.node?.getBoundingClientRect())) return;
-    if (id.startsWith("zone:")) {
-      const i = Number(id.slice(5));
-      if (p) moveZone(i, p);
-      else selection.remove([i], false);
-    } else if (p) {
-      placeAt(id.slice(3), p, false);
-    }
-  }
-
-  const grouped = selection.groupDragging;
-  const activeElement =
-    active && !grouped
-      ? byId.get(active.startsWith("el:") ? active.slice(3) : (zones[Number(active.slice(5))]?.elementId ?? ""))
-      : undefined;
-  const removing = outside && !grouped && !!active?.startsWith("zone:");
+  const drag = useEditorDrag({
+    boardNode: board.node,
+    zones,
+    aspect,
+    byId,
+    setConfig,
+    selection,
+    onStart: () => setChosen(null),
+    onPlace: (elementId, p) => placeAt(elementId, p, false),
+  });
+  const { active, grouped, removing } = drag;
   /** Elementos de los lugares seleccionados. */
   const selectedIds = new Set([...selected].map((i) => zones[i]?.elementId));
   /** El elemento del panel «Seleccionado»: el elegido en la lista o el de los lugares seleccionados (si es uno solo). */
@@ -333,34 +287,46 @@ export function DragEditor({
       coalesce: `elemento:${id}:${Object.keys(patch).join(",")}`,
     });
   }
-  const hint = removing
-    ? "Fuera de la foto: suéltalo para quitar este lugar."
-    : chosen
-      ? `Haz clic en la foto donde va «${nameOf(chosen)}» (Esc para cancelar).`
-      : elements.length === 0
-        ? "Primero agrega los íconos o etiquetas que el alumno colocará."
-        : selected.size > 1
-          ? `${selected.size} lugares seleccionados: arrástralos juntos o muévelos con las flechas (Mayús: pasos largos). Ctrl+D los duplica, Supr los quita y Esc suelta la selección.`
-          : "Arrastra un elemento de la lista a la foto para marcar dónde va (o pulsa su botón «Colocar», la mira, y haz clic en la foto). Clic en un lugar lo selecciona; Mayús+clic o un recuadro sobre la foto seleccionan varios. Arrástralos o usa las flechas para moverlos; Ctrl+D duplica, Supr quita (o saca un lugar de la foto) y Ctrl+Z deshace.";
+  const hint = dragEditorHint({
+    removing,
+    placing: chosen && nameOf(chosen),
+    empty: elements.length === 0,
+    selectedCount: selected.size,
+    touch,
+  });
+  // Acciones fijas para las piezas memorizadas: mover un grupo no vuelve a pintar la lista ni los demás lugares
+  const onZoneClick = useStableHandler((i: number, e: React.MouseEvent) => selection.click(i, e.shiftKey, e.detail === 0));
+  const onZoneRemove = useStableHandler((i: number, e: React.MouseEvent) => selection.remove([i], e.detail === 0));
+  const rowActions = {
+    onSelect: useStableHandler((id: string, e: React.MouseEvent) => select(id, e.detail === 0)),
+    onPlace: useStableHandler((id: string, e: React.MouseEvent) => startPlacing(id, e.detail === 0)),
+    onTrim: useStableHandler((id: string) => void iconTools.trimIcon(id)),
+    onRemove: useStableHandler(removeElement),
+  };
+  const onPanelChange = useStableHandler(
+    (patch: Pick<ImageElement, "size" | "rotation">) => panelElement && changeElement(panelElement.id, patch)
+  );
+  const onIconFile = useStableHandler((file: File) => void iconTools.addIcon(file));
+  const onAddLabel = useStableHandler(addLabel);
 
   return (
     <DndContext
       sensors={sensors}
       autoScroll={false}
       accessibility={{ announcements: QUIET_ANNOUNCEMENTS }}
-      onDragStart={onDragStart}
-      onDragMove={(e) => {
-        const rect = board.node?.getBoundingClientRect();
-        if (!(rect && selection.dragGroup(e.delta, rect))) setOutside(dropPoint() === null);
-      }}
-      onDragEnd={onDragEnd}
-      onDragCancel={() => {
-        setActive(null);
-        setOutside(false);
-        selection.cancelDrag();
-      }}
+      {...drag.handlers}
     >
-      <div ref={rootRef} onKeyDown={selection.onKeyDown} className="grid gap-4 @2xl:grid-cols-[minmax(0,1fr)_15rem]">
+      <div
+        ref={rootRef}
+        // Un clic en un hueco deja aquí el foco: los atajos (Ctrl+A, Ctrl+D, Supr, Ctrl+Z) siguen a mano
+        tabIndex={-1}
+        role="group"
+        aria-label="Lugares en la foto y elementos"
+        data-drag-editor=""
+        onKeyDown={selection.onKeyDown}
+        onKeyUp={selection.onKeyUp}
+        className="grid gap-4 outline-none @2xl:grid-cols-[minmax(0,1fr)_15rem]"
+      >
         <div className="min-w-0 space-y-2">
           <ImageCanvas
             ref={board.ref}
@@ -417,8 +383,8 @@ export function DragEditor({
                   selected={selected.has(i)}
                   removable={selected.size === 1 && selected.has(i) && !active}
                   lifted={active === `zone:${i}` && !grouped}
-                  onClick={(e) => selection.click(i, e.shiftKey, e.detail === 0)}
-                  onRemove={(e) => selection.remove([i], e.detail === 0)}
+                  onClick={onZoneClick}
+                  onRemove={onZoneRemove}
                 />
               );
             })}
@@ -444,47 +410,31 @@ export function DragEditor({
               several={several}
               aspect={aspect}
               boardWidth={board.width}
-              onChange={(patch) => panelElement && changeElement(panelElement.id, patch)}
+              onChange={onPanelChange}
               onBegin={gesture.begin}
               onCommit={gesture.commit}
             />
           )}
           <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Elementos</p>
-          {listed.length > 0 && (
-            <ul className="space-y-1.5" aria-label="Elementos">
-              {listed.map((element) => {
-                const places = zones
-                  .map((z, i) => (z.elementId === element.id ? numbers[i] : 0))
-                  .filter(Boolean)
-                  .sort((a, b) => a - b);
-                return (
-                  <ElementRow
-                    key={element.id}
-                    element={element}
-                    name={nameOf(element.id)}
-                    places={places}
-                    started={zones.length > 0}
-                    selected={panelElement?.id === element.id}
-                    placing={chosen === element.id}
-                    margin={iconTools.hasMargin(element)}
-                    trimming={iconTools.trimming === element.id}
-                    busy={uploading !== null}
-                    onSelect={(e) => select(element.id, e.detail === 0)}
-                    onPlace={(e) => startPlacing(element.id, e.detail === 0)}
-                    onTrim={() => void iconTools.trimIcon(element.id)}
-                    onRemove={() => removeElement(element.id)}
-                  />
-                );
-              })}
-            </ul>
-          )}
+          <ElementList
+            listed={listed}
+            names={names}
+            places={placesOf}
+            started={zones.length > 0}
+            selectedId={panelElement?.id}
+            placingId={chosen}
+            withMargin={iconTools.withMargin}
+            trimmingId={iconTools.trimming}
+            busy={uploading !== null}
+            {...rowActions}
+          />
 
           <ElementAdder
             elements={elements}
             uploading={uploading}
             announce={announce}
-            onIconFile={(file) => void iconTools.addIcon(file)}
-            onAddLabel={addLabel}
+            onIconFile={onIconFile}
+            onAddLabel={onAddLabel}
           />
           {zones.length > 0 && (
             <p className="rounded-lg bg-muted/60 p-2 text-xs leading-relaxed text-muted-foreground">
@@ -500,7 +450,7 @@ export function DragEditor({
       </div>
 
       <DragGhost
-        element={activeElement}
+        element={drag.ghost}
         fromList={!!active?.startsWith("el:")}
         removing={removing}
         boardWidth={board.width}

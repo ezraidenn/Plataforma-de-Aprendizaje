@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState } from "react";
+import { memo, useId, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -37,7 +37,7 @@ const fromStep = (step: number, [min, max]: Range) => round4(min * (max / min) *
 const toPercent = (size: number) => Math.round(size * 1000) / 10;
 const clamp = (n: number, [min, max]: Range) => Math.min(max, Math.max(min, n));
 
-export function ElementPanel({
+export const ElementPanel = memo(function ElementPanel({
   element,
   name,
   several,
@@ -163,7 +163,7 @@ export function ElementPanel({
       </p>
     </section>
   );
-}
+});
 
 /**
  * Una propiedad: nombre, campo numérico con su unidad y, debajo, el
