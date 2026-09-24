@@ -1055,7 +1055,7 @@ async function aplicarExcelChecks() {
     antesDeReemplazar === 1 && quedan.length === 1 && quedan[0].promptMd.includes("revisa un extintor"),
     [antesDeReemplazar, quedan.map((q) => q.promptMd)]
   );
-  check("Reemplazar: el resultado dice a cuántas sustituyó", "text" in aplR && aplR.text.includes("reemplazaron a las 1"), aplR);
+  check("Reemplazar: el resultado dice a cuántas sustituyó", "text" in aplR && aplR.text.includes("1 del archivo reemplazó a la que tenía"), aplR);
 
   // ── Lo que no es de nadie y lo que ya tiene herramienta ──
   const adjRaro = await adjuntar(conv.id, await xlsxDeFilas("Hoja", ["cosa", "otra"], [["1", "2"]]), `${P}-raro.xlsx`);

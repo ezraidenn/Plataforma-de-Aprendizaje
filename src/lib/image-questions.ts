@@ -14,6 +14,13 @@ export type ImageZone = Point & { elementId: string };
 export type ImageDragConfig = { aspect: number; iconSize: IconSize; elements: ImageElement[]; zones: ImageZone[] };
 export type ImageClickConfig = { aspect: number; precision: Precision; spots: Point[] };
 
+/** Los dos tipos de pregunta sobre imagen: único criterio, para no repetir la lista por todo el código. */
+export const IMAGE_QUESTION_TYPES = ["image_drag", "image_click"] as const;
+export type ImageQuestionType = (typeof IMAGE_QUESTION_TYPES)[number];
+export function isImageQuestionType(t: string): t is ImageQuestionType {
+  return (IMAGE_QUESTION_TYPES as readonly string[]).includes(t);
+}
+
 export const MAX_ELEMENTS = 20;
 export const MAX_ZONES = 30;
 export const MAX_SPOTS = 10;

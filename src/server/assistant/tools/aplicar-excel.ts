@@ -15,6 +15,7 @@ import { attachmentBytes, attachmentsOf, type StoredAttachment } from "@/server/
 import { readSheetRows, type SheetData } from "@/server/services/sheet-colors";
 import { detectFormat, FORMAT_LABELS, type ExcelFormat } from "@/lib/excel-formats";
 import { extOf } from "@/lib/ai-import-files";
+import { plural } from "@/lib/plural";
 import type { AssistantBlock, ProposalColumn, ProposalRow } from "@/lib/assistant-blocks";
 import { createProposal } from "../proposal-store";
 import { schema, str, strEnum, param, type AssistantTool, type ToolCtx } from "../tool-types";
@@ -210,10 +211,31 @@ function examRows(csv: string, modo: Modo, imagenesConservadas: number): { rows:
     return r.status === "ok" ? { id: rowId(r.line), cells } : { id: rowId(r.line), cells, warning: r.message, blocked: true };
   });
   const partes = [reemplaza ? `${ok} que reemplazan a las actuales` : `${ok} por agregar`];
-  // El CSV no puede traer preguntas sobre imagen: "reemplazar" las conserva, no las borra
-  if (reemplaza && imagenesConservadas > 0) partes.push(`${imagenesConservadas} sobre imagen se conservan`);
+  // El Excel no puede traer preguntas sobre imagen: "reemplazar" las conserva, no las borra
+  if (reemplaza && imagenesConservadas > 0) {
+    partes.push(plural(imagenesConservadas, "1 sobre imagen se conserva", `${imagenesConservadas} sobre imagen se conservan`));
+  }
   if (invalid > 0) partes.push(`${invalid} con problema`);
   return { rows: proposalRows, resumen: partes.join(", ") };
+}
+
+/**
+ * Texto del resultado al aplicar «reemplazar»: qué llegó, a cuántas
+ * reemplazó y cuántas sobre imagen se conservaron, con concordancia y sin
+ * frases como «reemplazaron a las 0 que tenía» cuando no había ninguna que
+ * reemplazar (todo el examen era de imagen).
+ */
+function reemplazoTexto(examTitle: string, imported: number, kept: number, antes: number, skipped: number): string {
+  const total = imported + kept;
+  const reemplazadas = antes - kept;
+  const partes = [
+    reemplazadas > 0
+      ? `${plural(imported, "1 del archivo reemplazó a", `${imported} del archivo reemplazaron a`)} ${plural(reemplazadas, "la que tenía", `las ${reemplazadas} que tenía`)}`
+      : plural(imported, "se agregó 1 del archivo (no había ninguna que reemplazar)", `se agregaron ${imported} del archivo (no había ninguna que reemplazar)`),
+  ];
+  if (kept > 0) partes.push(plural(kept, "se conservó 1 sobre imagen", `se conservaron ${kept} sobre imagen`));
+  if (skipped > 0) partes.push(plural(skipped, "1 omitida", `${skipped} omitidas`));
+  return `${plural(total, `${examTitle} quedó con 1 pregunta`, `${examTitle} quedó con ${total} preguntas`)}: ${partes.join("; ")}.`;
 }
 
 /** Las hojas del último adjunto del mensaje. */
@@ -251,7 +273,7 @@ export const aplicarExcel: AssistantTool = {
       [...FORMATOS]
     ),
     modo: strEnum(
-      'SOLO para preguntas de examen: «reemplazar» borra las preguntas que tiene el examen (las que son sobre imagen se conservan: el CSV no las puede traer) y deja las del archivo; «agregar» las suma al final. Déjalo en «» la primera vez: el servidor te dirá que se lo preguntes al usuario',
+      'SOLO para preguntas de examen: «reemplazar» borra las preguntas que tiene el examen (las que son sobre imagen se conservan: el Excel no las puede traer) y deja las del archivo; «agregar» las suma al final. Déjalo en «» la primera vez: el servidor te dirá que se lo preguntes al usuario',
       [...MODOS]
     ),
   }),
@@ -343,11 +365,14 @@ export const aplicarExcel: AssistantTool = {
         if (!modo) {
           const actuales = listQuestions(examen.id).length;
           const imagenes = countImageQuestions(examen.id);
+          // Con preguntas sobre imagen de por medio, "reemplazar" no cambia
+          // TODAS las preguntas (esas se quedan), así que no se dice «todas»
+          const etiquetaReemplazar = imagenes > 0 ? "«reemplazar las preguntas del examen»" : "«reemplazar todas las preguntas del examen»";
           const notaImagenes = imagenes > 0
-            ? ` (las ${imagenes} sobre imagen no las trae el CSV: reemplazar las conserva tal como están, no las borra)`
+            ? ` (${plural(imagenes, "se conserva 1 sobre imagen", `se conservan ${imagenes} sobre imagen`)}: el Excel no ${plural(imagenes, "la", "las")} puede traer)`
             : "";
           return {
-            forModel: `Ese archivo trae ${hoja.rows.length} pregunta(s) para ${examen.title}, que ahora tiene ${actuales}. No propuse nada todavía: pregúntale al usuario, con estas dos opciones, qué hacer — «reemplazar todas las preguntas del examen»${notaImagenes} (modo "reemplazar") o «agregarlas a las que ya hay» (modo "agregar"). Si el archivo salió de ese mismo examen, lo normal es reemplazar: agregar las dejaría duplicadas. Vuelve a llamar a aplicar_excel con el modo que elija.${discrepa}`,
+            forModel: `Ese archivo trae ${plural(hoja.rows.length, "1 pregunta", `${hoja.rows.length} preguntas`)} para ${examen.title}, que ahora tiene ${actuales}. No propuse nada todavía: pregúntale al usuario, con estas dos opciones, qué hacer — ${etiquetaReemplazar}${notaImagenes} (modo "reemplazar") o «agregarlas a las que ya hay» (modo "agregar"). Si el archivo salió de ese mismo examen, lo normal es reemplazar: agregar las dejaría duplicadas. Vuelve a llamar a aplicar_excel con el modo que elija.${discrepa}`,
           };
         }
         title = modo === "reemplazar" ? `Reemplazar las preguntas de ${examen.title}` : `Agregar preguntas a ${examen.title}`;
@@ -447,8 +472,8 @@ export const aplicarExcel: AssistantTool = {
         });
         return {
           text: reemplaza
-            ? `${examen.title} quedó con ${imported + kept} pregunta(s): ${imported} del archivo reemplazaron a las ${antes - kept} que tenía${kept > 0 ? `; se conservaron ${kept} sobre imagen` : ""}${skipped > 0 ? `; ${skipped} omitida(s)` : ""}.`
-            : `${imported} pregunta(s) agregada(s) al final de ${examen.title}${skipped > 0 ? `; ${skipped} omitida(s)` : ""}.`,
+            ? reemplazoTexto(examen.title, imported, kept, antes, skipped)
+            : `${plural(imported, "1 pregunta agregada", `${imported} preguntas agregadas`)} al final de ${examen.title}${skipped > 0 ? `; ${plural(skipped, "1 omitida", `${skipped} omitidas`)}` : ""}.`,
           blocks,
         };
       }

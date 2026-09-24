@@ -20,6 +20,7 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ExamPreview } from "@/components/exam/exam-preview";
+import { plural } from "@/lib/plural";
 import { downloadTextFile } from "@/components/teach/csv-download";
 import { analyzeChunkAction, draftsToCsvAction, importAiQuestionsAction } from "@/server/actions/ai-exam";
 import { DRAFT_TYPE_LABEL, draftProblem, type QuestionDraft } from "@/lib/question-draft";
@@ -184,14 +185,14 @@ export function AiImportDialog({
   courseId,
   itemId,
   currentCount,
-  imageCount = 0,
+  imageCount,
 }: {
   courseId: string;
   itemId: string;
   /** Preguntas que "reemplazar" SÍ borra (la IA nunca crea sobre imagen). */
   currentCount: number;
   /** Preguntas sobre imagen que ya tiene el examen: "reemplazar" las conserva. */
-  imageCount?: number;
+  imageCount: number;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -359,14 +360,16 @@ export function AiImportDialog({
         return;
       }
       toast.success(
-        `Se ${result.imported === 1 ? "importó 1 pregunta" : `importaron ${result.imported} preguntas`}` +
-          (blocked > 0 ? ` (${blocked} con problemas se omitieron)` : "")
+        plural(result.imported, "Se importó 1 pregunta", `Se importaron ${result.imported} preguntas`) +
+          (blocked > 0 ? ` (${plural(blocked, "1 con problemas se omitió", `${blocked} con problemas se omitieron`)})` : "")
       );
       if (mode === "replace" && result.kept > 0) {
         toast.info(
-          result.kept === 1
-            ? "1 pregunta sobre imagen se conservó tal como está"
-            : `${result.kept} preguntas sobre imagen se conservaron tal como están`
+          plural(
+            result.kept,
+            "1 pregunta sobre imagen se conservó tal como está",
+            `${result.kept} preguntas sobre imagen se conservaron tal como están`
+          )
         );
       }
       setOpen(false);
@@ -571,17 +574,20 @@ export function AiImportDialog({
                     <RadioGroupItem value="append" /> Agregar al examen
                   </Label>
                   <Label className="flex items-center gap-2 font-normal">
-                    <RadioGroupItem value="replace" /> Reemplazar las {currentCount} preguntas actuales
+                    <RadioGroupItem value="replace" />{" "}
+                    {plural(currentCount, "Reemplazar la pregunta actual", `Reemplazar las ${currentCount} preguntas actuales`)}
                   </Label>
                 </RadioGroup>
               )}
               {mode === "replace" && currentCount > 0 && (
                 <p className="text-[13px] text-destructive">
-                  Se borrarán las {currentCount} preguntas que tiene hoy el examen.
+                  {plural(
+                    currentCount,
+                    "Se borrará la pregunta que tiene hoy el examen.",
+                    `Se borrarán las ${currentCount} preguntas que tiene hoy el examen.`
+                  )}
                   {imageCount > 0 &&
-                    (imageCount === 1
-                      ? " 1 pregunta sobre imagen se conserva."
-                      : ` ${imageCount} preguntas sobre imagen se conservan.`)}
+                    ` ${plural(imageCount, "1 pregunta sobre imagen se conserva.", `${imageCount} preguntas sobre imagen se conservan.`)}`}
                 </p>
               )}
               <DialogFooter className="gap-2">

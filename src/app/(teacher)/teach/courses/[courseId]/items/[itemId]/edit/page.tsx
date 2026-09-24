@@ -7,6 +7,7 @@ import { getOwnedCourse } from "@/server/services/courses";
 import { getItem } from "@/server/services/tree";
 import { getExam, listQuestions } from "@/server/services/exams";
 import { studentsWithAttempts } from "@/server/services/exam-results";
+import { isImageQuestionType } from "@/lib/image-questions";
 import { ExamSettingsCard } from "@/components/teach/exam/exam-settings-card";
 import { QuestionList, type QuestionData } from "@/components/teach/exam/question-list";
 import { ExamCsvActions } from "@/components/teach/bulk/exam-csv-dialog";
@@ -53,7 +54,7 @@ export default async function ExamEditPage({
     };
   });
   // La IA nunca crea preguntas sobre imagen; "reemplazar" solo borra las demás
-  const imageQuestionCount = rawQuestions.filter((q) => q.type === "image_drag" || q.type === "image_click").length;
+  const imageQuestionCount = rawQuestions.filter((q) => isImageQuestionType(q.type)).length;
 
   return (
     <div className="space-y-4">
@@ -92,7 +93,7 @@ export default async function ExamEditPage({
               imageCount={imageQuestionCount}
             />
           )}
-          <ExamCsvActions itemId={itemId} questionCount={questions.length} />
+          <ExamCsvActions itemId={itemId} questionCount={questions.length} imageCount={imageQuestionCount} />
         </div>
       </div>
 

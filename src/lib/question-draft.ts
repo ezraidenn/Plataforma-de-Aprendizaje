@@ -1,11 +1,12 @@
 import { questionProblem, type QuestionShape } from "./question-validation";
+import type { ImageQuestionType } from "./image-questions";
 
 /**
  * Pregunta interpretada (por la IA) que el maestro revisa antes de importar.
  * Puro: lo usan el servidor y el diálogo. Sin las preguntas sobre imagen:
  * necesitan foto y posiciones, y la IA no las crea.
  */
-export type DraftType = Exclude<QuestionShape["type"], "image_drag" | "image_click">;
+export type DraftType = Exclude<QuestionShape["type"], ImageQuestionType>;
 
 export type QuestionDraft = {
   /** Id local (no es de la BD) */

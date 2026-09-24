@@ -17,6 +17,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { plural } from "@/lib/plural";
 import { downloadTextFile } from "@/components/teach/csv-download";
 import {
   StepIndicator,
@@ -42,11 +43,43 @@ type Preview = {
   currentImageCount: number;
 };
 
+/**
+ * Aviso de «reemplazar»: qué se borra y qué se conserva, con concordancia y
+ * sin frases vacías cuando uno de los dos grupos está en cero.
+ */
+function replaceWarning(currentCount: number, currentImageCount: number): string {
+  const partes: string[] = [];
+  if (currentCount > 0) {
+    partes.push(
+      currentImageCount > 0
+        ? plural(
+            currentCount,
+            "se borrará la pregunta que no es sobre imagen",
+            `se borrarán las ${currentCount} preguntas que no son sobre imagen`
+          )
+        : plural(currentCount, "se borrará la pregunta actual", `se borrarán las ${currentCount} preguntas actuales`)
+    );
+  }
+  if (currentImageCount > 0) {
+    partes.push(
+      plural(
+        currentImageCount,
+        "la pregunta sobre imagen se conserva tal como está",
+        `las ${currentImageCount} preguntas sobre imagen se conservan tal como están`
+      )
+    );
+  }
+  const texto = `${partes.join("; ")}.${currentCount > 0 ? " Los intentos ya enviados conservan sus preguntas." : ""}`;
+  return texto.charAt(0).toUpperCase() + texto.slice(1);
+}
+
 /** "1 pregunta sobre imagen no cabe..." / "N preguntas sobre imagen no caben...", con la concordancia correcta. */
 function imageOmittedText(n: number): string {
-  return n === 1
-    ? "1 pregunta sobre imagen no cabe en el Excel; en el examen se queda como está."
-    : `${n} preguntas sobre imagen no caben en el Excel; en el examen se quedan como están.`;
+  return plural(
+    n,
+    "1 pregunta sobre imagen no cabe en el Excel; en el examen se queda como está.",
+    `${n} preguntas sobre imagen no caben en el Excel; en el examen se quedan como están.`
+  );
 }
 
 /**
@@ -56,11 +89,15 @@ function imageOmittedText(n: number): string {
 export function ExamCsvActions({
   itemId,
   questionCount,
+  imageCount,
 }: {
   itemId: string;
   questionCount: number;
+  /** Preguntas sobre imagen: no caben en el CSV, así que no cuentan para exportar. */
+  imageCount: number;
 }) {
   const [exporting, startExport] = useTransition();
+  const exportable = questionCount - imageCount;
 
   function exportCsv() {
     startExport(async () => {
@@ -82,8 +119,18 @@ export function ExamCsvActions({
         variant="outline"
         className="h-11"
         onClick={exportCsv}
-        disabled={exporting || questionCount === 0}
-        title={questionCount === 0 ? "Aún no hay preguntas que exportar" : undefined}
+        disabled={exporting || exportable === 0}
+        title={
+          exportable > 0
+            ? undefined
+            : questionCount === 0
+              ? "Aún no hay preguntas que exportar"
+              : plural(
+                  questionCount,
+                  "Esa pregunta es sobre imagen: no se puede exportar a Excel",
+                  "Esas preguntas son sobre imagen: no se pueden exportar a Excel"
+                )
+        }
       >
         {exporting ? <Loader2 className="animate-spin" aria-hidden /> : <Download aria-hidden />}
         Exportar CSV
@@ -305,7 +352,9 @@ export function ExamCsvDialog({ itemId }: { itemId: string }) {
                   <span>
                     <span className="font-medium">Reemplazar preguntas actuales</span>
                     <span className="block text-xs text-muted-foreground">
-                      El examen queda solo con las preguntas del archivo.
+                      {preview.currentImageCount > 0
+                        ? `El examen queda con las preguntas del archivo y ${plural(preview.currentImageCount, "la pregunta sobre imagen que ya tiene", `las ${preview.currentImageCount} preguntas sobre imagen que ya tiene`)}.`
+                        : "El examen queda solo con las preguntas del archivo."}
                     </span>
                   </span>
                 </label>
@@ -322,20 +371,7 @@ export function ExamCsvDialog({ itemId }: { itemId: string }) {
               {mode === "replace" && (preview.currentCount > 0 || preview.currentImageCount > 0) && (
                 <p className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm">
                   <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
-                  <span>
-                    {preview.currentCount > 0 && (
-                      <>
-                        Se {preview.currentCount === 1
-                          ? "borrará la pregunta actual"
-                          : `borrarán las ${preview.currentCount} preguntas actuales`}
-                        ; los intentos ya enviados conservan sus preguntas.{" "}
-                      </>
-                    )}
-                    {preview.currentImageCount > 0 &&
-                      (preview.currentImageCount === 1
-                        ? "1 pregunta sobre imagen se conserva tal como está: el CSV no la puede traer."
-                        : `${preview.currentImageCount} preguntas sobre imagen se conservan tal como están: el CSV no las puede traer.`)}
-                  </span>
+                  <span>{replaceWarning(preview.currentCount, preview.currentImageCount)}</span>
                 </p>
               )}
             </div>
@@ -390,11 +426,9 @@ export function ExamCsvDialog({ itemId }: { itemId: string }) {
                   ? "El examen quedó con las preguntas del archivo"
                   : "Se agregaron al final del examen",
                 mode === "replace" && outcome.kept > 0
-                  ? `se conservaron ${outcome.kept} ${outcome.kept === 1 ? "pregunta sobre imagen" : "preguntas sobre imagen"}`
+                  ? plural(outcome.kept, "se conservó 1 pregunta sobre imagen", `se conservaron ${outcome.kept} preguntas sobre imagen`)
                   : null,
-                outcome.skipped > 0
-                  ? `${outcome.skipped} ${outcome.skipped === 1 ? "fila omitida" : "filas omitidas"}`
-                  : null,
+                outcome.skipped > 0 ? plural(outcome.skipped, "1 fila omitida", `${outcome.skipped} filas omitidas`) : null,
               ]
                 .filter(Boolean)
                 .join(" · ")}

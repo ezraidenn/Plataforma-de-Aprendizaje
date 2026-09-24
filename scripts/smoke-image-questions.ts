@@ -32,6 +32,7 @@ import {
   nearestZone,
   parseClickAnswer,
   parseDragAnswer,
+  isImageQuestionType,
   readImageClick,
   readImageDrag,
   relDistance,
@@ -355,13 +356,14 @@ async function endToEnd() {
       index: 99,
       uploadedBy: teacher,
     });
-    const copiedQs = examCopy ? examsSvc.listQuestions(examCopy.item.id) : [];
+    const copiedQs = examsSvc.listQuestions(examCopy.item.id);
     const copiedDrag = copiedQs.find((q) => q.type === "image_drag" && q.promptMd === "Coloca cada señal");
     const copiedClick = copiedQs.find((q) => q.type === "image_click");
     check("Copiar el examen: la copia tiene las 3 preguntas (arrastrar, señalar y su copia)", copiedQs.length === 3, copiedQs.length);
     check("Copiar el examen: arrastrar conserva la foto y la config", copiedDrag?.imageFileId === photo && JSON.stringify(copiedDrag?.config) === JSON.stringify(drag), copiedDrag);
     check("Copiar el examen: señalar conserva la foto y la config", copiedClick?.imageFileId === photo && JSON.stringify(copiedClick?.config) === JSON.stringify(click), copiedClick);
-    check("Copiar el examen: el alumno puede ver la copia (readImageDrag no nulo)", !!copiedDrag && readImageDrag(copiedDrag) !== null);
+    check("Copiar el examen: el alumno puede ver la copia de arrastrar (readImageDrag no nulo)", !!copiedDrag && readImageDrag(copiedDrag) !== null);
+    check("Copiar el examen: el alumno puede ver la copia de señalar (readImageClick no nulo)", !!copiedClick && readImageClick(copiedClick) !== null);
     check("Copiar el examen: no faltó ningún archivo", examCopy.missingFiles === 0, examCopy.missingFiles);
 
     // La copia a OTRO curso del mismo maestro también comparte la foto
@@ -391,6 +393,12 @@ async function endToEnd() {
         { textMd: "B", isCorrect: false },
       ],
     });
+    const csvWithChoice = parseCsv(exportExamCsv(exam.id), { maxRows: 10 });
+    check(
+      "exportExamCsv con una pregunta exportable: exactamente 1 fila opcion_unica",
+      csvWithChoice.rows.length === 1 && csvWithChoice.rows[0].cells[0] === "opcion_unica",
+      csvWithChoice.rows
+    );
     check("Antes de reemplazar: 4 preguntas (3 de imagen + 1 de opción)", examsSvc.listQuestions(exam.id).length === 4);
     const replaced = importQuestionInputs({
       actorId: teacher,
@@ -416,7 +424,71 @@ async function endToEnd() {
     check("La pregunta de opción vieja ya no está", !afterReplace.some((q) => q.promptMd === `${P} Pregunta de opción`));
     check(
       "Las preguntas sobre imagen siguen con su foto tras reemplazar",
-      afterReplace.filter((q) => q.type === "image_drag" || q.type === "image_click").every((q) => q.imageFileId === photo)
+      afterReplace.filter((q) => isImageQuestionType(q.type)).every((q) => q.imageFileId === photo)
+    );
+
+    // ─── Reemplazar conserva el ORDEN: cada imagen vuelve a su índice, las
+    // nuevas llenan los huecos en su orden y las que sobran van al final ─────
+    const orderExam = tree.createItem({ courseId: course.id, parentId: null, kind: "exam", title: `${P} Orden` });
+    const choiceInput = (n: string) => ({
+      type: "single_choice" as const,
+      promptMd: `${P} ${n}`,
+      points: 1,
+      options: [
+        { textMd: "A", isCorrect: true },
+        { textMd: "B", isCorrect: false },
+      ],
+    });
+    const p1 = examsSvc.createQuestion(orderExam.id, choiceInput("P1"));
+    const imgId = examsSvc.createQuestion(orderExam.id, {
+      type: "image_click",
+      promptMd: `${P} IMG`,
+      points: 1,
+      config: click,
+      imageFileId: photo,
+    });
+    const p2 = examsSvc.createQuestion(orderExam.id, choiceInput("P2"));
+    const p3 = examsSvc.createQuestion(orderExam.id, choiceInput("P3"));
+    check(
+      "Orden inicial intercalado: P1, IMG, P2, P3",
+      examsSvc.listQuestions(orderExam.id).map((q) => q.id).join() === [p1, imgId, p2, p3].join()
+    );
+
+    // Menos nuevas (2) que huecos (3): las que sobran se compactan y la
+    // imagen vuelve a su índice original (1)
+    const r1 = importQuestionInputs({
+      actorId: teacher,
+      examItemId: orderExam.id,
+      inputs: [choiceInput("N1"), choiceInput("N2")],
+      mode: "replace",
+      source: "csv",
+    });
+    check("Menos nuevas que huecos: kept = 1 (la imagen)", r1.kept === 1, r1);
+    const afterR1 = examsSvc.listQuestions(orderExam.id);
+    check(
+      "Orden tras reemplazar con menos: [nueva, IMG, nueva] y la imagen es la misma pregunta de antes",
+      afterR1.length === 3 && afterR1[1].id === imgId && afterR1.map((q) => q.type).join() === "single_choice,image_click,single_choice",
+      afterR1.map((q) => ({ id: q.id, type: q.type }))
+    );
+    check("La imagen conserva su foto y config tras reordenar", afterR1[1].imageFileId === photo && readImageClick(afterR1[1]) !== null);
+
+    // Más nuevas (4) que huecos (2): las que sobran van al final, la imagen
+    // sigue en su índice
+    const r2 = importQuestionInputs({
+      actorId: teacher,
+      examItemId: orderExam.id,
+      inputs: [choiceInput("M1"), choiceInput("M2"), choiceInput("M3"), choiceInput("M4")],
+      mode: "replace",
+      source: "csv",
+    });
+    check("Reemplazar de nuevo: kept sigue siendo 1 (la imagen)", r2.kept === 1, r2);
+    const afterR2 = examsSvc.listQuestions(orderExam.id);
+    check(
+      "Orden tras reemplazar con más: la imagen sigue en el índice 1 y las que sobran van al final",
+      afterR2.length === 5 &&
+        afterR2[1].id === imgId &&
+        afterR2.map((q) => q.type).join() === "single_choice,image_click,single_choice,single_choice,single_choice",
+      afterR2.map((q) => q.type)
     );
   } finally {
     await cleanupDb();

@@ -1,7 +1,8 @@
 import "server-only";
 import { db } from "@/server/db";
 import { questionProblem } from "@/lib/question-validation";
-import { createQuestion, deleteQuestion, listQuestions, type QuestionInput } from "./exams";
+import { isImageQuestionType } from "@/lib/image-questions";
+import { createQuestion, deleteQuestion, listQuestions, reorderQuestions, type QuestionInput } from "./exams";
 import { audit } from "./audit";
 
 /**
@@ -9,8 +10,11 @@ import { audit } from "./audit";
  * transacción: si algo falla al crearlas, el examen queda como estaba (ni
  * siquiera «reemplazar» borra nada). Las preguntas sobre imagen no se pueden
  * expresar en CSV ni las crea la IA, así que «reemplazar» las conserva tal
- * cual en vez de borrarlas (`kept`). La auditoría guarda conteos, nunca el
- * contenido.
+ * cual en vez de borrarlas (`kept`) — y, para que el examen no quede
+ * desordenado, cada una vuelve a su lugar original: las nuevas llenan los
+ * huecos que dejaron las que sí se borraron, en su mismo orden, y las que
+ * sobran (si hay menos nuevas que huecos) van al final. La auditoría guarda
+ * conteos, nunca el contenido.
  */
 export function importQuestionInputs(opts: {
   actorId: string;
@@ -28,15 +32,36 @@ export function importQuestionInputs(opts: {
   let kept = 0;
   db.transaction(() => {
     if (opts.mode === "replace") {
-      for (const q of listQuestions(opts.examItemId)) {
-        if (q.type === "image_drag" || q.type === "image_click") {
-          kept++;
-          continue;
-        }
-        deleteQuestion(opts.examItemId, q.id);
+      // Orden ANTES de tocar nada: el índice en este arreglo es el lugar al
+      // que cada pregunta sobre imagen debe volver
+      const original = listQuestions(opts.examItemId);
+      for (const q of original) {
+        if (!isImageQuestionType(q.type)) deleteQuestion(opts.examItemId, q.id);
       }
+      const newIds = valid.map((input) => createQuestion(opts.examItemId, input));
+      kept = original.filter((q) => isImageQuestionType(q.type)).length;
+
+      // Un solo recorrido: cada imagen vuelve a su índice original, las
+      // nuevas llenan los huecos (en su orden) y las que sobran van al final
+      let newCursor = 0;
+      const finalOrder: string[] = [];
+      for (const q of original) {
+        if (isImageQuestionType(q.type)) {
+          finalOrder.push(q.id);
+        } else if (newCursor < newIds.length) {
+          finalOrder.push(newIds[newCursor]);
+          newCursor++;
+        }
+        // Hueco sin nueva pregunta que lo llene: se compacta (no deja un lugar vacío)
+      }
+      while (newCursor < newIds.length) {
+        finalOrder.push(newIds[newCursor]);
+        newCursor++;
+      }
+      reorderQuestions(opts.examItemId, finalOrder);
+    } else {
+      for (const input of valid) createQuestion(opts.examItemId, input);
     }
-    for (const input of valid) createQuestion(opts.examItemId, input);
   });
 
   const imported = valid.length;

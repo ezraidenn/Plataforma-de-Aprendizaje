@@ -335,6 +335,13 @@ export function moveQuestion(examItemId: string, questionId: string, direction: 
   });
 }
 
+/** Reordena las preguntas del examen: quedan en el orden de `orderedIds` (posiciones 0..n-1). */
+export function reorderQuestions(examItemId: string, orderedIds: string[]) {
+  orderedIds.forEach((id, i) => {
+    db.update(questions).set({ position: i }).where(and(eq(questions.id, id), eq(questions.examItemId, examItemId))).run();
+  });
+}
+
 export function examMaxScore(examItemId: string): number {
   return listQuestions(examItemId).reduce((sum, q) => sum + q.points, 0);
 }
