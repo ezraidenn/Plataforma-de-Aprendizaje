@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
-import { CheckCircle2, CircleAlert, Eye, ImagePlus, ImageUp, Loader2, TriangleAlert } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { CheckCircle2, CircleAlert, Eye, ImagePlus, ImageUp, Loader2, Redo2, TriangleAlert, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useFileDrop } from "@/components/exam/image-dnd";
 import { LiveRegion, useAnnouncer } from "@/components/exam/live-region";
@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils";
 import { ClickEditor } from "./image-click-editor";
 import { DragEditor } from "./image-drag-editor";
 import { PreviewDialog } from "./preview-button";
+import { isTypingTarget, useEditorHistory, type HistoryOptions } from "./use-editor-history";
 
 /**
  * Editor de las preguntas sobre imagen, dentro del banco de preguntas. Primero
@@ -28,7 +29,10 @@ import { PreviewDialog } from "./preview-button";
  * foto) conserva lugares y puntos porque son relativos a la foto. Lo propio de
  * cada tipo vive en `image-drag-editor.tsx` y `image-click-editor.tsx`; el
  * valor (qué se abre, su forma, qué impide guardar), en `image-editor-value.ts`.
- * Debajo, el problema que impediría guardar, en vivo.
+ * Todo cambio (la foto y la config) pasa por el historial: Deshacer y Rehacer,
+ * también con Ctrl+Z y Ctrl+Mayús+Z o Ctrl+Y mientras el foco está en el
+ * editor y no en un campo de texto. Debajo, el problema que impediría
+ * guardar, en vivo.
  */
 
 type SetValue = Dispatch<SetStateAction<ImageQuestionValue>>;
@@ -68,14 +72,18 @@ export function ImageQuestionEditor({
   /** Aviso de algo que no se hizo (repetido, límite). */
   const [notice, setNotice] = useState<string | null>(null);
   const { live, announce } = useAnnouncer();
+  const rootRef = useRef<HTMLDivElement>(null);
   const photoInput = useRef<HTMLInputElement>(null);
+  const history = useEditorHistory(value, onChange);
+  const { set: record } = history;
   const current = shaped(type, value);
   const { imageFileId, config } = current;
+  const savedAspect = config.aspect;
 
   // Lo guardado arriba también toma la forma del tipo (es lo que se envía)
   useEffect(() => {
-    if (current !== value) onChange((prev) => shaped(type, prev));
-  }, [current, value, type, onChange]);
+    if (current !== value) record((prev) => shaped(type, prev), { silent: true });
+  }, [current, value, type, record]);
 
   useEffect(() => {
     onBusyChange?.(uploading !== null);
@@ -83,17 +91,20 @@ export function ImageQuestionEditor({
   // Si el editor se cierra a media subida, «Guardar» no se queda deshabilitado
   useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
 
-  // La proporción sale de la foto misma: si la guardada no cuadra (o falta), se corrige
+  // La proporción sale de la foto misma: si la guardada no cuadra (o falta), se
+  // corrige (tampoco es un paso: deshacer hasta antes de medirla la vuelve a medir)
   useEffect(() => {
     if (!imageFileId) return;
     let alive = true;
     measureAspect(fileUrl(imageFileId)).then(
       (aspect) => {
         if (!alive) return;
-        onChange((prev) =>
-          prev.imageFileId !== imageFileId || Math.abs(prev.config.aspect - aspect) < 1e-3
-            ? prev
-            : { ...prev, config: { ...prev.config, aspect } }
+        record(
+          (prev) =>
+            prev.imageFileId !== imageFileId || Math.abs(prev.config.aspect - aspect) < 1e-3
+              ? prev
+              : { ...prev, config: { ...prev.config, aspect } },
+          { silent: true }
         );
       },
       () => {
@@ -103,7 +114,7 @@ export function ImageQuestionEditor({
     return () => {
       alive = false;
     };
-  }, [imageFileId, onChange]);
+  }, [imageFileId, savedAspect, record]);
 
   async function uploadPhoto(file: File) {
     if (uploading) return;
@@ -129,7 +140,7 @@ export function ImageQuestionEditor({
     const hadPhoto = !!imageFileId;
     try {
       const fileId = await uploadFile(file, "editor_image");
-      onChange((prev) => ({ imageFileId: fileId, config: { ...shaped(type, prev).config, aspect } }));
+      record((prev) => ({ imageFileId: fileId, config: { ...shaped(type, prev).config, aspect } }));
       announce(hadPhoto ? "Foto cambiada; los lugares y puntos se conservan" : "Foto lista");
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo subir la foto");
@@ -138,26 +149,81 @@ export function ImageQuestionEditor({
     }
   }
 
-  const setDrag = (fn: (c: ImageDragConfig) => ImageDragConfig) =>
-    onChange((prev) => {
-      const p = shaped(type, prev);
-      return { ...p, config: fn(p.config as ImageDragConfig) };
-    });
-  const setClick = (fn: (c: ImageClickConfig) => ImageClickConfig) =>
-    onChange((prev) => {
-      const p = shaped(type, prev);
-      return { ...p, config: fn(p.config as ImageClickConfig) };
-    });
+  /** Cambia la config por el historial (sin cambio, sin paso) y devuelve la nueva. */
+  const setConfig = useCallback(
+    <C extends ImageDragConfig | ImageClickConfig>(fn: (c: C) => C, options?: HistoryOptions): C =>
+      record((prev) => {
+        const p = shaped(type, prev);
+        const config = fn(p.config as C);
+        return config === p.config && p === prev ? prev : { ...p, config };
+      }, options).config as C,
+    [record, type]
+  );
+
+  /** Deshacer o rehacer; si el botón que tenía el foco desaparece, el foco se queda en el editor. */
+  function travel(to: "undo" | "redo") {
+    const root = rootRef.current;
+    const hadFocus = !!root?.contains(document.activeElement);
+    const done = to === "undo" ? history.undo() : history.redo();
+    if (done) setNotice(null);
+    announce(done ? (to === "undo" ? "Cambio deshecho" : "Cambio rehecho") : to === "undo" ? "Nada que deshacer" : "Nada que rehacer");
+    if (hadFocus) {
+      requestAnimationFrame(() => {
+        if (root && !root.contains(document.activeElement)) root.focus({ preventScroll: true });
+      });
+    }
+  }
 
   const problem = imageQuestionProblem(type, current);
   // Mientras se mide la foto, una proporción cualquiera para dibujar el tablero
   const aspect = validAspect(config.aspect) ? config.aspect : 0.75;
+  const historyButtons = (
+    <div role="group" aria-label="Historial" className="flex items-center gap-1">
+      {/* Sin deshabilitar del todo: así el foco no se pierde al llegar al final */}
+      <Button
+        type="button"
+        size="icon-sm"
+        variant="outline"
+        aria-label="Deshacer"
+        aria-keyshortcuts="Control+Z"
+        title="Deshacer (Ctrl+Z)"
+        aria-disabled={!history.canUndo}
+        className="aria-disabled:opacity-50"
+        onClick={() => travel("undo")}
+      >
+        <Undo2 aria-hidden />
+      </Button>
+      <Button
+        type="button"
+        size="icon-sm"
+        variant="outline"
+        aria-label="Rehacer"
+        aria-keyshortcuts="Control+Shift+Z Control+Y"
+        title="Rehacer (Ctrl+Mayús+Z o Ctrl+Y)"
+        aria-disabled={!history.canRedo}
+        className="aria-disabled:opacity-50"
+        onClick={() => travel("redo")}
+      >
+        <Redo2 aria-hidden />
+      </Button>
+    </div>
+  );
 
   return (
     <div
-      className="@container grid gap-3"
+      ref={rootRef}
+      // Enfocable solo por código: si lo enfocado desaparece al deshacer, los atajos siguen aquí
+      tabIndex={-1}
+      className="@container grid gap-3 outline-none"
       onKeyDown={(e) => {
         if (e.key === "Escape") setNotice(null);
+        // Ctrl+Z deshace; Ctrl+Mayús+Z o Ctrl+Y rehacen. En un campo de texto, el suyo
+        if (!(e.ctrlKey || e.metaKey) || e.altKey || isTypingTarget(e.target)) return;
+        const key = e.key.toLowerCase();
+        if (key === "z" || key === "y") {
+          e.preventDefault();
+          travel(key === "y" || e.shiftKey ? "redo" : "undo");
+        }
       }}
     >
       <input
@@ -173,7 +239,11 @@ export function ImageQuestionEditor({
       />
 
       {!imageFileId ? (
-        <PhotoDrop uploading={uploading === "photo"} onPick={() => photoInput.current?.click()} onFile={uploadPhoto} />
+        <>
+          {/* Se deshizo hasta antes de la foto: rehacer la trae de vuelta */}
+          {(history.canUndo || history.canRedo) && historyButtons}
+          <PhotoDrop uploading={uploading === "photo"} onPick={() => photoInput.current?.click()} onFile={uploadPhoto} />
+        </>
       ) : (
         <>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -181,12 +251,15 @@ export function ImageQuestionEditor({
               type="button"
               size="sm"
               variant="outline"
-              disabled={uploading !== null}
-              onClick={() => photoInput.current?.click()}
+              // Mientras sube no se deshabilita del todo: así el foco no se pierde (ni Ctrl+Z)
+              aria-disabled={uploading !== null}
+              className="aria-disabled:opacity-60"
+              onClick={() => uploading === null && photoInput.current?.click()}
             >
               {uploading === "photo" ? <Loader2 className="animate-spin" aria-hidden /> : <ImageUp aria-hidden />}
               {uploading === "photo" ? "Subiendo…" : "Cambiar foto"}
             </Button>
+            {historyButtons}
             <span className="flex-1" />
             {/* En «arrastrar», el tamaño es de cada elemento (panel «Seleccionado») */}
             {type === "image_click" && (
@@ -194,7 +267,7 @@ export function ImageQuestionEditor({
                 label="Precisión"
                 value={(config as ImageClickConfig).precision}
                 options={PRECISIONS}
-                onChange={(precision) => setClick((c) => ({ ...c, precision }))}
+                onChange={(precision) => setConfig<ImageClickConfig>((c) => ({ ...c, precision }))}
               />
             )}
           </div>
@@ -203,7 +276,8 @@ export function ImageQuestionEditor({
               imageFileId={imageFileId}
               aspect={aspect}
               config={config as ImageDragConfig}
-              setConfig={setDrag}
+              setConfig={setConfig<ImageDragConfig>}
+              gesture={history}
               uploading={uploading}
               setUploading={setUploading}
               setError={setError}
@@ -216,7 +290,7 @@ export function ImageQuestionEditor({
               imageFileId={imageFileId}
               aspect={aspect}
               config={config as ImageClickConfig}
-              setConfig={setClick}
+              setConfig={setConfig<ImageClickConfig>}
               uploading={uploading !== null}
               setNotice={setNotice}
               announce={announce}

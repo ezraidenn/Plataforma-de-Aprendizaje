@@ -19,9 +19,12 @@ import { cn } from "@/lib/utils";
  * Panel «Seleccionado» del editor de «arrastrar a la imagen»: tamaño y giro
  * del elemento elegido en la lista o por uno de sus lugares. Son del elemento
  * (no del lugar): cambian todos sus lugares y la sombra que ve el alumno, así
- * ninguna sombra delata cuál va dónde. Sin nada elegido, los controles se ven
- * apagados con una indicación (el panel no cambia de alto al elegir). Cambiar
- * algo aquí nunca coloca nada en la foto.
+ * ninguna sombra delata cuál va dónde. Sin nada elegido (o con lugares de
+ * varios elementos), los controles se ven apagados con una indicación (el
+ * panel no cambia de alto al elegir). Cambiar algo aquí nunca coloca nada en
+ * la foto. Para deshacer, arrastrar un deslizante es un solo paso (`onBegin`
+ * al tomarlo, `onCommit` al soltarlo) y lo escrito en un campo también
+ * (`onCommit` al salir de él o con Enter).
  */
 
 type Range = readonly [number, number];
@@ -37,19 +40,28 @@ const clamp = (n: number, [min, max]: Range) => Math.min(max, Math.max(min, n));
 export function ElementPanel({
   element,
   name,
+  several,
   aspect,
   boardWidth,
   onChange,
+  onBegin,
+  onCommit,
 }: {
   /** El elemento elegido, o null si no hay nada elegido. */
   element: ImageElement | null;
   /** Su nombre («Ícono 2» o el texto de la etiqueta). */
   name: string;
+  /** Sin `element`: cuántos lugares hay seleccionados de varios elementos (tamaño y giro no aplican). */
+  several?: number;
   /** Alto / ancho de la foto: acota el tamaño de los íconos para que quepan en ella. */
   aspect: number;
   /** Ancho de la foto del editor en px: para avisar si se ve al mínimo. */
   boardWidth: number;
   onChange: (patch: Pick<ImageElement, "size" | "rotation">) => void;
+  /** Se tomó un deslizante: hasta soltarlo, un solo paso del historial. */
+  onBegin: () => void;
+  /** Se soltó el deslizante, o se salió del campo: lo siguiente ya es otro paso. */
+  onCommit: () => void;
 }) {
   const headingId = useId();
   const view = element ? elementView(element) : null;
@@ -65,7 +77,14 @@ export function ElementPanel({
     <section aria-labelledby={headingId} className="space-y-2.5 rounded-xl border bg-muted/30 p-2.5">
       <p id={headingId} className="flex min-w-0 items-baseline gap-1 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
         <span className="shrink-0">Seleccionado</span>
-        {element && <span className="truncate text-xs normal-case tracking-normal text-foreground">· {name}</span>}
+        {element ? (
+          <span className="truncate text-xs normal-case tracking-normal text-foreground">· {name}</span>
+        ) : several ? (
+          // Sin cortar: en la columna angosta pasa a otra línea
+          <span className="min-w-0 text-xs normal-case tracking-normal text-foreground">
+            · {several} lugares de varios elementos
+          </span>
+        ) : null}
       </p>
       {/* Con key: al elegir otro elemento, lo que se estaba escribiendo no pasa al nuevo */}
       <div key={element?.id ?? "nada"} className="space-y-2.5">
@@ -81,6 +100,8 @@ export function ElementPanel({
           fieldRange={pct}
           fix={(n) => clamp(n, pct)}
           onValue={(n) => onChange({ size: round4(clamp(n, pct) / 100) })}
+          onBegin={onBegin}
+          onCommit={onCommit}
           slider={{
             min: 0,
             max: SIZE_STEPS,
@@ -106,6 +127,8 @@ export function ElementPanel({
           // Fuera de ±180 se lleva a su equivalente (270 → −90)
           fix={(n) => Math.round(n >= -180 && n <= 180 ? n : normalizeRotation(n))}
           onValue={(n) => onChange({ rotation: Math.round(n) })}
+          onBegin={onBegin}
+          onCommit={onCommit}
           slider={{
             min: -180,
             max: 180,
@@ -121,7 +144,10 @@ export function ElementPanel({
               disabled={!view || rotation === 0}
               aria-label="0° (quitar el giro)"
               title="Quitar el giro"
-              onClick={() => onChange({ rotation: 0 })}
+              onClick={() => {
+                onChange({ rotation: 0 });
+                onCommit();
+              }}
             >
               0°
             </Button>
@@ -131,7 +157,9 @@ export function ElementPanel({
       <p className="text-xs leading-snug text-muted-foreground">
         {element
           ? "Es del elemento: todos sus lugares y la sombra que ve el alumno cambian juntos."
-          : "Elige un lugar en la foto o un elemento de la lista para cambiar su tamaño y su giro."}
+          : several
+            ? "El tamaño y el giro son de cada elemento: selecciona lugares de uno solo (o elígelo en la lista) para cambiarlos."
+            : "Elige un lugar en la foto o un elemento de la lista para cambiar su tamaño y su giro."}
       </p>
     </section>
   );
@@ -153,6 +181,8 @@ function Control({
   fieldRange,
   fix,
   onValue,
+  onBegin,
+  onCommit,
   slider,
   extra,
   note,
@@ -172,6 +202,8 @@ function Control({
   /** Al salir del campo (o con Enter): un número cualquiera → uno válido. */
   fix: (n: number) => number;
   onValue: (n: number) => void;
+  onBegin: () => void;
+  onCommit: () => void;
   slider: { min: number; max: number; value: number; onChange: (n: number) => void; valueText?: string };
   extra?: React.ReactNode;
   /** Una aclaración bajo el deslizante (false: ninguna). */
@@ -186,6 +218,18 @@ function Control({
     const n = draft === null ? NaN : parse(draft);
     if (Number.isFinite(n)) onValue(fix(n));
     setDraft(null);
+    onCommit();
+  };
+  // El gesto termina al soltar el puntero, aunque sea fuera del deslizante
+  const grab = () => {
+    onBegin();
+    const release = () => {
+      window.removeEventListener("pointerup", release);
+      window.removeEventListener("pointercancel", release);
+      onCommit();
+    };
+    window.addEventListener("pointerup", release);
+    window.addEventListener("pointercancel", release);
   };
   return (
     <div className="space-y-1">
@@ -243,6 +287,9 @@ function Control({
         disabled={disabled}
         aria-valuetext={slider.valueText}
         aria-describedby={note ? noteId : undefined}
+        onPointerDown={grab}
+        // Con el teclado, sus pasos seguidos se juntan hasta salir de él
+        onBlur={onCommit}
         onChange={(e) => slider.onChange(Number(e.target.value))}
         className="block h-4 w-full cursor-pointer accent-primary disabled:cursor-default disabled:opacity-50"
       />
