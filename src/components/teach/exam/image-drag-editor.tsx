@@ -140,6 +140,8 @@ export function DragEditor({
   const [label, setLabel] = useState<string | null>(null);
   /** Dos lugares (índices) que se tapan a la vista: aviso que no impide guardar. */
   const [covered, setCovered] = useState<[number, number] | null>(null);
+  /** Lugares (índices) de etiquetas de texto pegadas a la orilla: aviso que no impide guardar. */
+  const [edgeClipped, setEdgeClipped] = useState<number[]>([]);
   /** Puntero en pantalla durante el arrastre, y desfase entre él y el centro del lugar tomado. */
   const pointer = useRef<Point>({ x: 0, y: 0 });
   const grab = useRef<Point>({ x: 0, y: 0 });
@@ -168,6 +170,11 @@ export function DragEditor({
   const numbers = useMemo(() => readingNumbers(zones, aspect), [zones, aspect]);
   /** Índices de los lugares en orden de lectura: el orden de Tab. */
   const ordered = useMemo(() => zones.map((_, i) => i).sort((a, b) => numbers[a] - numbers[b]), [zones, numbers]);
+  /** Números (Lugar N) de las etiquetas pegadas a la orilla, para el aviso. */
+  const edgeNumbers = useMemo(
+    () => edgeClipped.map((i) => numbers[i]).sort((a, b) => a - b),
+    [edgeClipped, numbers]
+  );
   const crosshair = useCrosshair(aspect, (p) => {
     if (chosen) placeAt(chosen, p, true);
     else announce("Primero elige un elemento de la lista");
@@ -232,7 +239,20 @@ export function DragEditor({
     };
     const found = find();
     setCovered((prev) => (prev?.[0] === found?.[0] && prev?.[1] === found?.[1] ? prev : found));
-  }, [zones, ordered, byId, px, dense, board.width, aspect]);
+
+    // Etiquetas de texto cuyo lugar, sin recortar, se sale del rectángulo de la foto
+    const boardRect = board.node?.getBoundingClientRect();
+    const clipped = boardRect
+      ? ordered.filter((i) => {
+          if (byId.get(zones[i].elementId)?.kind !== "text") return false;
+          const r = rects.get(i);
+          return !!r && (r.left < boardRect.left || r.right > boardRect.right || r.top < boardRect.top || r.bottom > boardRect.bottom);
+        })
+      : [];
+    setEdgeClipped((prev) =>
+      prev.length === clipped.length && prev.every((v, idx) => v === clipped[idx]) ? prev : clipped
+    );
+  }, [zones, ordered, byId, px, dense, board.width, board.node, aspect]);
 
   const nameOf = (id: string) => names.get(id) ?? "Elemento";
   const labelTaken = (text: string) =>
@@ -518,6 +538,16 @@ export function DragEditor({
             <p className="flex items-start gap-1.5 text-xs text-amber-700 dark:text-warning" role="status">
               <TriangleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
               Los lugares {numbers[covered[0]]} y {numbers[covered[1]]} se tapan: al alumno le costará distinguirlos.
+            </p>
+          )}
+          {edgeNumbers.length > 0 && (
+            <p className="flex items-start gap-1.5 text-xs text-amber-700 dark:text-warning" role="status">
+              <TriangleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
+              {plural(
+                edgeNumbers.length,
+                `La etiqueta del lugar ${edgeNumbers[0]} queda pegada a la orilla: al alumno se le puede ver cortada.`,
+                `Las etiquetas de los lugares ${joinY(edgeNumbers)} quedan pegadas a la orilla: al alumno se le pueden ver cortadas.`
+              )}
             </p>
           )}
         </div>

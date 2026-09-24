@@ -153,7 +153,8 @@ function ClickReview({ board }: { board: ClickBoard }) {
           ))}
           {board.marks.map((m, i) => (
             <BoardSpot key={`m${i}`} x={m.x} y={m.y} className="z-10">
-              <span className="flex size-5 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground shadow ring-2 ring-white">
+              {/* Hueca: así se alcanza a ver el círculo de acierto debajo */}
+              <span className="flex size-5 items-center justify-center rounded-full border-2 border-primary bg-background/40 text-[10px] font-bold text-primary shadow-sm">
                 {i + 1}
               </span>
             </BoardSpot>
@@ -170,7 +171,7 @@ function ClickReview({ board }: { board: ClickBoard }) {
           Punto que faltó
         </li>
         <li className="flex items-center gap-2">
-          <span className="size-3.5 shrink-0 rounded-full bg-primary" />
+          <span className="size-3.5 shrink-0 rounded-full border-2 border-primary bg-background/40" />
           Tus marcas, en el orden en que las pusiste
         </li>
       </ul>
