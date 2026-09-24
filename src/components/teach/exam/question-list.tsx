@@ -47,6 +47,13 @@ import {
   type QuestionFormInput,
 } from "@/server/actions/teacher-exams";
 import { HelpTip } from "@/components/help/help-tip";
+import { fileUrl, isImageQuestionType } from "@/lib/image-questions";
+import {
+  ImagePreviewButton,
+  ImageQuestionEditor,
+  initialImageValue,
+  type ImageQuestionValue,
+} from "./image-question-editor";
 
 // ─── Tipos ───────────────────────────────────────────────────────────────────
 
@@ -70,6 +77,9 @@ export type QuestionData = {
   accepted: string[];
   pairs: { left: string; right: string }[];
   steps: string[];
+  /** image_drag/image_click: la foto y la config tal como se guardaron */
+  imageFileId: string | null;
+  imageConfig: unknown;
 };
 
 const TYPE_LABEL: Record<QuestionType, string> = {
@@ -84,7 +94,6 @@ const TYPE_LABEL: Record<QuestionType, string> = {
   image_click: "Señalar en la imagen",
 };
 
-// Las preguntas sobre imagen entran al selector cuando tengan su editor
 const QUESTION_TYPES: QuestionType[] = [
   "single_choice",
   "multiple_choice",
@@ -93,6 +102,8 @@ const QUESTION_TYPES: QuestionType[] = [
   "matching",
   "ordering",
   "open_text",
+  "image_drag",
+  "image_click",
 ];
 
 function formatPoints(points: number): string {
@@ -205,6 +216,14 @@ export function QuestionList({
                   <span className="w-6 shrink-0 text-right text-sm font-semibold text-muted-foreground">
                     {index + 1}.
                   </span>
+                  {question.imageFileId && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={fileUrl(question.imageFileId)}
+                      alt=""
+                      className="h-10 w-14 shrink-0 rounded-md bg-muted object-cover ring-1 ring-border"
+                    />
+                  )}
                   <button
                     type="button"
                     onClick={() => {
@@ -417,8 +436,14 @@ function QuestionEditor({
       next.splice(to, 0, item);
       return next;
     });
+  // Preguntas sobre imagen: la foto y su config (los demás tipos no lo usan)
+  const [image, setImage] = useState<ImageQuestionValue>(() =>
+    initialImageValue(type, initial?.imageFileId ?? null, initial?.imageConfig)
+  );
+  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, startSaving] = useTransition();
+  const parsedPoints = Number(points);
 
   function addVariant() {
     const value = newVariant.trim();
@@ -429,7 +454,6 @@ function QuestionEditor({
 
   function save() {
     setError(null);
-    const parsedPoints = Number(points);
     startSaving(async () => {
       const input: QuestionFormInput = {
         type,
@@ -443,6 +467,7 @@ function QuestionEditor({
           : {}),
         ...(type === "matching" ? { pairs } : {}),
         ...(type === "ordering" ? { steps } : {}),
+        ...(isImageQuestionType(type) ? { imageFileId: image.imageFileId, imageConfig: image.config } : {}),
       };
       const message = await onSave(input);
       if (message) setError(message);
@@ -469,6 +494,14 @@ function QuestionEditor({
             </span>
             <HelpTip topic="exam.openQuestion" />
           </span>
+        )}
+        {isImageQuestionType(type) && (
+          <ImagePreviewButton
+            type={type}
+            value={image}
+            promptMd={promptMd}
+            points={Number.isFinite(parsedPoints) ? parsedPoints : 0}
+          />
         )}
       </div>
 
@@ -765,6 +798,10 @@ function QuestionEditor({
         </div>
       )}
 
+      {isImageQuestionType(type) && (
+        <ImageQuestionEditor type={type} value={image} onChange={setImage} onBusyChange={setUploading} />
+      )}
+
       {error && (
         <p className="flex items-center gap-1 text-sm text-destructive" role="alert">
           <TriangleAlert className="size-4 shrink-0" aria-hidden />
@@ -778,7 +815,9 @@ function QuestionEditor({
         </Button>
         <Button
           onClick={save}
-          disabled={saving}
+          // Mientras sube una imagen no se guarda: se perdería
+          disabled={saving || uploading}
+          title={uploading ? "Espera a que termine de subir la imagen" : undefined}
           className="h-11 bg-cta px-6 text-cta-foreground hover:bg-cta/90"
         >
           {saving && <Loader2 className="animate-spin" aria-hidden />}

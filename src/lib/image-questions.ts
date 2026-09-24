@@ -32,6 +32,8 @@ export const ICON_PX: Record<IconSize, number> = { sm: 40, md: 56, lg: 72 };
 export const PRECISION_RADIUS: Record<Precision, number> = { sm: 0.03, md: 0.05, lg: 0.08 };
 /** Distancia (fracción del ancho) a la que un elemento soltado se encaja en una sombra. */
 export const SNAP_RADIUS = 0.08;
+/** Separación mínima entre dos lugares (fracción del ancho): más cerca, se enciman. */
+export const MIN_ZONE_GAP = 0.04;
 
 const unit = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= 1;
 const validAspect = (a: unknown) => typeof a === "number" && Number.isFinite(a) && a >= 0.1 && a <= 10;
@@ -112,6 +114,46 @@ export function imageDragProblem(config: unknown, hasImage: boolean): string | n
   for (const z of c.zones) {
     if (!z || !unit(z.x) || !unit(z.y)) return "Hay un lugar fuera de la foto";
     if (!ids.has(z.elementId)) return "Hay un lugar de un elemento que ya no existe";
+  }
+  if (overlapping(c.zones, c.aspect as number)) return "Hay dos lugares encimados: sepáralos un poco";
+  return null;
+}
+
+/** Hay dos puntos a menos de MIN_ZONE_GAP. */
+function overlapping(points: Point[], aspect: number): boolean {
+  for (let i = 0; i < points.length; i++) {
+    for (let j = i + 1; j < points.length; j++) {
+      if (relDistance(points[i], points[j], aspect) < MIN_ZONE_GAP) return true;
+    }
+  }
+  return false;
+}
+
+/** Cuatro decimales bastan (una décima de píxel en una foto de mil). */
+export const round4 = (n: number) => Math.round(n * 10_000) / 10_000;
+
+/**
+ * Dónde dejar un lugar que se soltó en `p`: el mismo punto si queda a
+ * MIN_ZONE_GAP o más de los demás; si no, el punto más cercano que sí, dentro
+ * de la foto y empezando por el lado contrario al lugar con el que choca.
+ * null si no hay sitio cerca (la foto está muy llena).
+ */
+export function freeSpot(p: Point, others: Point[], aspect: number): Point | null {
+  const clear = (q: Point) => others.every((o) => relDistance(o, q, aspect) >= MIN_ZONE_GAP);
+  if (clear(p)) return p;
+  let near = others[0];
+  for (const o of others) if (relDistance(o, p, aspect) < relDistance(near, p, aspect)) near = o;
+  const away = Math.atan2((p.y - near.y) * aspect, p.x - near.x);
+  // Anillos cada vez más amplios; en cada uno, del ángulo «hacia afuera» a los lados
+  for (let ring = 1; ring <= 8; ring++) {
+    const r = (MIN_ZONE_GAP / 2) * ring;
+    const steps = 12 * ring;
+    for (let k = 0; k < steps; k++) {
+      const turn = Math.ceil(k / 2) * (k % 2 ? 1 : -1);
+      const a = away + (turn * 2 * Math.PI) / steps;
+      const q = { x: round4(p.x + r * Math.cos(a)), y: round4(p.y + (r * Math.sin(a)) / aspect) };
+      if (unit(q.x) && unit(q.y) && clear(q)) return q;
+    }
   }
   return null;
 }

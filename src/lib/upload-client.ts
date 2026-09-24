@@ -2,7 +2,7 @@
  * Subida de un archivo a /api/uploads (streaming por body; metadatos por
  * headers). Solo cliente. Devuelve el fileId o lanza Error con mensaje legible.
  */
-export type UploadKind = "course_source" | "submission" | "resource" | "attachment" | "cover";
+export type UploadKind = "course_source" | "submission" | "resource" | "attachment" | "cover" | "editor_image";
 
 export async function uploadFile(file: File, kind: UploadKind): Promise<string> {
   let res: Response;

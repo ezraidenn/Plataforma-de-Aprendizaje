@@ -1,11 +1,10 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import { Crosshair } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { BoardSpot, ImageBoard } from "@/components/exam/image-board";
+import { BoardCursor, BoardSpot, ImageBoard } from "@/components/exam/image-board";
 import { LiveRegion, useAnnouncer } from "@/components/exam/live-region";
-import { clamp01, fileUrl, parseClickAnswer, type Point } from "@/lib/image-questions";
+import { clamp01, fileUrl, parseClickAnswer, round4, type Point } from "@/lib/image-questions";
 import { cn } from "@/lib/utils";
 
 /**
@@ -15,8 +14,6 @@ import { cn } from "@/lib/utils";
  * marca, y Supr borra la marca enfocada.
  */
 
-/** Cuatro decimales bastan (una décima de píxel en una foto de mil). */
-const round = (n: number) => Math.round(n * 10_000) / 10_000;
 const ARROWS = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"];
 
 export function ImageClickControl({
@@ -48,7 +45,7 @@ export function ImageClickControl({
       announce(`Ya pusiste ${max === 1 ? "tu marca" : `tus ${max} marcas`}. Quita una para moverla`);
       return;
     }
-    onChange([...value, { x: round(p.x), y: round(p.y) }]);
+    onChange([...value, { x: round4(p.x), y: round4(p.y) }]);
     announce(`Marca ${value.length + 1} puesta`);
   }
 
@@ -101,14 +98,7 @@ export function ImageClickControl({
           full ? "cursor-default" : "cursor-crosshair"
         )}
       >
-        {/* Mira para el teclado: solo se ve con el foco puesto desde el teclado */}
-        <BoardSpot
-          x={cursor.x}
-          y={cursor.y}
-          className="pointer-events-none hidden text-primary drop-shadow-[0_0_2px_white] group-focus-visible:block"
-        >
-          <Crosshair className="size-7" strokeWidth={2.5} aria-hidden />
-        </BoardSpot>
+        <BoardCursor x={cursor.x} y={cursor.y} />
         {value.map((m, i) => (
           <BoardSpot key={i} x={m.x} y={m.y} className="z-10">
             <button

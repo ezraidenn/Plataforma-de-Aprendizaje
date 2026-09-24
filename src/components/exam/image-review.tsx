@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, X } from "lucide-react";
-import { BoardSpot, ImageBoard, ItemFace, useElementWidth } from "@/components/exam/image-board";
+import { BoardSpot, ImageBoard, ItemFace, SpotArea, useElementWidth } from "@/components/exam/image-board";
 import type { ReviewBoard } from "@/components/student/types";
 import { fileUrl, iconNumbers, iconPx, imageItemName, readingOrder } from "@/lib/image-questions";
 import { cn } from "@/lib/utils";
@@ -36,6 +36,45 @@ export function ImageReview({ board, showSolution = true }: { board: ReviewBoard
             </li>
           );
         })}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * Solo la solución, para la vista previa del maestro: en arrastrar, cada lugar
+ * con lo que va; en señalar, los puntos correctos con su margen de acierto.
+ */
+export function ImageSolution({ board }: { board: ReviewBoard }) {
+  if (board.kind === "click") {
+    return (
+      <div className={GRID}>
+        <figure className="space-y-1.5" aria-hidden>
+          <figcaption className="text-xs font-semibold text-muted-foreground">Solución</figcaption>
+          <ImageBoard imageUrl={fileUrl(board.image)} aspect={board.aspect}>
+            {board.spots.map((s, i) => (
+              <SpotArea key={i} x={s.x} y={s.y} radius={board.radius} />
+            ))}
+          </ImageBoard>
+        </figure>
+        <p className="self-center text-xs text-muted-foreground">
+          Cada círculo es un punto correcto ({board.spots.length} en total): cuenta cualquier marca que caiga dentro.
+        </p>
+      </div>
+    );
+  }
+  const zones = readingOrder(board.zones, board.aspect);
+  const icons = iconNumbers(board.iconFiles);
+  return (
+    <div className={GRID}>
+      <DragThumb board={board} zones={zones} mine={false} />
+      {/* Lo mismo en texto, para quien no ve la miniatura */}
+      <ul className="sr-only">
+        {zones.map((z, i) => (
+          <li key={i}>
+            Lugar {i + 1}: {imageItemName(z.expected, icons)}
+          </li>
+        ))}
       </ul>
     </div>
   );
@@ -103,17 +142,7 @@ function ClickReview({ board }: { board: ClickBoard }) {
         <figcaption className="text-xs font-semibold text-muted-foreground">Tu respuesta y la solución</figcaption>
         <ImageBoard imageUrl={fileUrl(board.image)} aspect={board.aspect}>
           {spots.map((s, i) => (
-            <BoardSpot
-              key={`p${i}`}
-              x={s.x}
-              y={s.y}
-              className={cn(
-                "rounded-full border-2",
-                s.hit ? "border-success bg-success/20" : "border-dashed border-destructive bg-destructive/10"
-              )}
-              // El radio de acierto es una fracción del ancho de la foto
-              style={{ width: `${board.radius * 200}%`, aspectRatio: "1" }}
-            />
+            <SpotArea key={`p${i}`} x={s.x} y={s.y} radius={board.radius} missed={!s.hit} />
           ))}
           {board.marks.map((m, i) => (
             <BoardSpot key={`m${i}`} x={m.x} y={m.y} className="z-10">

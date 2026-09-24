@@ -1,6 +1,14 @@
-import type { RunnerQuestion } from "@/components/student/types";
+import type { QuestionKind, ReviewBoard, RunnerQuestion } from "@/components/student/types";
 import type { QuestionDraft } from "./question-draft";
 import { shuffledOrder } from "./ordering";
+import {
+  PRECISION_RADIUS,
+  dragCopies,
+  isImageQuestionType,
+  readImageClick,
+  readImageDrag,
+  type ImageQuestionType,
+} from "./image-questions";
 
 /**
  * Pregunta de la vista previa «Ver como alumno»: lo mismo que recibe el
@@ -11,6 +19,8 @@ import { shuffledOrder } from "./ordering";
 export type PreviewQuestion = RunnerQuestion & {
   /** Respuesta correcta en texto; null en las abiertas */
   answerText: string | null;
+  /** Preguntas sobre imagen: la solución dibujada, en vez del texto. */
+  solution?: ReviewBoard;
 };
 
 function shuffle<T>(items: T[]): T[] {
@@ -55,6 +65,97 @@ export function draftToPreview(d: QuestionDraft): PreviewQuestion {
     imageClick: null,
     answerText,
   };
+}
+
+/**
+ * Pregunta sobre imagen (guardada o la que se está editando) → vista previa.
+ * Como la del alumno, pero con fichas locales: el id del elemento con el
+ * número de copia, sin secreto que guardar. Lleva la solución como tablero.
+ */
+export function imagePreview(q: {
+  id: string;
+  type: ImageQuestionType;
+  promptMd: string;
+  points: number;
+  imageFileId: string | null;
+  config: unknown;
+}): PreviewQuestion {
+  const base: PreviewQuestion = {
+    id: q.id,
+    type: q.type,
+    promptMd: q.promptMd,
+    points: q.points,
+    options: [],
+    matching: null,
+    ordering: null,
+    image: null,
+    imageDrag: null,
+    imageClick: null,
+    answerText: "La pregunta está incompleta: complétala en el editor.",
+  };
+  const drag = q.type === "image_drag" ? readImageDrag(q) : null;
+  if (drag) {
+    const c = drag.config;
+    const views = new Map(c.elements.map(({ id, ...view }) => [id, view]));
+    return {
+      ...base,
+      image: drag.image,
+      imageDrag: {
+        aspect: c.aspect,
+        iconSize: c.iconSize,
+        zones: shuffle(c.zones.map((z, i) => ({ token: `${q.id}-z${i}`, x: z.x, y: z.y }))),
+        items: shuffle(
+          dragCopies(c).map((cp) => ({ token: `${q.id}-e${cp.elementId}-${cp.copy}`, ...views.get(cp.elementId)! }))
+        ),
+      },
+      answerText: null,
+      solution: {
+        kind: "drag",
+        image: drag.image,
+        aspect: c.aspect,
+        iconSize: c.iconSize,
+        // La config ya se validó: cada lugar apunta a un elemento que existe
+        zones: c.zones.map((z) => ({ x: z.x, y: z.y, correct: true, placed: null, expected: views.get(z.elementId)! })),
+        iconFiles: c.elements.flatMap((e) => (e.kind === "icon" && e.fileId ? [e.fileId] : [])),
+      },
+    };
+  }
+  const click = q.type === "image_click" ? readImageClick(q) : null;
+  if (click) {
+    const c = click.config;
+    return {
+      ...base,
+      image: click.image,
+      imageClick: { aspect: c.aspect, marks: c.spots.length },
+      answerText: null,
+      solution: {
+        kind: "click",
+        image: click.image,
+        aspect: c.aspect,
+        radius: PRECISION_RADIUS[c.precision],
+        spots: c.spots.map((s) => ({ x: s.x, y: s.y, hit: true })),
+        marks: [],
+      },
+    };
+  }
+  return base;
+}
+
+/** Preguntas guardadas del examen → vista previa «Ver como alumno», en su orden. */
+export function questionsToPreview(
+  qs: {
+    id: string;
+    type: QuestionKind;
+    promptMd: string;
+    points: number;
+    config: unknown;
+    imageFileId: string | null;
+    options: { textMd: string; isCorrect: boolean }[];
+  }[]
+): PreviewQuestion[] {
+  return qs.map((q) =>
+    isImageQuestionType(q.type) ? imagePreview({ ...q, type: q.type }) : draftToPreview(questionToDraft({ ...q, type: q.type }))
+  );
 }
 
 /** Pregunta guardada en la BD → borrador (para «Ver como alumno» del examen actual). */

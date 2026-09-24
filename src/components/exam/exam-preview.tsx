@@ -7,13 +7,15 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import type { PreviewQuestion } from "@/lib/preview-question";
+import { ImageSolution } from "./image-review";
 import { EMPTY_ANSWER, QuestionCard, isAnswered, type AnswerState } from "./question-view";
 
 /**
  * «Ver como alumno»: el examen con los MISMOS componentes que ve el alumno,
- * pero todo local. Se puede pasar sin responder, elegir, escribir, relacionar
- * y ordenar; no hay reloj, no se guarda nada y nada se califica. El maestro
- * puede encender «Mostrar respuestas correctas» para revisar la clave.
+ * pero todo local. Se puede pasar sin responder, elegir, escribir, relacionar,
+ * ordenar, colocar y señalar; no hay reloj, no se guarda nada y nada se
+ * califica. El maestro puede encender «Mostrar respuestas correctas» para
+ * revisar la clave (en las preguntas sobre imagen, dibujada).
  */
 export function ExamPreview({
   questions,
@@ -92,18 +94,31 @@ export function ExamPreview({
             answer={answer}
             onChange={(patch) => setAnswers((prev) => ({ ...prev, [q.id]: { ...(prev[q.id] ?? EMPTY_ANSWER), ...patch } }))}
           />
-          {showAnswers && (
-            <p
-              data-preview-answer
-              className="flex items-start gap-2 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-900"
-            >
-              <CheckCircle2 className="mt-0.5 size-4 shrink-0" aria-hidden />
-              <span>
-                <b>Respuesta correcta:</b>{" "}
-                {q.answerText ?? "La califica el instructor (pregunta abierta)."}
-              </span>
-            </p>
-          )}
+          {showAnswers &&
+            (q.solution ? (
+              // Preguntas sobre imagen: la solución se dibuja
+              <div
+                data-preview-answer
+                className="space-y-2 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-900"
+              >
+                <p className="flex items-center gap-2">
+                  <CheckCircle2 className="size-4 shrink-0" aria-hidden />
+                  <b>Respuesta correcta:</b>
+                </p>
+                <ImageSolution board={q.solution} />
+              </div>
+            ) : (
+              <p
+                data-preview-answer
+                className="flex items-start gap-2 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-900"
+              >
+                <CheckCircle2 className="mt-0.5 size-4 shrink-0" aria-hidden />
+                <span>
+                  <b>Respuesta correcta:</b>{" "}
+                  {q.answerText ?? "La califica el instructor (pregunta abierta)."}
+                </span>
+              </p>
+            ))}
         </div>
       </div>
 

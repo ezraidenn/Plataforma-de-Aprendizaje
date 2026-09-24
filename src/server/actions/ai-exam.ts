@@ -18,8 +18,8 @@ import {
 import { interpretChunkWithRetry, toDrafts } from "@/server/services/ai-exam-import";
 import { importQuestionInputs } from "@/server/services/exam-import";
 import { inputsToCsv } from "@/server/services/exam-csv";
-import { draftToInput, type DraftType, type QuestionDraft } from "@/lib/question-draft";
-import { draftToPreview, questionToDraft, type PreviewQuestion } from "@/lib/preview-question";
+import { draftToInput, type QuestionDraft } from "@/lib/question-draft";
+import { questionsToPreview, type PreviewQuestion } from "@/lib/preview-question";
 
 function errorMessage(err: unknown, fallback: string): string {
   return err instanceof Error && err.message ? err.message : fallback;
@@ -160,13 +160,12 @@ export async function draftsToCsvAction(input: {
 
 export type ExamPreviewResult = { questions: PreviewQuestion[] } | { error: string };
 
-/** «Ver como alumno» del examen guardado, con la clave para el interruptor. */
+/**
+ * «Ver como alumno» del examen guardado, con la clave para el interruptor. Es
+ * solo del maestro: aquí sí viaja la solución de las preguntas sobre imagen.
+ */
 export async function examPreviewAction(input: { courseId: string; itemId: string }): Promise<ExamPreviewResult> {
   const guard = await guardExam(input.courseId, input.itemId);
   if ("error" in guard) return { error: guard.error };
-  // Las preguntas sobre imagen aún no tienen vista previa: llega con su editor
-  const previewable = listQuestions(input.itemId).filter(
-    (q): q is typeof q & { type: DraftType } => q.type !== "image_drag" && q.type !== "image_click"
-  );
-  return { questions: previewable.map((q) => draftToPreview(questionToDraft(q))) };
+  return { questions: questionsToPreview(listQuestions(input.itemId)) };
 }

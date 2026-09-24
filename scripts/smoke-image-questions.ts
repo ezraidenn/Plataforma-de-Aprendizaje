@@ -1,7 +1,8 @@
 /**
  * Preguntas sobre imagen (arrastrar y señalar): matemática pura, validación y
- * el recorrido completo contra la base (guardar, lo que recibe el alumno,
- * calificar, revisar). Datos con prefijo «zimg», borrados al final.
+ * el recorrido completo contra la base (guardar, la vista previa del maestro,
+ * lo que recibe el alumno, calificar, revisar). Datos con prefijo «zimg»,
+ * borrados al final.
  *
  * Uso: pnpm smoke:image
  */
@@ -20,10 +21,13 @@ import { parseCsv } from "../src/server/services/csv-core";
 import { deleteFile, saveStream } from "../src/server/services/storage";
 import { buildRunnerQuestions } from "../src/components/student/lesson-data";
 import { cleanupSmokeNotifications } from "./lib/smoke-cleanup";
+import { imagePreview, questionsToPreview } from "../src/lib/preview-question";
 import {
+  MIN_ZONE_GAP,
   PRECISION_RADIUS,
   SNAP_RADIUS,
   dragCopies,
+  freeSpot,
   imageClickHits,
   imageClickProblem,
   imageClickScore,
@@ -102,6 +106,19 @@ function mathChecks() {
   check("Encaje: salta las ocupadas", nearestZone(zones, { x: 0.22, y: 0.31 }, DRAG.aspect, (i) => i !== 0) === null);
   check("Radio de encaje razonable", SNAP_RADIUS > 0 && SNAP_RADIUS < 0.2);
 
+  // Editor: un lugar soltado encima de otro se corre lo justo
+  const others = [{ x: 0.5, y: 0.5 }, { x: 0.56, y: 0.5 }];
+  const clearOf = (list: { x: number; y: number }[], p: { x: number; y: number } | null, aspect: number) =>
+    !!p && p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1 && list.every((o) => relDistance(o, p, aspect) >= MIN_ZONE_GAP);
+  const free = { x: 0.1, y: 0.1 };
+  check("Lugar libre: queda donde se soltó", freeSpot(free, others, 0.75) === free);
+  const pushed = freeSpot({ x: 0.52, y: 0.5 }, others, 0.75);
+  check("Lugar encimado: se corre, libre y cerca", clearOf(others, pushed, 0.75) && relDistance({ x: 0.52, y: 0.5 }, pushed!, 0.75) <= MIN_ZONE_GAP * 1.5, pushed);
+  const corner = freeSpot({ x: 0, y: 0 }, [{ x: 0, y: 0 }], 1);
+  check("Encimado en la esquina: se corre sin salirse de la foto", clearOf([{ x: 0, y: 0 }], corner, 1), corner);
+  const packed = Array.from({ length: 51 * 51 }, (_, i) => ({ x: (i % 51) * 0.02, y: Math.floor(i / 51) * 0.02 }));
+  check("Foto llena de lugares: no hay dónde, null", freeSpot({ x: 0.5, y: 0.5 }, packed, 1) === null);
+
   // «Lugar N»: por filas y de izquierda a derecha, venga en el orden que venga
   const pts = [{ x: 0.9, y: 0.51 }, { x: 0.1, y: 0.5 }, { x: 0.5, y: 0.1 }, { x: 0.2, y: 0.8 }];
   const order = (p: { x: number; y: number }[]) => readingOrder(p, 0.75).map((q) => `${q.x},${q.y}`).join(" ");
@@ -130,6 +147,11 @@ function validationChecks() {
   check("Dos etiquetas iguales (sin distinguir mayúsculas ni espacios)", imageDragProblem({ ...DRAG, elements: [...DRAG.elements, { id: "reg2", kind: "text", text: " REGADERA " }] }, true) === twin);
   check("Demasiados elementos", imageDragProblem({ ...DRAG, elements: Array.from({ length: 21 }, (_, i) => ({ id: `e${i}`, kind: "text" as const, text: "t" })) }, true) !== null);
   check("Config ilegible", imageDragProblem(null, true) !== null);
+  const stacked = "Hay dos lugares encimados: sepáralos un poco";
+  const withZone = (x: number, y: number) => ({ ...DRAG, zones: [...DRAG.zones, { x, y, elementId: "sal" }] });
+  check("Dos lugares encimados", imageDragProblem(withZone(0.2 + MIN_ZONE_GAP / 2, 0.3), true) === stacked);
+  check("Encimados en vertical: cuenta la proporción", imageDragProblem(withZone(0.2, 0.3 + 0.045), true) === stacked);
+  check("Separados lo justo: válido", imageDragProblem(withZone(0.2 + MIN_ZONE_GAP + 0.001, 0.3), true) === null);
   const odd = (e: unknown) => {
     try {
       return imageDragProblem({ ...DRAG, elements: [...DRAG.elements, e] }, true);
@@ -179,6 +201,18 @@ function sanitizeChecks() {
   check("Leer arrastrar: sin foto, null", readImageDrag({ imageFileId: null, config: DRAG }) === null);
   check("Leer arrastrar: config dañada, null", readImageDrag({ imageFileId: "foto", config: { ...DRAG, zones: "x" } }) === null);
   check("Leer señalar: completa y sin foto", readImageClick({ imageFileId: "foto", config: CLICK })?.config === CLICK && readImageClick({ imageFileId: null, config: CLICK }) === null);
+}
+
+function previewChecks() {
+  console.log("\n— Vista previa del maestro (sin base)");
+  const [choice] = questionsToPreview([
+    { id: "q", type: "single_choice", promptMd: "¿?", points: 1, config: null, imageFileId: null, options: [{ textMd: "A", isCorrect: true }, { textMd: "B", isCorrect: false }] },
+  ]);
+  check("Las demás preguntas siguen igual", choice.answerText === "A" && choice.options.length === 2 && !choice.solution);
+  const incomplete = imagePreview({ id: "q", type: "image_drag", promptMd: "", points: 1, imageFileId: null, config: DRAG });
+  check("Imagen incompleta: sin tablero ni solución, y lo dice", incomplete.image === null && incomplete.imageDrag === null && !incomplete.solution && !!incomplete.answerText);
+  const draft = imagePreview({ id: "borrador", type: "image_drag", promptMd: "", points: 1, imageFileId: "foto", config: DRAG });
+  check("La pregunta del editor (sin guardar) también se previsualiza", draft.imageDrag?.items.length === 5 && draft.solution?.kind === "drag");
 }
 
 // ─── Recorrido contra la base ────────────────────────────────────────────────
@@ -289,6 +323,33 @@ async function endToEnd() {
     const qClick = examsSvc.createQuestion(exam.id, { type: "image_click", promptMd: "Señala los extintores", points: 2, config: click, imageFileId: photo });
     check("Al editar, los archivos que la pregunta ya tenía siguen valiendo", examsSvc.imageQuestionFilesProblem({ id: other, role: "teacher" }, photo, drag, qDrag) === null);
     check("…sin la pregunta, no", examsSvc.imageQuestionFilesProblem({ id: other, role: "teacher" }, photo, drag) !== null);
+
+    // «Ver como alumno» del maestro: las de imagen entran, con fichas locales y la solución
+    const preview = questionsToPreview(examsSvc.listQuestions(exam.id));
+    const pd = preview.find((q) => q.id === qDrag);
+    const pc = preview.find((q) => q.id === qClick);
+    check("Vista previa: incluye las dos preguntas sobre imagen", preview.length === 2 && !!pd && !!pc);
+    check("Vista previa de arrastrar: foto, proporción y tamaño", pd?.image === photo && pd?.imageDrag?.aspect === 0.75 && pd?.imageDrag?.iconSize === "md");
+    check("Vista previa de arrastrar: una ficha por copia y un lugar por lugar",
+      pd?.imageDrag?.items.length === dragCopies(drag).length && pd?.imageDrag?.zones.length === drag.zones.length, pd?.imageDrag);
+    const previewTokens = [...(pd?.imageDrag?.zones ?? []), ...(pd?.imageDrag?.items ?? [])].map((t) => t.token);
+    check("Vista previa de arrastrar: fichas únicas", previewTokens.length === 9 && new Set(previewTokens).size === 9, previewTokens);
+    check("Vista previa de arrastrar: el extintor sale dos veces en el banco",
+      pd?.imageDrag?.items.filter((it) => it.fileId === iconExt).length === 2);
+    const sd = pd?.solution?.kind === "drag" ? pd.solution : null;
+    check("Vista previa de arrastrar: la solución pone cada elemento en su lugar",
+      !!sd && sd.zones.length === drag.zones.length &&
+        sd.zones.every((z, i) => {
+          const want = drag.elements.find((e) => e.id === drag.zones[i].elementId)!;
+          return z.x === drag.zones[i].x && z.y === drag.zones[i].y && z.expected.kind === want.kind &&
+            z.expected.fileId === want.fileId && z.expected.text === want.text;
+        }) &&
+        [...sd.iconFiles].sort().join() === [iconExt, iconSal].sort().join(), sd);
+    const sc = pc?.solution?.kind === "click" ? pc.solution : null;
+    check("Vista previa de señalar: cuántas marcas y la solución con sus puntos y su radio",
+      pc?.imageClick?.marks === 2 && !!sc && sc.radius === PRECISION_RADIUS.md && sc.marks.length === 0 &&
+        JSON.stringify(sc.spots.map(({ x, y }) => ({ x, y }))) === JSON.stringify(SPOTS), sc);
+
     courses.publishCourse(course.id);
     courses.enrollStudents(course.id, [student], teacher);
 
@@ -529,6 +590,7 @@ async function main() {
   mathChecks();
   validationChecks();
   sanitizeChecks();
+  previewChecks();
   await endToEnd();
   console.log(failures === 0 ? "\nTodo bien" : `\n${failures} fallo(s)`);
   process.exitCode = failures === 0 ? 0 : 1;

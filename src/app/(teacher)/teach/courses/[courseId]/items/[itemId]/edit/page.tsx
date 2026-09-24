@@ -51,6 +51,8 @@ export default async function ExamEditPage({
       accepted: Array.isArray(config.accepted) ? config.accepted : [],
       pairs: Array.isArray(config.pairs) ? config.pairs : [],
       steps: Array.isArray(config.steps) ? config.steps : [],
+      imageFileId: q.imageFileId,
+      imageConfig: isImageQuestionType(q.type) ? q.config : null,
     };
   });
   // La IA nunca crea preguntas sobre imagen; "reemplazar" solo borra las demás

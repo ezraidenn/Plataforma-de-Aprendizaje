@@ -10,7 +10,7 @@ import {
   type ReactNode,
   type Ref,
 } from "react";
-import { Plus } from "lucide-react";
+import { Crosshair, Plus } from "lucide-react";
 import type { ImageItemView } from "@/components/student/types";
 import { clamp01, fileUrl, type Point } from "@/lib/image-questions";
 import { cn } from "@/lib/utils";
@@ -116,6 +116,37 @@ export function BoardSpot({
     >
       {children}
     </div>
+  );
+}
+
+/** Mira para el teclado: solo se ve con el foco puesto desde el teclado en el tablero (que lleva `group`). */
+export function BoardCursor({ x, y }: Point) {
+  return (
+    <BoardSpot
+      x={x}
+      y={y}
+      className="pointer-events-none hidden text-primary drop-shadow-[0_0_2px_white] group-focus-visible:block"
+    >
+      <Crosshair className="size-7" strokeWidth={2.5} aria-hidden />
+    </BoardSpot>
+  );
+}
+
+/**
+ * Punto correcto de «señalar» con su margen de acierto: verde, o rojo punteado
+ * si se quedó sin señalar. El radio es una fracción del ancho de la foto.
+ */
+export function SpotArea({ x, y, radius, missed }: { x: number; y: number; radius: number; missed?: boolean }) {
+  return (
+    <BoardSpot
+      x={x}
+      y={y}
+      className={cn(
+        "pointer-events-none rounded-full border-2",
+        missed ? "border-dashed border-destructive bg-destructive/10" : "border-success bg-success/20"
+      )}
+      style={{ width: `${radius * 200}%`, aspectRatio: "1" }}
+    />
   );
 }
 
