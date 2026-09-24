@@ -36,7 +36,8 @@ export const SNAP_RADIUS = 0.08;
 export const MIN_ZONE_GAP = 0.04;
 
 const unit = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= 1;
-const validAspect = (a: unknown) => typeof a === "number" && Number.isFinite(a) && a >= 0.1 && a <= 10;
+/** Proporción (alto / ancho) que se acepta: ni más de diez veces más ancha que alta, ni al revés. */
+export const validAspect = (a: unknown): a is number => typeof a === "number" && Number.isFinite(a) && a >= 0.1 && a <= 10;
 
 export const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
 
@@ -68,6 +69,18 @@ export function readingOrder<T extends Point>(points: T[], aspect: number): T[] 
     else rows.push([p]);
   }
   return rows.flatMap((row) => row.sort((a, b) => a.x - b.x || a.y - b.y));
+}
+
+/** El número (1, 2…) de cada punto en orden de lectura, en el orden en que llegan: «Lugar N» o «Punto N». */
+export function readingNumbers(points: Point[], aspect: number): number[] {
+  const out: number[] = [];
+  readingOrder(
+    points.map((p, i) => ({ x: p.x, y: p.y, i })),
+    aspect
+  ).forEach((p, n) => {
+    out[p.i] = n + 1;
+  });
+  return out;
 }
 
 /** «Ícono N» por archivo, en un orden fijo: el nombre no cambia con el barajado. */

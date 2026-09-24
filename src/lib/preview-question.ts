@@ -1,8 +1,8 @@
 import type { QuestionKind, ReviewBoard, RunnerQuestion } from "@/components/student/types";
 import type { QuestionDraft } from "./question-draft";
 import { shuffledOrder } from "./ordering";
+import { clickReviewBoard, dragReviewBoard } from "./image-boards";
 import {
-  PRECISION_RADIUS,
   dragCopies,
   isImageQuestionType,
   readImageClick,
@@ -96,7 +96,6 @@ export function imagePreview(q: {
   const drag = q.type === "image_drag" ? readImageDrag(q) : null;
   if (drag) {
     const c = drag.config;
-    const views = new Map(c.elements.map(({ id, ...view }) => [id, view]));
     return {
       ...base,
       image: drag.image,
@@ -105,37 +104,24 @@ export function imagePreview(q: {
         iconSize: c.iconSize,
         zones: shuffle(c.zones.map((z, i) => ({ token: `${q.id}-z${i}`, x: z.x, y: z.y }))),
         items: shuffle(
-          dragCopies(c).map((cp) => ({ token: `${q.id}-e${cp.elementId}-${cp.copy}`, ...views.get(cp.elementId)! }))
+          dragCopies(c).map((cp) => {
+            const e = c.elements[cp.elementIndex];
+            return { token: `${q.id}-e${cp.elementId}-${cp.copy}`, kind: e.kind, text: e.text, fileId: e.fileId };
+          })
         ),
       },
       answerText: null,
-      solution: {
-        kind: "drag",
-        image: drag.image,
-        aspect: c.aspect,
-        iconSize: c.iconSize,
-        // La config ya se validó: cada lugar apunta a un elemento que existe
-        zones: c.zones.map((z) => ({ x: z.x, y: z.y, correct: true, placed: null, expected: views.get(z.elementId)! })),
-        iconFiles: c.elements.flatMap((e) => (e.kind === "icon" && e.fileId ? [e.fileId] : [])),
-      },
+      solution: dragReviewBoard(drag.image, c),
     };
   }
   const click = q.type === "image_click" ? readImageClick(q) : null;
   if (click) {
-    const c = click.config;
     return {
       ...base,
       image: click.image,
-      imageClick: { aspect: c.aspect, marks: c.spots.length },
+      imageClick: { aspect: click.config.aspect, marks: click.config.spots.length },
       answerText: null,
-      solution: {
-        kind: "click",
-        image: click.image,
-        aspect: c.aspect,
-        radius: PRECISION_RADIUS[c.precision],
-        spots: c.spots.map((s) => ({ x: s.x, y: s.y, hit: true })),
-        marks: [],
-      },
+      solution: clickReviewBoard(click.image, click.config),
     };
   }
   return base;

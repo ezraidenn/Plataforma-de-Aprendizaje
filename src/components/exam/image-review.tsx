@@ -66,7 +66,8 @@ export function ImageSolution({ board }: { board: ReviewBoard }) {
   const zones = readingOrder(board.zones, board.aspect);
   const icons = iconNumbers(board.iconFiles);
   return (
-    <div className={GRID}>
+    // A lo ancho: sola, la solución no tiene con qué ir en la otra columna
+    <div className="overflow-x-clip [overflow-clip-margin:12px]">
       <DragThumb board={board} zones={zones} mine={false} />
       {/* Lo mismo en texto, para quien no ve la miniatura */}
       <ul className="sr-only">

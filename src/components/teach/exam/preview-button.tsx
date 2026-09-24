@@ -46,17 +46,34 @@ export function PreviewButton({
         {loading ? <Loader2 className="animate-spin" aria-hidden /> : <Eye aria-hidden />}
         Ver como alumno
       </Button>
-      <Dialog open={questions !== null} onOpenChange={(o) => !o && setQuestions(null)}>
-        <DialogContent className="flex h-[88vh] flex-col gap-3 overflow-hidden sm:max-w-4xl">
-          <DialogHeader>
-            <DialogTitle>Ver como alumno</DialogTitle>
-            <DialogDescription>Así verá el estudiante este examen. Puedes contestar y moverte libremente.</DialogDescription>
-          </DialogHeader>
-          <div className="min-h-0 flex-1">
-            {questions && <ExamPreview questions={questions} onClose={() => setQuestions(null)} />}
-          </div>
-        </DialogContent>
-      </Dialog>
+      <PreviewDialog
+        questions={questions}
+        onClose={() => setQuestions(null)}
+        description="Así verá el estudiante este examen. Puedes contestar y moverte libremente."
+      />
     </>
+  );
+}
+
+/** El diálogo «Ver como alumno»: abierto mientras haya preguntas. */
+export function PreviewDialog({
+  questions,
+  onClose,
+  description,
+}: {
+  questions: PreviewQuestion[] | null;
+  onClose: () => void;
+  description: string;
+}) {
+  return (
+    <Dialog open={questions !== null} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="flex h-[88vh] flex-col gap-3 overflow-hidden sm:max-w-4xl">
+        <DialogHeader>
+          <DialogTitle>Ver como alumno</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
+        <div className="min-h-0 flex-1">{questions && <ExamPreview questions={questions} onClose={onClose} />}</div>
+      </DialogContent>
+    </Dialog>
   );
 }

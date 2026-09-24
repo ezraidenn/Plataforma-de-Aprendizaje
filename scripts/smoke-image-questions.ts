@@ -22,6 +22,7 @@ import { deleteFile, saveStream } from "../src/server/services/storage";
 import { buildRunnerQuestions } from "../src/components/student/lesson-data";
 import { cleanupSmokeNotifications } from "./lib/smoke-cleanup";
 import { imagePreview, questionsToPreview } from "../src/lib/preview-question";
+import { clickReviewBoard, dragReviewBoard } from "../src/lib/image-boards";
 import {
   MIN_ZONE_GAP,
   PRECISION_RADIUS,
@@ -36,6 +37,7 @@ import {
   iconNumbers,
   nearestZone,
   parseClickAnswer,
+  readingNumbers,
   readingOrder,
   parseDragAnswer,
   isImageQuestionType,
@@ -124,6 +126,7 @@ function mathChecks() {
   const order = (p: { x: number; y: number }[]) => readingOrder(p, 0.75).map((q) => `${q.x},${q.y}`).join(" ");
   check("Orden de lectura por filas", order(pts) === "0.5,0.1 0.1,0.5 0.9,0.51 0.2,0.8", order(pts));
   check("Orden de lectura igual con la entrada revuelta", order([...pts].reverse()) === order(pts));
+  check("Número de lectura de cada punto, en el orden en que llegan", readingNumbers(pts, 0.75).join() === "3,2,1,4", readingNumbers(pts, 0.75));
   const icons = iconNumbers(["f-b", "f-a", undefined, "f-b"]);
   check("«Ícono N» por archivo en orden fijo", icons.get("f-a") === 1 && icons.get("f-b") === 2 && icons.size === 2);
 
@@ -213,6 +216,15 @@ function previewChecks() {
   check("Imagen incompleta: sin tablero ni solución, y lo dice", incomplete.image === null && incomplete.imageDrag === null && !incomplete.solution && !!incomplete.answerText);
   const draft = imagePreview({ id: "borrador", type: "image_drag", promptMd: "", points: 1, imageFileId: "foto", config: DRAG });
   check("La pregunta del editor (sin guardar) también se previsualiza", draft.imageDrag?.items.length === 5 && draft.solution?.kind === "drag");
+  const solo = dragReviewBoard("foto", DRAG);
+  check("Tablero de solución: cada lugar con su elemento, sin respuesta del alumno",
+    solo.zones.length === 4 && solo.zones.every((z) => z.placed === null && z.correct) && solo.zones[3].expected.text === "Punto de reunión");
+  const withAnswer = dragReviewBoard("foto", DRAG, ["reg", "ext"]);
+  check("Tablero con respuesta: lo puesto y si acertó",
+    withAnswer.zones[0].placed?.text === "Regadera" && !withAnswer.zones[0].correct && withAnswer.zones[1].correct && withAnswer.zones[2].placed === null);
+  const clickSolo = clickReviewBoard("foto", CLICK);
+  check("Tablero de señalar sin marcas: todos los puntos, ninguna marca",
+    clickSolo.spots.length === 2 && clickSolo.spots.every((s) => s.hit) && clickSolo.marks.length === 0 && clickSolo.radius === PRECISION_RADIUS.md);
 }
 
 // ─── Recorrido contra la base ────────────────────────────────────────────────

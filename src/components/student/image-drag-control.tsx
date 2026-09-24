@@ -1,17 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import {
-  DndContext,
-  DragOverlay,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  type Announcements,
-  type DragEndEvent,
-} from "@dnd-kit/core";
+import { DndContext, DragOverlay, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { BoardSpot, ImageBoard, ItemFace, ZoneShadow, relToRect, useElementWidth } from "@/components/exam/image-board";
+import { QUIET_ANNOUNCEMENTS, useIsClient } from "@/components/exam/image-dnd";
 import { LiveRegion, useAnnouncer } from "@/components/exam/live-region";
 import { DraggableChip, ImageBank, groupBank, groupKey } from "@/components/student/image-drag-bank";
 import type { RunnerQuestion } from "@/components/student/types";
@@ -47,15 +40,7 @@ import { cn } from "@/lib/utils";
 
 type DragConfig = NonNullable<RunnerQuestion["imageDrag"]>;
 
-/** Los avisos van por la región propia, en español; los de dnd-kit, callados. */
-const QUIET: Announcements = {
-  onDragStart: () => undefined,
-  onDragOver: () => undefined,
-  onDragEnd: () => undefined,
-  onDragCancel: () => undefined,
-};
 const INSTRUCTIONS = { draggable: "Pulsa Enter para elegir la ficha y después Enter en su lugar." };
-const noSubscribe = () => () => {};
 
 export function ImageDragControl({
   image,
@@ -79,7 +64,7 @@ export function ImageDragControl({
   const [hot, setHot] = useState<string | null>(null);
   const { live, announce } = useAnnouncer();
   const focusAfter = useRef<(() => HTMLElement | null) | null>(null);
-  const isClient = useSyncExternalStore(noSubscribe, () => true, () => false);
+  const isClient = useIsClient();
 
   // Sin sensor de teclado: con teclado se elige y se coloca con Enter, como al tocar
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
@@ -226,7 +211,7 @@ export function ImageDragControl({
       </p>
       <DndContext
         sensors={sensors}
-        accessibility={{ announcements: QUIET, screenReaderInstructions: INSTRUCTIONS }}
+        accessibility={{ announcements: QUIET_ANNOUNCEMENTS, screenReaderInstructions: INSTRUCTIONS }}
         // Desplaza solo muy cerca del borde: con el 20 % de fábrica, una sombra
         // arriba de la vista se alejaba justo al llegar a ella
         autoScroll={{ threshold: { x: 0, y: 0.08 } }}

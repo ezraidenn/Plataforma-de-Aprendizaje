@@ -4,6 +4,9 @@
  */
 export type UploadKind = "course_source" | "submission" | "resource" | "attachment" | "cover" | "editor_image";
 
+/** `accept` de los campos que suben imágenes del editor (las mismas que admite el servidor). */
+export const EDITOR_IMAGE_ACCEPT = "image/png,image/jpeg,image/webp,image/gif";
+
 export async function uploadFile(file: File, kind: UploadKind): Promise<string> {
   let res: Response;
   try {

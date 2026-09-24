@@ -2,9 +2,9 @@
 
 import { useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { BoardCursor, BoardSpot, ImageBoard } from "@/components/exam/image-board";
+import { BoardCursor, BoardSpot, ImageBoard, useCrosshair } from "@/components/exam/image-board";
 import { LiveRegion, useAnnouncer } from "@/components/exam/live-region";
-import { clamp01, fileUrl, parseClickAnswer, round4, type Point } from "@/lib/image-questions";
+import { fileUrl, parseClickAnswer, round4, type Point } from "@/lib/image-questions";
 import { cn } from "@/lib/utils";
 
 /**
@@ -31,7 +31,7 @@ export function ImageClickControl({
   const max = config.marks;
   const value = useMemo(() => parseClickAnswer(answerText, max), [answerText, max]);
   const full = value.length >= max;
-  const [cursor, setCursor] = useState<Point>({ x: 0.5, y: 0.5 });
+  const { cursor, setCursor, onKeyDown } = useCrosshair(config.aspect, (p) => add(p));
   /** Quiso poner una marca de más: se le dice también a la vista. */
   const [blocked, setBlocked] = useState(false);
   const { live, announce } = useAnnouncer();
@@ -55,28 +55,6 @@ export function ImageClickControl({
     announce(`Marca ${i + 1} quitada`);
     // El botón desaparece: el foco vuelve a la foto para no perderse
     if (viaKeyboard) boardRef.current?.focus();
-  }
-
-  function onKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
-    if (e.target !== e.currentTarget) return;
-    const step = e.shiftKey ? 0.1 : 0.02;
-    // Pasos iguales en pantalla: en vertical se corrigen con la proporción
-    const moves: Record<string, [number, number]> = {
-      ArrowLeft: [-step, 0],
-      ArrowRight: [step, 0],
-      ArrowUp: [0, -step / config.aspect],
-      ArrowDown: [0, step / config.aspect],
-    };
-    const move = moves[e.key];
-    if (move) {
-      e.preventDefault();
-      // Las flechas mueven la mira, no cambian de pregunta
-      e.stopPropagation();
-      setCursor((c) => ({ x: clamp01(c.x + move[0]), y: clamp01(c.y + move[1]) }));
-    } else if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      add(cursor);
-    }
   }
 
   return (

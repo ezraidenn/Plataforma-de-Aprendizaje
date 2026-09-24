@@ -221,6 +221,8 @@ export function QuestionList({
                     <img
                       src={fileUrl(question.imageFileId)}
                       alt=""
+                      loading="lazy"
+                      decoding="async"
                       className="h-10 w-14 shrink-0 rounded-md bg-muted object-cover ring-1 ring-border"
                     />
                   )}
@@ -312,6 +314,8 @@ export function QuestionList({
           {draftType !== null && (
             <li className="anim-pop rounded-xl border border-section/40 bg-card shadow-[0_1px_2px_rgb(15_23_42/0.05)]">
               <QuestionEditor
+                // Otro tipo es otro editor: no hereda el estado del anterior
+                key={draftType}
                 type={draftType}
                 initial={null}
                 onCancel={() => setDraftType(null)}

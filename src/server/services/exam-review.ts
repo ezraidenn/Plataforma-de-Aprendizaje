@@ -11,14 +11,9 @@ import {
   type Question,
   type QuestionOption,
 } from "./exams";
-import {
-  PRECISION_RADIUS,
-  imageClickHits,
-  parseClickAnswer,
-  readImageClick,
-  readImageDrag,
-} from "@/lib/image-questions";
-import type { ImageItemView, ReviewBoard, ReviewEntry, ReviewResult } from "@/components/student/types";
+import { parseClickAnswer, readImageClick, readImageDrag } from "@/lib/image-questions";
+import { clickReviewBoard, dragReviewBoard } from "@/lib/image-boards";
+import type { ReviewBoard, ReviewEntry, ReviewResult } from "@/components/student/types";
 
 /**
  * Desglose por pregunta de un intento calificado. Lleva la solución: quien lo
@@ -128,56 +123,27 @@ function reviewEntry(q: FullQuestion, ans: AnswerRow | null, attemptId: string):
     case "image_drag": {
       const drag = readImageDrag(q);
       if (!drag) break;
-      const c = drag.config;
       // Misma lectura de la respuesta que la calificación
-      const placed = imageDragPlacement(c, ans?.answerText, attemptId, q.id);
-      const views = new Map<string, ImageItemView>(c.elements.map(({ id, ...view }) => [id, view]));
-      const zones = c.zones.map((z, i) => {
-        const put = placed[i];
-        return {
-          x: z.x,
-          y: z.y,
-          correct: put === z.elementId,
-          placed: put ? (views.get(put) ?? null) : null,
-          // La config ya se validó: cada lugar apunta a un elemento que existe
-          expected: views.get(z.elementId)!,
-        };
-      });
+      const placed = imageDragPlacement(drag.config, ans?.answerText, attemptId, q.id);
+      const dragBoard = dragReviewBoard(drag.image, drag.config, placed);
       if (placed.some((p) => p !== undefined)) {
-        yourAnswer = `${zones.filter((z) => z.correct).length} de ${zones.length} lugares correctos`;
+        yourAnswer = `${dragBoard.zones.filter((z) => z.correct).length} de ${dragBoard.zones.length} lugares correctos`;
       }
       correctAnswer = "Mira la imagen con la solución";
-      board = {
-        kind: "drag",
-        image: drag.image,
-        aspect: c.aspect,
-        iconSize: c.iconSize,
-        zones,
-        // Todos los íconos, también los distractores que no se pusieron: con
-        // ellos «Ícono N» se numera igual que en el banco del alumno
-        iconFiles: c.elements.flatMap((e) => (e.kind === "icon" && e.fileId ? [e.fileId] : [])),
-      };
+      board = dragBoard;
       break;
     }
     case "image_click": {
       const click = readImageClick(q);
       if (!click) break;
-      const c = click.config;
-      const marks = parseClickAnswer(ans?.answerText, c.spots.length);
+      const marks = parseClickAnswer(ans?.answerText, click.config.spots.length);
       // Mismo emparejamiento que la calificación: cada marca acredita un solo punto
-      const hits = imageClickHits(c, marks);
+      const clickBoard = clickReviewBoard(click.image, click.config, marks);
       if (marks.length > 0) {
-        yourAnswer = `${hits.filter(Boolean).length} de ${c.spots.length} puntos señalados`;
+        yourAnswer = `${clickBoard.spots.filter((s) => s.hit).length} de ${clickBoard.spots.length} puntos señalados`;
       }
       correctAnswer = "Mira la imagen con la solución";
-      board = {
-        kind: "click",
-        image: click.image,
-        aspect: c.aspect,
-        radius: PRECISION_RADIUS[c.precision],
-        spots: c.spots.map((s, i) => ({ x: s.x, y: s.y, hit: hits[i] })),
-        marks,
-      };
+      board = clickBoard;
       break;
     }
     case "open_text": {

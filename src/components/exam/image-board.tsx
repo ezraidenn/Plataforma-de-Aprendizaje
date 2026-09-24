@@ -119,6 +119,36 @@ export function BoardSpot({
   );
 }
 
+/**
+ * Mira para usar el tablero con teclado: las flechas la mueven (Mayús: pasos
+ * largos) y Enter o Espacio actúan donde está. Las flechas no se propagan: en
+ * el examen no cambian de pregunta. `onKeyDown` va en el tablero enfocable.
+ */
+export function useCrosshair(aspect: number, onEnter: (p: Point) => void) {
+  const [cursor, setCursor] = useState<Point>({ x: 0.5, y: 0.5 });
+  function onKeyDown(e: React.KeyboardEvent<HTMLElement>) {
+    if (e.target !== e.currentTarget) return;
+    const step = e.shiftKey ? 0.1 : 0.02;
+    // Pasos iguales en pantalla: en vertical se corrigen con la proporción
+    const moves: Record<string, [number, number]> = {
+      ArrowLeft: [-step, 0],
+      ArrowRight: [step, 0],
+      ArrowUp: [0, -step / aspect],
+      ArrowDown: [0, step / aspect],
+    };
+    const move = moves[e.key];
+    if (move) {
+      e.preventDefault();
+      e.stopPropagation();
+      setCursor((c) => ({ x: clamp01(c.x + move[0]), y: clamp01(c.y + move[1]) }));
+    } else if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      onEnter(cursor);
+    }
+  }
+  return { cursor, setCursor, onKeyDown };
+}
+
 /** Mira para el teclado: solo se ve con el foco puesto desde el teclado en el tablero (que lleva `group`). */
 export function BoardCursor({ x, y }: Point) {
   return (
