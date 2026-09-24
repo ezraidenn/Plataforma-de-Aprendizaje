@@ -101,7 +101,8 @@ export function imagePreview(q: {
       image: drag.image,
       imageDrag: {
         aspect: c.aspect,
-        iconSize: c.iconSize,
+        // Preguntas de antes del tamaño por elemento: sin iconSize, se ve como mediano
+        iconSize: c.iconSize ?? "md",
         zones: shuffle(c.zones.map((z, i) => ({ token: `${q.id}-z${i}`, x: z.x, y: z.y }))),
         items: shuffle(
           dragCopies(c).map((cp) => {

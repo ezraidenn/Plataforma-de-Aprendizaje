@@ -47,7 +47,8 @@ export function dragReviewBoard(image: string, config: ImageDragConfig, placed?:
     kind: "drag",
     image,
     aspect: config.aspect,
-    iconSize: config.iconSize,
+    // Preguntas de antes del tamaño por elemento: sin iconSize, se ve como mediano
+    iconSize: config.iconSize ?? "md",
     zones: config.zones.map((z, i) => {
       const put = placed?.[i];
       return {

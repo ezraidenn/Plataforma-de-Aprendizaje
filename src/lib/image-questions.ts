@@ -9,11 +9,28 @@ export type IconSize = "sm" | "md" | "lg";
 export type Precision = "sm" | "md" | "lg";
 export type Point = { x: number; y: number };
 
-export type ImageElement = { id: string; kind: "icon" | "text"; fileId?: string; text?: string };
+export type ImageElement = {
+  id: string;
+  kind: "icon" | "text";
+  fileId?: string;
+  text?: string;
+  /** Ancho (ícono) o tamaño de letra (texto), como fracción del ancho de la foto. Sin él, se deriva (ver image-layout). */
+  size?: number;
+  /** Ícono: alto / ancho del dibujo. */
+  ratio?: number;
+  /** Giro en grados, (-180, 180]. */
+  rotation?: number;
+};
 /** Un elemento de «arrastrar a la imagen» tal como se dibuja: sin su id. */
 export type ImageItemView = Omit<ImageElement, "id">;
 export type ImageZone = Point & { elementId: string };
-export type ImageDragConfig = { aspect: number; iconSize: IconSize; elements: ImageElement[]; zones: ImageZone[] };
+export type ImageDragConfig = {
+  aspect: number;
+  /** Solo en preguntas anteriores al tamaño por elemento. */
+  iconSize?: IconSize;
+  elements: ImageElement[];
+  zones: ImageZone[];
+};
 export type ImageClickConfig = { aspect: number; precision: Precision; spots: Point[] };
 
 /** Los dos tipos de pregunta sobre imagen: único criterio, para no repetir la lista por todo el código. */
@@ -40,6 +57,17 @@ export const PRECISION_RADIUS: Record<Precision, number> = { sm: 0.03, md: 0.05,
 export const SNAP_RADIUS = 0.08;
 /** Separación mínima entre dos lugares (fracción del ancho): más cerca, se enciman. */
 export const MIN_ZONE_GAP = 0.04;
+
+/** Tamaños por defecto de un elemento nuevo (fracción del ancho): el «mediano» de antes sobre 700 px, y letra de 14 px. */
+export const DEFAULT_ICON_SIZE = 0.08;
+export const DEFAULT_TEXT_SIZE = 0.02;
+export const ICON_SIZE_RANGE = [0.02, 0.5] as const;
+export const TEXT_SIZE_RANGE = [0.01, 0.08] as const;
+/** Grados a (-180, 180]. */
+export function normalizeRotation(r: number): number {
+  const x = ((r % 360) + 360) % 360;
+  return x > 180 ? x - 360 : x;
+}
 
 const unit = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= 1;
 /** Proporción (alto / ancho) que se acepta: ni más de diez veces más ancha que alta, ni al revés. */
@@ -108,7 +136,7 @@ export function imageDragProblem(config: unknown, hasImage: boolean): string | n
   const c = config as Partial<ImageDragConfig> | null;
   if (!c || !Array.isArray(c.elements) || !Array.isArray(c.zones)) return "Configura la pregunta";
   if (!validAspect(c.aspect)) return "Vuelve a subir la foto";
-  if (!["sm", "md", "lg"].includes(c.iconSize as string)) return "Elige el tamaño de los íconos";
+  if (c.iconSize !== undefined && !["sm", "md", "lg"].includes(c.iconSize as string)) return "Elige el tamaño de los íconos";
   if (c.elements.length > MAX_ELEMENTS) return `Usa como máximo ${MAX_ELEMENTS} elementos`;
   const ids = new Set<string>();
   // Dos elementos que se ven igual no se distinguen en el banco del alumno
@@ -127,6 +155,12 @@ export function imageDragProblem(config: unknown, hasImage: boolean): string | n
     const look = e.kind === "icon" ? `i:${e.fileId}` : `t:${(e.text as string).trim().toLowerCase()}`;
     if (looks.has(look)) return "Hay dos elementos iguales: deja uno y colócalo en varios lugares";
     looks.add(look);
+    if (e.size !== undefined) {
+      const [min, max] = e.kind === "icon" ? ICON_SIZE_RANGE : TEXT_SIZE_RANGE;
+      if (typeof e.size !== "number" || !Number.isFinite(e.size) || e.size < min || e.size > max) return "Hay un elemento demasiado grande o demasiado chico";
+    }
+    if (e.kind === "icon" && e.ratio !== undefined && !validAspect(e.ratio)) return "Vuelve a subir un ícono";
+    if (e.rotation !== undefined && (typeof e.rotation !== "number" || !Number.isFinite(e.rotation))) return "Hay un elemento con un giro inválido";
   }
   if (c.zones.length === 0) return "Coloca al menos un elemento en la foto";
   if (c.zones.length > MAX_ZONES) return `Usa como máximo ${MAX_ZONES} lugares`;
@@ -231,14 +265,21 @@ export function sanitizeImageConfig(type: "image_drag" | "image_click", raw: unk
   if (type === "image_click") {
     return compact({ aspect: finite(c.aspect), precision: size(c.precision), spots: list(c.spots).map(point) });
   }
+  // El giro se sanea a la vez que se normaliza: undefined sigue undefined
+  const rot = (v: unknown): number | undefined => {
+    const n = finite(v);
+    return n === undefined ? undefined : normalizeRotation(n);
+  };
   return compact({
     aspect: finite(c.aspect),
     iconSize: size(c.iconSize),
     elements: list(c.elements).map((v) => {
       const e = record(v);
       const id = shortId(e.id);
-      if (e.kind === "icon") return compact({ id, kind: "icon", fileId: shortId(e.fileId) });
-      if (e.kind === "text") return compact({ id, kind: "text", text: typeof e.text === "string" ? e.text.trim() : undefined });
+      if (e.kind === "icon")
+        return compact({ id, kind: "icon", fileId: shortId(e.fileId), size: finite(e.size), ratio: finite(e.ratio), rotation: rot(e.rotation) });
+      if (e.kind === "text")
+        return compact({ id, kind: "text", text: typeof e.text === "string" ? e.text.trim() : undefined, size: finite(e.size), rotation: rot(e.rotation) });
       return compact({ id });
     }),
     zones: list(c.zones).map((v) => compact({ ...point(v), elementId: shortId(record(v).elementId) })),
@@ -299,10 +340,10 @@ export function imageClickHits(config: ImageClickConfig, marks: Point[]): boolea
   return spots.map((_, i) => augment(i, new Array<boolean>(used.length).fill(false)));
 }
 
-/** Índice del lugar más cercano al punto dentro de SNAP_RADIUS, libre u ocupado; null si no hay. */
-export function nearestZone(zones: Point[], p: Point, aspect: number): number | null {
+/** Índice del lugar más cercano al punto dentro de `radius`, libre u ocupado; null si no hay. */
+export function nearestZone(zones: Point[], p: Point, aspect: number, radius = SNAP_RADIUS): number | null {
   let best: number | null = null;
-  let bestD = SNAP_RADIUS;
+  let bestD = radius;
   for (let i = 0; i < zones.length; i++) {
     const d = relDistance(zones[i], p, aspect);
     if (d <= bestD) {

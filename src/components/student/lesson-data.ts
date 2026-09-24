@@ -123,7 +123,8 @@ export function buildRunnerQuestions(attempt: ExamAttempt): RunnerQuestion[] {
       image = drag.image;
       imageDrag = {
         aspect: c.aspect,
-        iconSize: c.iconSize,
+        // Preguntas de antes del tamaño por elemento: sin iconSize, se ve como mediano
+        iconSize: c.iconSize ?? "md",
         // Revueltos: el orden no puede delatar a qué elemento pertenece cada lugar
         zones: shuffle(c.zones.map((z) => ({ token: imageZoneToken(attempt.id, q.id, z), x: z.x, y: z.y }))),
         items: shuffle(

@@ -260,7 +260,7 @@ export function ImageQuestionEditor({
             {type === "image_drag" ? (
               <Segmented
                 label="Tamaño de los íconos"
-                value={(config as ImageDragConfig).iconSize}
+                value={(config as ImageDragConfig).iconSize ?? "md"}
                 options={ICON_SIZES}
                 onChange={(iconSize) => setDrag((c) => ({ ...c, iconSize }))}
               />

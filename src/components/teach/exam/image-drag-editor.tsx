@@ -152,7 +152,7 @@ export function DragEditor({
   const { elements, zones } = config;
   const fullElements = elements.length >= MAX_ELEMENTS;
   const fullZones = zones.length >= MAX_ZONES;
-  const px = iconPx(config.iconSize, board.width);
+  const px = iconPx(config.iconSize ?? "md", board.width);
   const dense = board.width > 0 && board.width < 480;
   const byId = useMemo(() => new Map(elements.map((e) => [e.id, e])), [elements]);
   const icons = useMemo(() => iconNumbers(elements.map((e) => e.fileId)), [elements]);

@@ -49,6 +49,20 @@ import {
   type ImageClickConfig,
   type ImageDragConfig,
 } from "../src/lib/image-questions";
+import {
+  DEFAULT_ICON_SIZE,
+  DEFAULT_TEXT_SIZE,
+  alphaBounds,
+  boxBounds,
+  elementBox,
+  elementRatio,
+  elementSize,
+  elementView,
+  iconBoxPx,
+  normalizeRotation,
+  snapRadiusFor,
+  textPx,
+} from "../src/lib/image-layout";
 
 let failures = 0;
 function check(name: string, cond: boolean, detail?: unknown) {
@@ -169,6 +183,44 @@ function validationChecks() {
   check("Señalar sin puntos", imageClickProblem({ ...CLICK, spots: [] }, true) === "Marca al menos un punto en la foto");
   check(`Señalar con ${MAX_SPOTS + 1} puntos`, imageClickProblem({ ...CLICK, spots: Array.from({ length: MAX_SPOTS + 1 }, () => ({ x: 0.5, y: 0.5 })) }, true) === `Usa como máximo ${MAX_SPOTS} puntos`);
   check("Proporción inválida", imageClickProblem({ ...CLICK, aspect: 0 }, true) !== null);
+}
+
+function layoutChecks() {
+  console.log("\n— Tamaño, proporción y giro");
+  check("Ícono viejo sin size: sale de iconSize", Math.abs(elementSize({ kind: "icon" }, "md") - 56 / 700) < 1e-9);
+  check("Ícono viejo sin size ni iconSize: mediano", Math.abs(elementSize({ kind: "icon" }) - DEFAULT_ICON_SIZE) < 1e-9);
+  check("Texto sin size: letra por defecto", elementSize({ kind: "text" }) === DEFAULT_TEXT_SIZE);
+  check("Con size: el suyo", elementSize({ kind: "icon", size: 0.2 }, "sm") === 0.2);
+  check("Proporción: la del ícono, 1 si falta o es inválida", elementRatio({ kind: "icon", ratio: 0.5 }) === 0.5 && elementRatio({ kind: "icon" }) === 1 && elementRatio({ kind: "icon", ratio: -2 }) === 1 && elementRatio({ kind: "text", ratio: 3 }) === 1);
+  check("Giro normalizado a (-180, 180]", normalizeRotation(190) === -170 && normalizeRotation(-180) === 180 && normalizeRotation(540) === 180 && normalizeRotation(-30) === -30);
+  const view = elementView({ id: "a", kind: "icon", fileId: "f", size: 0.1, ratio: 2, rotation: 45 }, "md");
+  check("Vista de un elemento: sin id y con todo resuelto", JSON.stringify(view) === JSON.stringify({ kind: "icon", fileId: "f", size: 0.1, ratio: 2, rotation: 45 }), view);
+  check("Vista de un texto viejo: letra por defecto y giro 0", JSON.stringify(elementView({ id: "t", kind: "text", text: "Hola" })) === JSON.stringify({ kind: "text", text: "Hola", size: DEFAULT_TEXT_SIZE, ratio: 1, rotation: 0 }));
+  check("Píxeles de un ícono: tamaño × ancho y proporción", JSON.stringify(iconBoxPx(0.1, 2, 800)) === JSON.stringify({ w: 80, h: 160 }));
+  check("Píxeles de un ícono: mínimo de 24 px en el lado corto", JSON.stringify(iconBoxPx(0.02, 1, 390)) === JSON.stringify({ w: 24, h: 24 }));
+  check("Letra: tamaño × ancho, mínimo 11 px", textPx(0.02, 800) === 16 && textPx(0.02, 390) === 11);
+  check("Radio de encaje: al menos SNAP_RADIUS, o la mitad del elemento", snapRadiusFor(0.04) === SNAP_RADIUS && snapRadiusFor(0.3) === 0.15);
+  // Caja: ancho en fracciones del ancho; alto en fracciones del alto
+  const b = elementBox({ x: 0.5, y: 0.5 }, { w: 0.2, h: 0.2 * 0.5 }, 0, 0.5);
+  check("Caja sin giro", JSON.stringify(boxBounds(b)) === JSON.stringify({ left: 0.4, right: 0.6, top: 0.4, bottom: 0.6 }), boxBounds(b));
+  const r = boxBounds(elementBox({ x: 0.5, y: 0.5 }, { w: 0.2, h: 0.1 }, 90, 1));
+  check("Caja girada 90°: intercambia ancho y alto", Math.abs(r.right - r.left - 0.1) < 1e-9 && Math.abs(r.bottom - r.top - 0.2) < 1e-9, r);
+  // Límites del dibujo: 4×3 con un solo píxel opaco en (2,1)
+  const rgba = new Uint8ClampedArray(4 * 3 * 4);
+  rgba[(1 * 4 + 2) * 4 + 3] = 255;
+  check("Límites del dibujo", JSON.stringify(alphaBounds(rgba, 4, 3)) === JSON.stringify({ x: 2, y: 1, w: 1, h: 1 }));
+  check("Límites: todo transparente, null", alphaBounds(new Uint8ClampedArray(16), 2, 2) === null);
+  check("Límites: casi transparente (alfa ≤ 8) no cuenta", (() => { const a = new Uint8ClampedArray(16); a[3] = 8; return alphaBounds(a, 2, 2) === null; })());
+
+  console.log("\n— Saneo y validación de los campos nuevos");
+  const base = { aspect: 0.75, elements: [{ id: "a", kind: "icon", fileId: "f", size: 0.1, ratio: 1.5, rotation: 370 }], zones: [{ x: 0.5, y: 0.5, elementId: "a" }] };
+  const clean = sanitizeImageConfig("image_drag", base) as ImageDragConfig;
+  check("Saneo conserva size y ratio, y normaliza el giro", clean.elements[0].size === 0.1 && clean.elements[0].ratio === 1.5 && clean.elements[0].rotation === 10, clean);
+  check("Sin iconSize ya es válida", imageDragProblem(clean, true) === null, imageDragProblem(clean, true));
+  check("Tamaño de ícono fuera de rango", imageDragProblem({ ...clean, elements: [{ ...clean.elements[0], size: 0.9 }] }, true) === "Hay un elemento demasiado grande o demasiado chico");
+  check("Letra fuera de rango", imageDragProblem({ ...clean, elements: [...clean.elements, { id: "t", kind: "text", text: "x", size: 0.2 }] }, true) === "Hay un elemento demasiado grande o demasiado chico");
+  check("Proporción de ícono inválida", imageDragProblem({ ...clean, elements: [{ ...clean.elements[0], ratio: 50 }] }, true) === "Vuelve a subir un ícono");
+  check("Pregunta vieja con iconSize sigue válida", imageDragProblem(DRAG, true) === null);
 }
 
 function sanitizeChecks() {
@@ -642,6 +694,7 @@ async function endToEnd() {
 async function main() {
   mathChecks();
   validationChecks();
+  layoutChecks();
   sanitizeChecks();
   previewChecks();
   await endToEnd();
