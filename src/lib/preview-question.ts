@@ -2,6 +2,7 @@ import type { QuestionKind, RunnerQuestion } from "@/components/student/types";
 import type { QuestionDraft } from "./question-draft";
 import { shuffledOrder } from "./ordering";
 import { clickReviewBoard, dragReviewBoard, type ReviewBoard } from "./image-boards";
+import { elementView } from "./image-layout";
 import {
   dragCopies,
   isImageQuestionType,
@@ -101,14 +102,12 @@ export function imagePreview(q: {
       image: drag.image,
       imageDrag: {
         aspect: c.aspect,
-        // Preguntas de antes del tamaño por elemento: sin iconSize, se ve como mediano
-        iconSize: c.iconSize ?? "md",
         zones: shuffle(c.zones.map((z, i) => ({ token: `${q.id}-z${i}`, x: z.x, y: z.y }))),
         items: shuffle(
-          dragCopies(c).map((cp) => {
-            const e = c.elements[cp.elementIndex];
-            return { token: `${q.id}-e${cp.elementId}-${cp.copy}`, kind: e.kind, text: e.text, fileId: e.fileId };
-          })
+          dragCopies(c).map((cp) => ({
+            token: `${q.id}-e${cp.elementId}-${cp.copy}`,
+            ...elementView(c.elements[cp.elementIndex], c.iconSize),
+          }))
         ),
       },
       answerText: null,

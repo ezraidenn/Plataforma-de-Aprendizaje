@@ -25,6 +25,7 @@ import { getVideoDetail, getVideoProgress } from "@/server/services/video";
 import { resultsVisible } from "@/lib/exam-results";
 import { shuffledOrder } from "@/lib/ordering";
 import { dragCopies, readImageClick, readImageDrag } from "@/lib/image-questions";
+import { elementView } from "@/lib/image-layout";
 import type {
   AssignmentLessonData,
   AttemptDto,
@@ -123,20 +124,14 @@ export function buildRunnerQuestions(attempt: ExamAttempt): RunnerQuestion[] {
       image = drag.image;
       imageDrag = {
         aspect: c.aspect,
-        // Preguntas de antes del tamaño por elemento: sin iconSize, se ve como mediano
-        iconSize: c.iconSize ?? "md",
         // Revueltos: el orden no puede delatar a qué elemento pertenece cada lugar
         zones: shuffle(c.zones.map((z) => ({ token: imageZoneToken(attempt.id, q.id, z), x: z.x, y: z.y }))),
+        // Cada ficha con el tamaño, la proporción y el giro de su elemento
         items: shuffle(
-          dragCopies(c).map((cp) => {
-            const e = c.elements[cp.elementIndex];
-            return {
-              token: imageItemToken(attempt.id, q.id, cp.elementId, cp.copy),
-              kind: e.kind,
-              text: e.text,
-              fileId: e.fileId,
-            };
-          })
+          dragCopies(c).map((cp) => ({
+            token: imageItemToken(attempt.id, q.id, cp.elementId, cp.copy),
+            ...elementView(c.elements[cp.elementIndex], c.iconSize),
+          }))
         ),
       };
     }

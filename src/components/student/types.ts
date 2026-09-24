@@ -1,6 +1,7 @@
 // Tipos serializables que viajan de server components a client components.
 
-import type { IconSize, ImageItemView } from "@/lib/image-questions";
+import type { ImageItemView } from "@/lib/image-questions";
+import type { ElementView } from "@/lib/image-layout";
 import type { ReviewBoard } from "@/lib/image-boards";
 
 // Viven en src/lib (las usan también la revisión y la vista previa, sin UI);
@@ -146,13 +147,13 @@ export type RunnerQuestion = {
   /**
    * image_drag: lugares revueltos SIN su respuesta y una ficha por copia de
    * cada elemento, cada uno con un token opaco por intento (el DOM no revela
-   * qué va dónde). Respuesta: `{ fichaDeLugar: fichaDeElemento }`.
+   * qué va dónde). Cada ficha trae el tamaño, la proporción y el giro de su
+   * elemento; los lugares, solo su posición. Respuesta: `{ fichaDeLugar: fichaDeElemento }`.
    */
   imageDrag: {
     aspect: number;
-    iconSize: IconSize;
     zones: { token: string; x: number; y: number }[];
-    items: (ImageItemView & { token: string })[];
+    items: (ElementView & { token: string })[];
   } | null;
   /**
    * image_click: solo cuántas marcas se esperan; los puntos correctos no

@@ -28,7 +28,8 @@ export const REF_WIDTH = 700;
 export const MIN_ICON_PX = 24;
 export const MIN_TEXT_PX = 11;
 
-type Sized = Pick<ImageElement, "kind" | "size" | "ratio" | "rotation">;
+/** Un elemento tal como se dibuja: sin id, con tamaño, proporción y giro resueltos. */
+export type ElementView = Pick<ImageItemView, "kind" | "text" | "fileId"> & { size: number; ratio: number; rotation: number };
 
 /** Tamaño efectivo: el suyo; si es de antes, el de `iconSize` (íconos) o la letra por defecto (texto). */
 export function elementSize(e: Pick<ImageElement, "kind" | "size">, iconSize?: IconSize): number {
@@ -42,8 +43,8 @@ export function elementRatio(e: Pick<ImageElement, "kind" | "ratio">): number {
   return e.kind === "icon" && validAspect(e.ratio) ? e.ratio : 1;
 }
 
-/** Un elemento tal como se dibuja: sin id, con tamaño, proporción y giro resueltos. */
-export function elementView(e: ImageElement, iconSize?: IconSize): Required<Pick<ImageItemView, "kind" | "size" | "ratio" | "rotation">> & Pick<ImageItemView, "text" | "fileId"> {
+/** La vista de un elemento; `iconSize` es el tamaño común de las preguntas de antes. */
+export function elementView(e: ImageElement, iconSize?: IconSize): ElementView {
   return {
     kind: e.kind,
     ...(e.kind === "text" ? { text: e.text } : { fileId: e.fileId }),

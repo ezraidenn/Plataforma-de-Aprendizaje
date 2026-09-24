@@ -3,8 +3,9 @@
 import { useDraggable } from "@dnd-kit/core";
 import { Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ItemFace } from "@/components/exam/image-board";
+import { IconArt, ItemFace, LabelPill } from "@/components/exam/image-board";
 import type { RunnerQuestion } from "@/components/student/types";
+import { iconBoxPx, textPx } from "@/lib/image-layout";
 import { cn } from "@/lib/utils";
 
 /** Fichas de «arrastrar a la imagen» y el banco donde esperan. */
@@ -28,12 +29,31 @@ export function groupBank(all: DragItem[], isPlaced: (token: string) => boolean)
   return [...groups.entries()].filter(([, group]) => group.length > 0);
 }
 
+/** Lado mayor de un ícono en el banco (px): el de su tamaño real, acotado. */
+const BANK_ICON_PX = [28, 56] as const;
+/** Letra de una etiqueta en el banco (px): la suya, acotada. */
+const BANK_TEXT_PX = [11, 16] as const;
+const clamp = (n: number, [min, max]: readonly [number, number]) => Math.min(max, Math.max(min, n));
+
+/** La ficha en el banco, sin giro: el ícono en una caja de paleta o la etiqueta con su letra acotada. */
+function BankFace({ item, boardWidth, dense, className }: { item: DragItem; boardWidth: number; dense: boolean; className?: string }) {
+  if (item.kind === "icon") {
+    // Su tamaño real, escalado para que el lado mayor quede en la caja de paleta
+    const { w, h } = iconBoxPx(item.size, item.ratio, boardWidth);
+    const scale = clamp(Math.max(w, h), BANK_ICON_PX) / Math.max(w, h);
+    return <IconArt fileId={item.fileId} w={Math.round(w * scale)} h={Math.round(h * scale)} className={className} />;
+  }
+  const fontPx = clamp(textPx(item.size, boardWidth), BANK_TEXT_PX);
+  return <LabelPill text={item.text ?? ""} fontPx={fontPx} dense={dense} className={className} />;
+}
+
 /** Una ficha (en el banco o colocada): se arrastra o se toca. */
 export function DraggableChip({
   item,
   label,
-  px,
+  boardWidth,
   dense,
+  inBank,
   selected,
   hot,
   count = 1,
@@ -44,8 +64,11 @@ export function DraggableChip({
 }: {
   item: DragItem;
   label: string;
-  px: number;
+  /** Ancho del tablero en px: en la foto la ficha va a su tamaño real. */
+  boardWidth: number;
   dense: boolean;
+  /** En el banco: sin giro y a tamaño de paleta. */
+  inBank?: boolean;
   /** Ficha elegida con un toque, si hay. */
   selected: string | null;
   /** Es el lugar ocupado donde caería la ficha arrastrada (la reemplazaría). */
@@ -60,6 +83,8 @@ export function DraggableChip({
 }) {
   const { setNodeRef, listeners } = useDraggable({ id: item.token });
   const pressed = selected === item.token;
+  const palette = inBank && item.kind === "icon";
+  const face = cn(faded && "opacity-35");
   return (
     <button
       ref={setNodeRef}
@@ -71,17 +96,31 @@ export function DraggableChip({
       aria-label={label}
       aria-pressed={pressed}
       className={cn(
-        "relative block cursor-grab touch-none outline-none transition-shadow duration-150 active:cursor-grabbing motion-reduce:transition-none",
-        item.kind === "icon" ? "rounded-[12px]" : "rounded-full",
-        "focus-visible:ring-4 focus-visible:ring-primary/40",
-        pressed && "ring-2 ring-primary ring-offset-2 ring-offset-background",
+        "relative block cursor-grab touch-none outline-none transition-[background-color,box-shadow] duration-150 active:cursor-grabbing motion-reduce:transition-none",
+        palette
+          ? // Ícono del banco: sin tarjeta; se resalta solo al pasar, con el foco o elegido
+            cn(
+              "rounded-[10px] p-1 hover:bg-primary/10 hover:ring-2 hover:ring-primary/30 focus-visible:bg-primary/10 focus-visible:ring-2 focus-visible:ring-primary/60",
+              pressed && "bg-primary/10 ring-2 ring-primary"
+            )
+          : cn(
+              item.kind === "icon" ? "rounded-md" : "rounded-full",
+              "focus-visible:ring-4 focus-visible:ring-primary/40",
+              pressed && "ring-2 ring-primary ring-offset-2 ring-offset-background"
+            ),
         hot && "ring-4 ring-primary/50",
         // Con otra ficha elegida, pasar sobre una colocada avisa que la reemplazaría
         selected && !pressed && data["data-zone"] && "hover:ring-4 hover:ring-primary/30",
         className
       )}
+      // En la foto el giro va en el botón: los anillos giran con la ficha
+      style={!inBank && item.rotation ? { transform: `rotate(${item.rotation}deg)` } : undefined}
     >
-      <ItemFace item={item} px={px} dense={dense} className={cn(faded && "opacity-35")} />
+      {inBank ? (
+        <BankFace item={item} boardWidth={boardWidth} dense={dense} className={face} />
+      ) : (
+        <ItemFace item={{ ...item, rotation: 0 }} boardWidth={boardWidth} dense={dense} className={face} />
+      )}
       {count > 1 && (
         <span
           aria-hidden
@@ -98,7 +137,7 @@ export function DraggableChip({
 export function ImageBank({
   groups,
   labels,
-  px,
+  boardWidth,
   dense,
   selected,
   dragging,
@@ -108,7 +147,7 @@ export function ImageBank({
 }: {
   groups: [string, DragItem[]][];
   labels: Map<string, string>;
-  px: number;
+  boardWidth: number;
   dense: boolean;
   selected: string | null;
   dragging: string | null;
@@ -146,8 +185,9 @@ export function ImageBank({
                 key={key}
                 item={first}
                 label={group.length > 1 ? `${label}, ${group.length} copias` : label}
-                px={px}
+                boardWidth={boardWidth}
                 dense={dense}
+                inBank
                 selected={selected}
                 count={left}
                 faded={left === 0}

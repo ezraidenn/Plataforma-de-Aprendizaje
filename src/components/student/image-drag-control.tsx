@@ -11,13 +11,13 @@ import type { RunnerQuestion } from "@/components/student/types";
 import {
   fileUrl,
   iconNumbers,
-  iconPx,
   imageItemName,
   nearestZone,
   parseDragAnswer,
   readingOrder,
   type Point,
 } from "@/lib/image-questions";
+import { snapRadiusFor } from "@/lib/image-layout";
 import { cn } from "@/lib/utils";
 
 /**
@@ -30,12 +30,14 @@ import { cn } from "@/lib/utils";
  * - Teclado: fichas y sombras son botones; Enter o Espacio hacen lo mismo que
  *   tocar y Escape cancela.
  *
- * Regla de encaje: la ficha cae en el lugar más cercano dentro de SNAP_RADIUS,
- * esté libre u ocupado; si estaba ocupado, lo que había vuelve al banco. Si no
- * hay lugar cerca, la ficha vuelve al banco.
+ * Regla de encaje: la ficha cae en el lugar más cercano dentro de su radio de
+ * encaje (SNAP_RADIUS, o la mitad de su ancho si es grande), esté libre u
+ * ocupado; si estaba ocupado, lo que había vuelve al banco. Si no hay lugar
+ * cerca, la ficha vuelve al banco.
  *
- * Las sombras no delatan nada: en reposo todas son el mismo círculo, y con una
- * ficha en la mano todas las libres toman la forma y el tamaño de esa ficha.
+ * Cada ficha se ve en la foto a su tamaño real, con su giro. Las sombras no
+ * delatan nada: en reposo todas son el mismo círculo, y con una ficha en la
+ * mano todas las libres toman la silueta, el tamaño y el giro de esa ficha.
  */
 
 type DragConfig = NonNullable<RunnerQuestion["imageDrag"]>;
@@ -95,7 +97,6 @@ export function ImageDragControl({
 
   const active = dragging ?? selected;
   const activeItem = active ? (items.get(active) ?? null) : null;
-  const px = iconPx(config.iconSize, board.width);
   const dense = board.width > 0 && board.width < 480;
   const zoneNumber = (token: string) => zones.findIndex((z) => z.token === token) + 1;
 
@@ -169,7 +170,7 @@ export function ImageDragControl({
   /** Toque en la foto con una ficha elegida: al lugar más cercano, si hay uno a la mano. */
   function onBoardTap(p: Point) {
     if (!selected) return;
-    const i = nearestZone(zones, p, config.aspect);
+    const i = nearestZone(zones, p, config.aspect, snapRadiusFor(items.get(selected)?.size ?? 0));
     if (i !== null) place(selected, zones[i].token, false);
     else announce("Toca uno de los lugares marcados en la foto");
   }
@@ -183,7 +184,8 @@ export function ImageDragControl({
       rect.top + rect.height / 2,
       board.node.getBoundingClientRect()
     );
-    const i = nearestZone(zones, center, config.aspect);
+    const radius = snapRadiusFor(items.get(String(e.active.id))?.size ?? 0);
+    const i = nearestZone(zones, center, config.aspect, radius);
     return i === null ? null : zones[i].token;
   }
 
@@ -261,7 +263,7 @@ export function ImageDragControl({
                     key="item"
                     item={item}
                     label={`Lugar ${i + 1}: ${labels.get(item.token)}`}
-                    px={px}
+                    boardWidth={board.width}
                     dense={dense}
                     selected={selected}
                     hot={isHot}
@@ -281,7 +283,7 @@ export function ImageDragControl({
                     shape={activeItem}
                     hot={isHot}
                     hoverable={!!selected}
-                    px={px}
+                    boardWidth={board.width}
                     dense={dense}
                     onClick={(e) => onZoneClick(z.token, e)}
                   />
@@ -294,7 +296,7 @@ export function ImageDragControl({
         <ImageBank
           groups={bank}
           labels={labels}
-          px={px}
+          boardWidth={board.width}
           dense={dense}
           selected={selected}
           dragging={dragging}
@@ -308,12 +310,14 @@ export function ImageDragControl({
           createPortal(
             <DragOverlay dropAnimation={null}>
               {dragging && activeItem ? (
-                <ItemFace
-                  item={activeItem}
-                  px={px}
-                  dense={dense}
-                  className="-rotate-4 cursor-grabbing opacity-95 shadow-[0_14px_28px_-8px_rgb(15_23_42/0.45)]"
-                />
+                // La ficha a su tamaño real (en el banco se ve más chica o más grande),
+                // centrada donde estaba lo que se arrastra: ese centro decide dónde cae
+                <div className="flex size-full cursor-grabbing items-center justify-center">
+                  {/* Inclinada sobre su propio giro, con una sombra grande que sigue su silueta */}
+                  <span className="block -rotate-4 opacity-95 drop-shadow-[0_12px_12px_rgb(15_23_42/0.35)]">
+                    <ItemFace item={activeItem} boardWidth={board.width} dense={dense} />
+                  </span>
+                </div>
               ) : null}
             </DragOverlay>,
             document.body

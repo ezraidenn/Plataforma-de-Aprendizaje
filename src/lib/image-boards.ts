@@ -1,12 +1,11 @@
 import {
   PRECISION_RADIUS,
   imageClickHits,
-  type IconSize,
   type ImageClickConfig,
   type ImageDragConfig,
-  type ImageItemView,
   type Point,
 } from "./image-questions";
+import { elementView, type ElementView } from "./image-layout";
 
 /**
  * Tableros que dibujan la solución de una pregunta sobre imagen: los usa la
@@ -20,8 +19,8 @@ export type ReviewBoard =
       kind: "drag";
       image: string;
       aspect: number;
-      iconSize: IconSize;
-      zones: { x: number; y: number; correct: boolean; placed: ImageItemView | null; expected: ImageItemView }[];
+      /** Cada elemento con su tamaño, proporción y giro. */
+      zones: { x: number; y: number; correct: boolean; placed: ElementView | null; expected: ElementView }[];
       /** Archivos de todos los íconos de la pregunta, para numerar «Ícono N» como el alumno. */
       iconFiles: string[];
     }
@@ -42,13 +41,11 @@ type ClickBoard = Extract<ReviewBoard, { kind: "click" }>;
  * puso el alumno en cada lugar), también lo que puso y si acertó.
  */
 export function dragReviewBoard(image: string, config: ImageDragConfig, placed?: (string | undefined)[]): DragBoard {
-  const views = new Map(config.elements.map(({ id, ...view }) => [id, view]));
+  const views = new Map(config.elements.map((e) => [e.id, elementView(e, config.iconSize)]));
   return {
     kind: "drag",
     image,
     aspect: config.aspect,
-    // Preguntas de antes del tamaño por elemento: sin iconSize, se ve como mediano
-    iconSize: config.iconSize ?? "md",
     zones: config.zones.map((z, i) => {
       const put = placed?.[i];
       return {

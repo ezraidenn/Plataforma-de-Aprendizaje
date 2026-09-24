@@ -3,13 +3,13 @@
 import { Check, X } from "lucide-react";
 import { BoardSpot, ImageBoard, ItemFace, SpotArea, useElementWidth } from "@/components/exam/image-board";
 import type { ReviewBoard } from "@/components/student/types";
-import { fileUrl, iconNumbers, iconPx, imageItemName, readingOrder } from "@/lib/image-questions";
+import { fileUrl, iconNumbers, imageItemName, readingOrder } from "@/lib/image-questions";
 import { cn } from "@/lib/utils";
 
 /**
  * Revisión de una pregunta sobre imagen. Arrastrar: «Tu respuesta» (cada lugar
- * con lo que puso el alumno, verde o rojo) y, si no quedó todo bien,
- * «Solución». Señalar: los puntos correctos (verdes si se acertaron, rojos
+ * con lo que puso el alumno, con un contorno verde o rojo) y, si no quedó todo
+ * bien, «Solución». Señalar: los puntos correctos (verdes si se acertaron, rojos
  * punteados si no) con las marcas numeradas del alumno encima. Los lugares y
  * puntos se numeran en orden de lectura, igual que al responder.
  */
@@ -94,8 +94,8 @@ type DragBoard = Extract<ReviewBoard, { kind: "drag" }>;
 type ClickBoard = Extract<ReviewBoard, { kind: "click" }>;
 
 function DragThumb({ board, zones, mine }: { board: DragBoard; zones: DragBoard["zones"]; mine: boolean }) {
+  // Cada elemento a su tamaño en una foto del ancho de la miniatura
   const { ref, width } = useElementWidth<HTMLDivElement>();
-  const px = iconPx(board.iconSize, width);
   return (
     <figure className="space-y-1.5" aria-hidden>
       <figcaption className="text-xs font-semibold text-muted-foreground">{mine ? "Tu respuesta" : "Solución"}</figcaption>
@@ -106,12 +106,7 @@ function DragThumb({ board, zones, mine }: { board: DragBoard; zones: DragBoard[
             <BoardSpot key={i} x={z.x} y={z.y}>
               {item ? (
                 <span className="relative block">
-                  <ItemFace
-                    item={item}
-                    px={px}
-                    dense
-                    className={cn(mine && "ring-2", mine && (z.correct ? "ring-success" : "ring-destructive"))}
-                  />
+                  <ItemFace item={item} boardWidth={width} dense outline={mine ? (z.correct ? "ok" : "bad") : undefined} />
                   {mine && <Verdict ok={z.correct} />}
                 </span>
               ) : (

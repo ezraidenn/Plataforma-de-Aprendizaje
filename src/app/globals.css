@@ -301,6 +301,12 @@
     background-color: color-mix(in srgb, var(--primary) 24%, transparent);
   }
 }
+/* Lo mismo para la silueta de un ícono: late entera (relleno y contorno), porque su fondo va enmascarado */
+@keyframes zone-pulse-shape {
+  50% {
+    opacity: 0.55;
+  }
+}
 
 @layer utilities {
   /* Entrada de secciones/cards: usar en contenedores de página */

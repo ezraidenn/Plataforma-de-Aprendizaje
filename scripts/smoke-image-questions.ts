@@ -394,7 +394,9 @@ async function endToEnd() {
     const pd = preview.find((q) => q.id === qDrag);
     const pc = preview.find((q) => q.id === qClick);
     check("Vista previa: incluye las dos preguntas sobre imagen", preview.length === 2 && !!pd && !!pc);
-    check("Vista previa de arrastrar: foto, proporción y tamaño", pd?.image === photo && pd?.imageDrag?.aspect === 0.75 && pd?.imageDrag?.iconSize === "md");
+    check("Vista previa de arrastrar: foto y proporción", pd?.image === photo && pd?.imageDrag?.aspect === 0.75);
+    check("Vista previa de arrastrar: cada ficha con su tamaño (sin tamaño común)",
+      !!pd?.imageDrag && !("iconSize" in pd.imageDrag) && pd.imageDrag.items.every((it) => typeof it.size === "number"), pd?.imageDrag?.items);
     check("Vista previa de arrastrar: una ficha por copia y un lugar por lugar",
       pd?.imageDrag?.items.length === dragCopies(drag).length && pd?.imageDrag?.zones.length === drag.zones.length, pd?.imageDrag);
     const previewTokens = [...(pd?.imageDrag?.zones ?? []), ...(pd?.imageDrag?.items ?? [])].map((t) => t.token);
@@ -410,6 +412,8 @@ async function endToEnd() {
             z.expected.fileId === want.fileId && z.expected.text === want.text;
         }) &&
         [...sd.iconFiles].sort().join() === [iconExt, iconSal].sort().join(), sd);
+    check("Vista previa de arrastrar: la solución trae cada elemento con tamaño, proporción y giro (sin tamaño común)",
+      !!sd && !("iconSize" in sd) && sd.zones.every((z) => [z.expected.size, z.expected.ratio, z.expected.rotation].every((n) => typeof n === "number")), sd);
     const sc = pc?.solution?.kind === "click" ? pc.solution : null;
     check("Vista previa de señalar: cuántas marcas y la solución con sus puntos y su radio",
       pc?.imageClick?.marks === 2 && !!sc && sc.radius === PRECISION_RADIUS.md && sc.marks.length === 0 &&
@@ -428,7 +432,12 @@ async function endToEnd() {
     check("…ni los puntos correctos", !json.includes("spots") && SPOTS.every((s) => !json.includes(String(s.x)) && !json.includes(String(s.y))));
     check("…ni la configuración", !json.includes("config") && !json.includes("precision"));
     check("Arrastrar: 5 fichas en el banco y 4 lugares", rd.imageDrag?.items.length === 5 && rd.imageDrag?.zones.length === 4, { items: rd.imageDrag?.items.length, zones: rd.imageDrag?.zones.length });
-    check("Arrastrar: lleva la foto, la proporción y el tamaño", rd.image === photo && rd.imageDrag?.aspect === 0.75 && rd.imageDrag?.iconSize === "md");
+    check("Arrastrar: lleva la foto y la proporción, sin tamaño común", rd.image === photo && rd.imageDrag?.aspect === 0.75 && !("iconSize" in rd.imageDrag!));
+    check("Arrastrar: cada ficha trae tamaño, proporción y giro",
+      rd.imageDrag!.items.every((it) => [it.size, it.ratio, it.rotation].every((n) => typeof n === "number" && Number.isFinite(n))), rd.imageDrag?.items);
+    // Pregunta de antes (iconSize "md", sin tamaño por elemento): íconos al mediano, letra por defecto
+    check("Arrastrar: las fichas de una pregunta vieja salen de iconSize",
+      rd.imageDrag!.items.every((it) => it.size === (it.kind === "icon" ? elementSize({ kind: "icon" }, "md") : DEFAULT_TEXT_SIZE) && it.ratio === 1 && it.rotation === 0), rd.imageDrag?.items);
     check("Arrastrar: fichas opacas y distintas", new Set([...rd.imageDrag!.zones, ...rd.imageDrag!.items].map((t) => t.token)).size === 9 &&
       [...rd.imageDrag!.zones, ...rd.imageDrag!.items].every((t) => /^[0-9a-f]{16}$/.test(t.token)));
     check("Arrastrar: los lugares no traen tamaño ni elemento", rd.imageDrag!.zones.every((z) => Object.keys(z).sort().join() === "token,x,y"));

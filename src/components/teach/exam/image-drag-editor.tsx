@@ -19,6 +19,7 @@ import { Input } from "@/components/ui/input";
 import {
   BoardCursor,
   BoardSpot,
+  IconArt,
   ImageBoard,
   ItemFace,
   relToRect,
@@ -42,11 +43,13 @@ import {
   readingNumbers,
   relDistance,
   round4,
+  type IconSize,
   type ImageDragConfig,
   type ImageElement,
   type ImageZone,
   type Point,
 } from "@/lib/image-questions";
+import { elementView } from "@/lib/image-layout";
 import { cn } from "@/lib/utils";
 
 /**
@@ -505,7 +508,8 @@ export function DragEditor({
                   element={element}
                   label={`Lugar ${numbers[i]}: ${nameOf(z.elementId)}`}
                   number={numbers[i]}
-                  px={px}
+                  boardWidth={board.width}
+                  iconSize={config.iconSize}
                   dense={dense}
                   picked={picked === i}
                   lifted={active === `zone:${i}`}
@@ -689,15 +693,14 @@ export function DragEditor({
             {activeElement ? (
               // El fantasma toma el tamaño de lo que se arrastra: la ficha va centrada en él
               <div className="flex size-full items-center justify-center">
-                <ItemFace
-                  item={activeElement}
-                  px={px}
-                  dense={dense}
+                <span
                   className={cn(
-                    "cursor-grabbing shadow-[0_14px_28px_-8px_rgb(15_23_42/0.45)] transition-opacity",
+                    "block cursor-grabbing drop-shadow-[0_12px_12px_rgb(15_23_42/0.35)] transition-opacity",
                     removing ? "opacity-40" : "-rotate-4 opacity-95"
                   )}
-                />
+                >
+                  <ItemFace item={elementView(activeElement, config.iconSize)} boardWidth={board.width} dense={dense} />
+                </span>
               </div>
             ) : null}
           </DragOverlay>,
@@ -757,7 +760,7 @@ function ElementRow({
         className="flex min-w-0 flex-1 cursor-grab items-center gap-2 rounded-lg p-0.5 text-left outline-none focus-visible:ring-4 focus-visible:ring-primary/40 active:cursor-grabbing"
       >
         {element.kind === "icon" ? (
-          <ItemFace item={element} px={34} className="shrink-0" />
+          <IconArt fileId={element.fileId} w={34} h={34} className="shrink-0" />
         ) : (
           <span
             aria-hidden
@@ -796,7 +799,8 @@ function PlacedZone({
   element,
   label,
   number,
-  px,
+  boardWidth,
+  iconSize,
   dense,
   picked,
   lifted,
@@ -809,7 +813,8 @@ function PlacedZone({
   element: ImageElement;
   label: string;
   number: number;
-  px: number;
+  boardWidth: number;
+  iconSize?: IconSize;
   dense: boolean;
   picked: boolean;
   /** Va en la mano: se ve el fantasma, y el botón sigue montado (invisible) para no cortar el arrastre. */
@@ -838,7 +843,7 @@ function PlacedZone({
           picked && "ring-2 ring-primary ring-offset-2 ring-offset-background"
         )}
       >
-        <ItemFace item={element} px={px} dense={dense} />
+        <ItemFace item={elementView(element, iconSize)} boardWidth={boardWidth} dense={dense} />
         <span
           aria-hidden
           className="absolute -right-2 -top-2 flex size-[18px] items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground ring-2 ring-white"

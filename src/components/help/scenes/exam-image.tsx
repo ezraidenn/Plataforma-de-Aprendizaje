@@ -1,7 +1,8 @@
 "use client";
 
-import { BoardSpot, ItemFace, SpotArea, ZoneShadow } from "@/components/exam/image-board";
+import { BoardSpot, LabelPill, SpotArea, ZoneShadow } from "@/components/exam/image-board";
 import { PRECISION_RADIUS } from "@/lib/image-questions";
+import type { ElementView } from "@/lib/image-layout";
 import { cn } from "@/lib/utils";
 import { useSceneClock } from "../use-scene-clock";
 import { MiniBadge } from "../mini/basics";
@@ -75,6 +76,9 @@ const BANK_ROW_Y = 39;
 const BANK_Y = (DRAG_PHOTO_H + BANK_GAP + BANK_ROW_Y) / DRAG_PHOTO_H;
 const BANK_X = [0.12, 0.34, 0.58, 0.82];
 const ICON_PX = 30;
+const LABEL_PX = 11;
+/** Ancho de referencia del plano: los tamaños de la ficha en la mano son relativos a él, como en una pregunta. */
+const PLAN_W = 320;
 
 function ExtinguisherArt() {
   return (
@@ -97,13 +101,24 @@ function FirstAidArt() {
   );
 }
 
+/**
+ * Lo que se toma en la mano, para las sombras. Los íconos de la escena no son
+ * archivos: su sombra toma la silueta de la tarjeta.
+ */
+function heldShape(index: number): ElementView {
+  const piece = DRAG_PIECES[index];
+  return piece.kind === "text"
+    ? { kind: "text", text: piece.label, size: LABEL_PX / PLAN_W, ratio: 1, rotation: 0 }
+    : { kind: "icon", size: ICON_PX / PLAN_W, ratio: 1, rotation: 0 };
+}
+
 /** Dibujo de cada ícono (las fichas de texto no tienen). */
 const ICON_ART = [<ExtinguisherArt key="e" />, null, <FirstAidArt key="f" />, null];
 
-/** Cara de la ficha: ícono en tarjeta blanca (como ItemFace) o la etiqueta real. */
+/** Cara de la ficha: ícono en tarjeta blanca o la etiqueta real. */
 function PieceFace({ index, className }: { index: number; className?: string }) {
   const piece = DRAG_PIECES[index];
-  if (piece.kind === "text") return <ItemFace item={{ kind: "text", text: piece.label }} px={ICON_PX} dense className={className} />;
+  if (piece.kind === "text") return <LabelPill text={piece.label} fontPx={LABEL_PX} dense className={className} />;
   return (
     <span
       className={cn("flex items-center justify-center rounded-[12px] border bg-white shadow-sm", className)}
@@ -122,7 +137,7 @@ function PieceFace({ index, className }: { index: number; className?: string }) 
 export function ImageDragScene() {
   const phase = useSceneClock(IMAGE_DRAG_CYCLE_MS);
   const s = imageDragStory(phase);
-  const held = s.held !== null ? DRAG_PIECES[s.held] : null;
+  const held = s.held !== null ? heldShape(s.held) : null;
   const percent = Math.round((s.ok / s.total) * 100);
 
   return (
@@ -141,9 +156,9 @@ export function ImageDragScene() {
                   <span className="block size-[34px] animate-in fade-in rounded-full border-2 border-dashed border-red-500 bg-red-500/10 duration-300" />
                 ) : (
                   <ZoneShadow
-                    shape={held ? (held.kind === "text" ? { kind: "text", text: held.label } : { kind: "icon" }) : null}
+                    shape={held}
                     hot={s.hot === z}
-                    px={ICON_PX}
+                    boardWidth={PLAN_W}
                     dense
                     tabIndex={-1}
                     className="pointer-events-none"

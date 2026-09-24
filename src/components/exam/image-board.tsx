@@ -11,8 +11,8 @@ import {
   type Ref,
 } from "react";
 import { Crosshair, Plus } from "lucide-react";
-import type { ImageItemView } from "@/components/student/types";
 import { clamp01, fileUrl, type Point } from "@/lib/image-questions";
+import { iconBoxPx, textPx, type ElementView } from "@/lib/image-layout";
 import { cn } from "@/lib/utils";
 
 /**
@@ -180,115 +180,299 @@ export function SpotArea({ x, y, radius, missed }: { x: number; y: number; radiu
   );
 }
 
-/**
- * Texto y relleno de las etiquetas. La ficha lleva borde de 1 px y la sombra
- * de 2 px: con estos rellenos las dos miden lo mismo (y al menos 24 px de alto).
- */
-const labelText = (dense: boolean | undefined) =>
-  cn("max-w-48 text-center font-semibold text-balance", dense ? "text-[11px] leading-4" : "text-sm leading-5");
-const labelPad = (dense: boolean | undefined) => (dense ? "px-2 py-[3px]" : "px-3 py-1");
-const shadowPad = (dense: boolean | undefined) => (dense ? "px-[7px] py-0.5" : "px-[11px] py-[3px]");
+const rotate = (deg: number) => (deg ? `rotate(${deg}deg)` : undefined);
 
-/** Cara de una ficha: ícono en tarjeta blanca o etiqueta de texto. */
-export function ItemFace({
-  item,
-  px,
+/** Sombra suave de un dibujo: drop-shadow sigue su silueta (respeta la transparencia del PNG). */
+const SOFT_SHADOW = "drop-shadow(0 1px 2px rgb(0 0 0 / 0.45))";
+
+/** Contorno que sigue la silueta: la misma sombra, sin desenfoque, corrida a los cuatro lados. */
+function contour(px: number, color: string): string {
+  return [`${px}px 0`, `${-px}px 0`, `0 ${px}px`, `0 ${-px}px`].map((o) => `drop-shadow(${o} 0 ${color})`).join(" ");
+}
+
+/** Revisión: contorno verde (bien) o rojo (mal) alrededor del dibujo, más la sombra suave. */
+const OUTLINE_FILTER = {
+  ok: `${contour(2, "var(--color-success)")} ${SOFT_SHADOW}`,
+  bad: `${contour(2, "var(--color-destructive)")} ${SOFT_SHADOW}`,
+};
+
+/**
+ * Un ícono tal cual, sin tarjeta: el dibujo en una caja de w×h px. La sombra
+ * va en la caja y el giro en el dibujo, así la sombra cae siempre hacia abajo.
+ */
+export function IconArt({
+  fileId,
+  w,
+  h,
+  rotation = 0,
+  filter = SOFT_SHADOW,
+  className,
+}: {
+  fileId?: string;
+  w: number;
+  h: number;
+  rotation?: number;
+  filter?: string;
+  className?: string;
+}) {
+  return (
+    <span className={cn("block", className)} style={{ width: w, height: h, filter }}>
+      {fileId && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={fileUrl(fileId)}
+          alt=""
+          draggable={false}
+          className="pointer-events-none size-full select-none object-contain"
+          style={{ transform: rotate(rotation) }}
+        />
+      )}
+    </span>
+  );
+}
+
+/** Alto de línea de las etiquetas, proporcional a la letra. */
+const LABEL_LEADING = 1.45;
+const LABEL_TEXT = "text-center font-semibold text-balance";
+/**
+ * Relleno de las etiquetas en `em` (crece con la letra). La ficha lleva borde
+ * de 1 px y la sombra de 2 px: la sombra quita ese píxel y las dos miden lo
+ * mismo (con letra de 11 px, al menos 24 px de alto).
+ */
+function labelPad(dense: boolean | undefined, border: 1 | 2): string {
+  const less = border === 2 ? " - 1px" : "";
+  return `calc(0.28em${less}) calc(${dense ? 0.7 : 0.85}em${less})`;
+}
+
+/** Etiqueta de texto: la píldora con su tamaño de letra, girada. */
+export function LabelPill({
+  text,
+  fontPx,
+  rotation = 0,
   dense,
   className,
 }: {
-  item: ImageItemView;
-  /** Lado del ícono. */
-  px: number;
-  /** Etiquetas más chicas (tablero angosto o miniatura). */
+  text: string;
+  fontPx: number;
+  rotation?: number;
   dense?: boolean;
   className?: string;
 }) {
+  return (
+    <span
+      className={cn(LABEL_TEXT, "block max-w-[14em] rounded-full border bg-card text-card-foreground shadow-sm", className)}
+      style={{ fontSize: fontPx, lineHeight: LABEL_LEADING, padding: labelPad(dense, 1), transform: rotate(rotation) }}
+    >
+      {text}
+    </span>
+  );
+}
+
+/**
+ * Cara de una ficha a su tamaño real en un tablero de `boardWidth` px: el
+ * ícono puro (solo el dibujo, con una sombra suave que sigue su silueta) o la
+ * etiqueta de texto, con su giro. En la revisión, `outline` la marca bien o mal.
+ */
+export function ItemFace({
+  item,
+  boardWidth,
+  dense,
+  className,
+  outline,
+}: {
+  item: ElementView;
+  /** Ancho del tablero en px (0 antes de medirlo). */
+  boardWidth: number;
+  /** Etiquetas con rellenos más justos (tablero angosto o miniatura). */
+  dense?: boolean;
+  className?: string;
+  outline?: "ok" | "bad";
+}) {
   if (item.kind === "icon") {
+    const { w, h } = iconBoxPx(item.size, item.ratio, boardWidth);
     return (
-      <span
-        className={cn("flex items-center justify-center rounded-[12px] border bg-white shadow-sm", className)}
-        style={{ width: px, height: px }}
-      >
-        {item.fileId && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={fileUrl(item.fileId)}
-            alt=""
-            draggable={false}
-            className="pointer-events-none size-full select-none object-contain p-[14%]"
-          />
-        )}
-      </span>
+      <IconArt
+        fileId={item.fileId}
+        w={w}
+        h={h}
+        rotation={item.rotation}
+        filter={outline ? OUTLINE_FILTER[outline] : undefined}
+        className={className}
+      />
     );
   }
   return (
+    <LabelPill
+      text={item.text ?? ""}
+      fontPx={textPx(item.size, boardWidth)}
+      rotation={item.rotation}
+      dense={dense}
+      className={cn(outline && "ring-2", outline === "ok" ? "ring-success" : outline === "bad" && "ring-destructive", className)}
+    />
+  );
+}
+
+/** La silueta de un dibujo como máscara, contenida y centrada igual que el <img>. */
+function maskStyle(mask: string): CSSProperties {
+  return {
+    maskImage: mask,
+    WebkitMaskImage: mask,
+    maskSize: "contain",
+    WebkitMaskSize: "contain",
+    maskRepeat: "no-repeat",
+    WebkitMaskRepeat: "no-repeat",
+    maskPosition: "center",
+    WebkitMaskPosition: "center",
+  };
+}
+
+/** Ícono sin archivo (escenas de ayuda): la silueta de una tarjeta redondeada. */
+const CARD_MASK = `url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><rect width='10' height='10' rx='3'/></svg>")`;
+
+const PRIMARY = "var(--color-primary)";
+/** Contorno de la silueta: fino mientras espera; donde caería la ficha, más grueso y con halo. */
+const RING_FILTER = {
+  idle: contour(1.5, PRIMARY),
+  hot: `${contour(2, PRIMARY)} drop-shadow(0 0 6px color-mix(in srgb, ${PRIMARY} 80%, transparent))`,
+};
+
+/**
+ * Contorno continuo de una silueta: la silueta opaca engordada con sombras
+ * (`filter`) y sin su interior (máscara inversa: la silueta excluida de un
+ * rectángulo lleno), para que el relleno translúcido siga viéndose. El margen
+ * de 12 px deja lugar al contorno y al halo fuera del botón.
+ */
+function SilhouetteRing({ mask, hot, className }: { mask: string; hot?: boolean; className?: string }) {
+  const inverse = `${mask}, linear-gradient(#000 0 0)`;
+  return (
     <span
-      className={cn(
-        labelText(dense),
-        labelPad(dense),
-        "block rounded-full border bg-card text-card-foreground shadow-sm",
-        className
-      )}
+      className={cn("absolute -inset-3 p-3 transition-opacity duration-150 motion-reduce:transition-none", className)}
+      style={{
+        filter: hot ? RING_FILTER.hot : RING_FILTER.idle,
+        maskImage: inverse,
+        WebkitMaskImage: inverse,
+        maskOrigin: "content-box, border-box",
+        WebkitMaskOrigin: "content-box, border-box",
+        maskSize: "contain, 100% 100%",
+        WebkitMaskSize: "contain, 100% 100%",
+        maskRepeat: "no-repeat",
+        WebkitMaskRepeat: "no-repeat",
+        maskPosition: "center",
+        WebkitMaskPosition: "center",
+        maskComposite: "exclude",
+        WebkitMaskComposite: "xor",
+      }}
     >
-      {item.text}
+      <span className="block size-full bg-primary" style={maskStyle(mask)} />
     </span>
   );
 }
 
 /**
  * Aspecto de un lugar libre (la «sombra»). Sin ficha activa, el mismo círculo
- * punteado para todos; con una ficha activa, la forma y el tamaño de esa
- * ficha, igual en todos. Qué hace al tocarla lo decide quien la usa.
+ * punteado para todos; con una ficha activa, la forma, el tamaño y el giro de
+ * esa ficha, igual en todos. Qué hace al tocarla lo decide quien la usa.
+ *
+ * Con un ícono, la sombra es su silueta: una máscara con el mismo PNG (un JPG
+ * da su rectángulo). Todas las libres usan la misma, así que no delata nada.
  */
 export function ZoneShadow({
   shape,
   hot,
   hoverable,
-  px,
+  boardWidth,
   dense,
   className,
   style,
   ...rest
 }: {
   /** Ficha activa (arrastrada o elegida), o null en reposo. */
-  shape: ImageItemView | null;
+  shape: ElementView | null;
   /** Es donde caería la ficha si se suelta ahora. */
   hot?: boolean;
   /** Ficha elegida con un toque: el lugar bajo el cursor o con el foco se ilumina. */
   hoverable?: boolean;
-  px: number;
+  /** Ancho del tablero en px (0 antes de medirlo). */
+  boardWidth: number;
   dense?: boolean;
 } & ButtonHTMLAttributes<HTMLButtonElement>) {
+  let sized: CSSProperties | undefined;
+  let mask: string | null = null;
+  if (shape?.kind === "icon") {
+    const { w, h } = iconBoxPx(shape.size, shape.ratio, boardWidth);
+    sized = { width: w, height: h, transform: rotate(shape.rotation) };
+    mask = shape.fileId ? `url("${fileUrl(shape.fileId)}")` : CARD_MASK;
+  } else if (shape) {
+    sized = {
+      fontSize: textPx(shape.size, boardWidth),
+      lineHeight: LABEL_LEADING,
+      padding: labelPad(dense, 2),
+      transform: rotate(shape.rotation),
+    };
+  }
   return (
     <button
       type="button"
       {...rest}
       className={cn(
-        "flex items-center justify-center border-2 border-dashed outline-none",
+        "group/zone relative flex items-center justify-center",
         "transition-[width,height,border-radius,background-color,border-color,box-shadow] duration-150 motion-reduce:transition-none",
-        "focus-visible:ring-4 focus-visible:ring-primary/40",
-        // 17 px y no rounded-full: así la esquina se interpola hasta los 12 px del ícono
-        !shape && "size-[34px] rounded-[17px] border-muted-foreground bg-muted-foreground/12",
-        shape && "border-primary bg-primary/14",
-        shape?.kind === "icon" && "rounded-[12px]",
-        shape?.kind === "text" && cn("max-w-48 rounded-full", shadowPad(dense)),
-        shape && !hot && "motion-safe:animate-[zone-pulse_1.4s_ease-in-out_infinite]",
-        shape &&
-          hoverable &&
-          "hover:animate-none! hover:border-solid hover:bg-primary/30 hover:ring-4 hover:ring-primary/20 focus-visible:animate-none! focus-visible:border-solid focus-visible:bg-primary/30",
-        hot && "border-solid bg-primary/30 ring-4 ring-primary/20",
+        // El foco del teclado va en el botón, no en la silueta: se ve con cualquier forma
+        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
+        // 17 px y no rounded-full: así la esquina se interpola al cambiar de forma
+        !shape && "size-[34px] rounded-[17px] border-2 border-dashed border-muted-foreground bg-muted-foreground/12",
+        shape?.kind === "icon" && "rounded-md",
+        shape?.kind === "text" &&
+          cn(
+            "max-w-[14em] rounded-full border-2 border-dashed border-primary bg-primary/14",
+            !hot && "motion-safe:animate-[zone-pulse_1.4s_ease-in-out_infinite]",
+            hoverable &&
+              "hover:animate-none! hover:border-solid hover:bg-primary/30 hover:ring-4 hover:ring-primary/20 focus-visible:animate-none! focus-visible:border-solid focus-visible:bg-primary/30",
+            hot && "border-solid bg-primary/30 ring-4 ring-primary/20"
+          ),
         className
       )}
-      style={shape?.kind === "icon" ? { width: px, height: px, ...style } : style}
+      style={{ ...sized, ...style }}
     >
       {!shape ? (
         <Plus className="size-3.5 text-muted-foreground" strokeWidth={3} aria-hidden />
-      ) : shape.kind === "text" ? (
+      ) : mask ? (
+        // Relleno translúcido y contorno con la silueta; late todo junto
+        <span
+          aria-hidden
+          className={cn(
+            "absolute inset-0",
+            !hot && "motion-safe:animate-[zone-pulse-shape_1.4s_ease-in-out_infinite]",
+            hoverable && "group-hover/zone:animate-none! group-focus-visible/zone:animate-none!"
+          )}
+        >
+          <span
+            className={cn(
+              "absolute inset-0 bg-primary/30 transition-colors duration-150 motion-reduce:transition-none",
+              hot && "bg-primary/60",
+              hoverable && "group-hover/zone:bg-primary/60 group-focus-visible/zone:bg-primary/60"
+            )}
+            style={maskStyle(mask)}
+          />
+          <SilhouetteRing
+            mask={mask}
+            className={cn(hot && "opacity-0", hoverable && "group-hover/zone:opacity-0 group-focus-visible/zone:opacity-0")}
+          />
+          <SilhouetteRing
+            mask={mask}
+            hot
+            className={cn(
+              !hot && "opacity-0",
+              hoverable && "group-hover/zone:opacity-100 group-focus-visible/zone:opacity-100"
+            )}
+          />
+        </span>
+      ) : (
         // La misma etiqueta, invisible: la sombra mide exactamente lo que la ficha
-        <span aria-hidden className={cn(labelText(dense), "invisible block")}>
+        <span aria-hidden className={cn(LABEL_TEXT, "invisible block")}>
           {shape.text}
         </span>
-      ) : null}
+      )}
     </button>
   );
 }
