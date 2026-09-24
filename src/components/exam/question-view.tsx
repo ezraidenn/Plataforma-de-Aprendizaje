@@ -12,8 +12,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { ImageClickControl } from "@/components/student/image-click-control";
+import { ImageDragControl } from "@/components/student/image-drag-control";
 import { OrderingControl } from "@/components/student/ordering-control";
 import type { RunnerQuestion } from "@/components/student/types";
+import { parseClickAnswer, parseDragAnswer } from "@/lib/image-questions";
 
 /**
  * Una pregunta tal como la ve el alumno: enunciado, puntos y el control de su
@@ -74,10 +77,24 @@ export function isAnswered(q: RunnerQuestion, a: AnswerState | undefined): boole
     case "ordering":
       // Cuenta como respondida cuando el alumno ya movió algo
       return parseOrdering(a.answerText).length === (q.ordering?.steps.length ?? -1);
-    case "image_drag":
-    case "image_click":
-      // Las preguntas sobre imagen llegan con su propio control, que dirá cuándo están completas
-      return false;
+    case "image_drag": {
+      // Todos los lugares con una ficha que existe, cada ficha en un solo lugar
+      const drag = q.imageDrag;
+      if (!drag || drag.zones.length === 0) return false;
+      const map = parseDragAnswer(a.answerText);
+      const valid = new Set(drag.items.map((it) => it.token));
+      const used = new Set<string>();
+      return drag.zones.every((z) => {
+        const t = map[z.token];
+        if (!t || !valid.has(t) || used.has(t)) return false;
+        used.add(t);
+        return true;
+      });
+    }
+    case "image_click": {
+      const marks = q.imageClick?.marks ?? 0;
+      return marks > 0 && parseClickAnswer(a.answerText, marks).length === marks;
+    }
   }
 }
 
@@ -228,7 +245,40 @@ export function QuestionControls({
           onChange={(order) => onChange({ answerText: JSON.stringify(order) })}
         />
       );
+
+    case "image_drag":
+      return q.image && q.imageDrag ? (
+        <ImageDragControl
+          image={q.image}
+          config={q.imageDrag}
+          value={parseDragAnswer(answer.answerText)}
+          onChange={(placement) => onChange({ answerText: JSON.stringify(placement) })}
+        />
+      ) : (
+        <ImageUnavailable />
+      );
+
+    case "image_click":
+      return q.image && q.imageClick ? (
+        <ImageClickControl
+          image={q.image}
+          config={q.imageClick}
+          value={parseClickAnswer(answer.answerText, q.imageClick.marks)}
+          onChange={(marks) => onChange({ answerText: JSON.stringify(marks) })}
+        />
+      ) : (
+        <ImageUnavailable />
+      );
   }
+}
+
+/** Pregunta sobre imagen a la que le falta la foto o su configuración. */
+function ImageUnavailable() {
+  return (
+    <p className="rounded-lg border border-dashed px-3 py-2 text-sm text-muted-foreground">
+      Esta pregunta no se puede mostrar. Avísale a tu instructor.
+    </p>
+  );
 }
 
 /** Enunciado, puntos y control: el cuerpo de una pregunta del examen. */

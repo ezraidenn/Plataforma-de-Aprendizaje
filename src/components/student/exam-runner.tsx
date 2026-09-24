@@ -39,6 +39,7 @@ import {
   renderBold,
   type AnswerState,
 } from "@/components/exam/question-view";
+import { ImageReview } from "@/components/exam/image-review";
 import {
   saveAnswerAction,
   startAttemptAction,
@@ -683,8 +684,16 @@ export function ExamRunner({
                         <span className="text-muted-foreground">Tu respuesta:</span>{" "}
                         {entry.yourAnswer}
                       </p>
+                      {entry.board && (
+                        // La miniatura «Solución» ya muestra la respuesta correcta
+                        <ImageReview
+                          board={entry.board}
+                          showSolution={entry.result !== "correct"}
+                        />
+                      )}
                       {entry.result !== "correct" &&
                         entry.result !== "pending" &&
+                        !entry.board &&
                         entry.correctAnswer && (
                           <p className="text-sm">
                             <span className="text-muted-foreground">

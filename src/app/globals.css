@@ -294,6 +294,14 @@
   }
 }
 
+/* Sombras de «arrastrar a la imagen» con una ficha en la mano: late el fondo
+   (se usa con motion-safe:, así respeta reduced-motion) */
+@keyframes zone-pulse {
+  50% {
+    background-color: color-mix(in srgb, var(--primary) 24%, transparent);
+  }
+}
+
 @layer utilities {
   /* Entrada de secciones/cards: usar en contenedores de página */
   .anim-rise {
