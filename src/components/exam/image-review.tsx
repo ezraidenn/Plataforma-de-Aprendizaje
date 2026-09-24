@@ -1,22 +1,42 @@
 "use client";
 
 import { Check, X } from "lucide-react";
-import { BoardSpot, ImageBoard, ItemFace, fileUrl, iconPx, useElementWidth } from "@/components/exam/image-board";
+import { BoardSpot, ImageBoard, ItemFace, useElementWidth } from "@/components/exam/image-board";
 import type { ReviewBoard } from "@/components/student/types";
+import { fileUrl, iconNumbers, iconPx, imageItemName, readingOrder } from "@/lib/image-questions";
 import { cn } from "@/lib/utils";
 
 /**
  * Revisión de una pregunta sobre imagen. Arrastrar: «Tu respuesta» (cada lugar
  * con lo que puso el alumno, verde o rojo) y, si no quedó todo bien,
  * «Solución». Señalar: los puntos correctos (verdes si se acertaron, rojos
- * punteados si no) con las marcas numeradas del alumno encima.
+ * punteados si no) con las marcas numeradas del alumno encima. Los lugares y
+ * puntos se numeran en orden de lectura, igual que al responder.
  */
 export function ImageReview({ board, showSolution = true }: { board: ReviewBoard; showSolution?: boolean }) {
   if (board.kind === "click") return <ClickReview board={board} />;
+  const zones = readingOrder(board.zones, board.aspect);
+  const icons = iconNumbers(board.iconFiles);
   return (
     <div className={GRID}>
-      <DragThumb board={board} mine />
-      {showSolution && <DragThumb board={board} mine={false} />}
+      <DragThumb board={board} zones={zones} mine />
+      {showSolution && <DragThumb board={board} zones={zones} mine={false} />}
+      {/* Lo mismo en texto, para quien no ve las miniaturas */}
+      <ul className="sr-only">
+        {zones.map((z, i) => {
+          const expected = imageItemName(z.expected, icons);
+          return (
+            <li key={i}>
+              Lugar {i + 1}:{" "}
+              {z.correct
+                ? `correcto, ${expected}`
+                : z.placed
+                  ? `pusiste ${imageItemName(z.placed, icons)}; iba ${expected}`
+                  : `vacío; iba ${expected}`}
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }
@@ -27,15 +47,14 @@ const GRID = "grid gap-3 overflow-x-clip [overflow-clip-margin:12px] sm:grid-col
 type DragBoard = Extract<ReviewBoard, { kind: "drag" }>;
 type ClickBoard = Extract<ReviewBoard, { kind: "click" }>;
 
-function DragThumb({ board, mine }: { board: DragBoard; mine: boolean }) {
+function DragThumb({ board, zones, mine }: { board: DragBoard; zones: DragBoard["zones"]; mine: boolean }) {
   const { ref, width } = useElementWidth<HTMLDivElement>();
   const px = iconPx(board.iconSize, width);
-  const title = mine ? "Tu respuesta" : "Solución";
   return (
-    <figure className="space-y-1.5">
-      <figcaption className="text-xs font-semibold text-muted-foreground">{title}</figcaption>
-      <ImageBoard ref={ref} imageUrl={fileUrl(board.image)} aspect={board.aspect} aria-hidden>
-        {board.zones.map((z, i) => {
+    <figure className="space-y-1.5" aria-hidden>
+      <figcaption className="text-xs font-semibold text-muted-foreground">{mine ? "Tu respuesta" : "Solución"}</figcaption>
+      <ImageBoard ref={ref} imageUrl={fileUrl(board.image)} aspect={board.aspect}>
+        {zones.map((z, i) => {
           const item = mine ? z.placed : z.expected;
           return (
             <BoardSpot key={i} x={z.x} y={z.y}>
@@ -57,15 +76,6 @@ function DragThumb({ board, mine }: { board: DragBoard; mine: boolean }) {
           );
         })}
       </ImageBoard>
-      {mine && (
-        <ul className="sr-only">
-          {board.zones.map((z, i) => (
-            <li key={i}>
-              Lugar {i + 1}: {z.correct ? "correcto" : z.placed ? "incorrecto" : "vacío"}
-            </li>
-          ))}
-        </ul>
-      )}
     </figure>
   );
 }
@@ -86,12 +96,13 @@ function Verdict({ ok }: { ok: boolean }) {
 }
 
 function ClickReview({ board }: { board: ClickBoard }) {
+  const spots = readingOrder(board.spots, board.aspect);
   return (
     <div className={GRID}>
-      <figure className="space-y-1.5">
+      <figure className="space-y-1.5" aria-hidden>
         <figcaption className="text-xs font-semibold text-muted-foreground">Tu respuesta y la solución</figcaption>
-        <ImageBoard imageUrl={fileUrl(board.image)} aspect={board.aspect} aria-hidden>
-          {board.spots.map((s, i) => (
+        <ImageBoard imageUrl={fileUrl(board.image)} aspect={board.aspect}>
+          {spots.map((s, i) => (
             <BoardSpot
               key={`p${i}`}
               x={s.x}
@@ -113,21 +124,29 @@ function ClickReview({ board }: { board: ClickBoard }) {
           ))}
         </ImageBoard>
       </figure>
-      <ul className="space-y-1.5 self-center text-xs text-muted-foreground">
+      <ul className="space-y-1.5 self-center text-xs text-muted-foreground" aria-hidden>
         <li className="flex items-center gap-2">
-          <span className="size-3.5 shrink-0 rounded-full border-2 border-success bg-success/20" aria-hidden />
+          <span className="size-3.5 shrink-0 rounded-full border-2 border-success bg-success/20" />
           Punto que señalaste bien
         </li>
         <li className="flex items-center gap-2">
-          <span
-            className="size-3.5 shrink-0 rounded-full border-2 border-dashed border-destructive bg-destructive/10"
-            aria-hidden
-          />
+          <span className="size-3.5 shrink-0 rounded-full border-2 border-dashed border-destructive bg-destructive/10" />
           Punto que faltó
         </li>
         <li className="flex items-center gap-2">
-          <span className="size-3.5 shrink-0 rounded-full bg-primary" aria-hidden />
+          <span className="size-3.5 shrink-0 rounded-full bg-primary" />
           Tus marcas, en el orden en que las pusiste
+        </li>
+      </ul>
+      {/* Lo mismo en texto, para quien no ve la miniatura */}
+      <ul className="sr-only">
+        {spots.map((s, i) => (
+          <li key={i}>
+            Punto {i + 1}: {s.hit ? "acertado" : "no señalado"}
+          </li>
+        ))}
+        <li>
+          Pusiste {board.marks.length} de {spots.length} {spots.length === 1 ? "marca" : "marcas"}
         </li>
       </ul>
     </div>

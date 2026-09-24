@@ -1,10 +1,11 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Crosshair } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { BoardSpot, ImageBoard, fileUrl } from "@/components/exam/image-board";
-import type { Point } from "@/lib/image-questions";
+import { BoardSpot, ImageBoard } from "@/components/exam/image-board";
+import { LiveRegion, useAnnouncer } from "@/components/exam/live-region";
+import { clamp01, fileUrl, parseClickAnswer, type Point } from "@/lib/image-questions";
 import { cn } from "@/lib/utils";
 
 /**
@@ -14,31 +15,34 @@ import { cn } from "@/lib/utils";
  * marca, y Supr borra la marca enfocada.
  */
 
-const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
 /** Cuatro decimales bastan (una décima de píxel en una foto de mil). */
 const round = (n: number) => Math.round(n * 10_000) / 10_000;
+const ARROWS = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"];
 
 export function ImageClickControl({
   image,
   config,
-  value,
+  answerText,
   onChange,
 }: {
   image: string;
   config: { aspect: number; marks: number };
-  value: Point[];
+  /** Lo guardado: `[{ x, y }, …]` en JSON. */
+  answerText: string;
   onChange: (marks: Point[]) => void;
 }) {
   const max = config.marks;
+  const value = useMemo(() => parseClickAnswer(answerText, max), [answerText, max]);
   const full = value.length >= max;
   const [cursor, setCursor] = useState<Point>({ x: 0.5, y: 0.5 });
-  const [live, setLive] = useState({ text: "", n: 0 });
   /** Quiso poner una marca de más: se le dice también a la vista. */
   const [blocked, setBlocked] = useState(false);
+  const { live, announce } = useAnnouncer();
   const boardRef = useRef<HTMLDivElement>(null);
-  const announce = (text: string) => setLive((l) => ({ text, n: l.n + 1 }));
 
   function add(p: Point) {
+    // La mira sigue al último clic: si luego usa el teclado, parte de ahí
+    setCursor(p);
     if (full) {
       setBlocked(true);
       announce(`Ya pusiste ${max === 1 ? "tu marca" : `tus ${max} marcas`}. Quita una para moverla`);
@@ -93,7 +97,7 @@ export function ImageClickControl({
         aria-label="Foto: mueve la mira con las flechas y pulsa Enter para poner una marca"
         onKeyDown={onKeyDown}
         className={cn(
-          "group outline-none focus-visible:ring-4 focus-visible:ring-primary/40",
+          "group touch-manipulation outline-none focus-visible:ring-4 focus-visible:ring-primary/40",
           full ? "cursor-default" : "cursor-crosshair"
         )}
       >
@@ -117,6 +121,8 @@ export function ImageClickControl({
                   e.preventDefault();
                   remove(i, true);
                 }
+                // Tampoco aquí las flechas cambian de pregunta
+                if (ARROWS.includes(e.key)) e.stopPropagation();
               }}
               className="flex size-[26px] items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground shadow-md ring-2 ring-white outline-none transition-transform duration-150 hover:scale-110 focus-visible:ring-4 focus-visible:ring-primary/40 motion-reduce:transition-none"
             >
@@ -140,16 +146,14 @@ export function ImageClickControl({
             setBlocked(false);
             onChange([]);
             announce("Quitaste todas las marcas");
+            // El botón queda deshabilitado: el foco pasa a la foto para seguir marcando
+            boardRef.current?.focus();
           }}
         >
           Quitar todas
         </Button>
       </div>
-      <p className="sr-only" role="status" aria-live="polite">
-        {live.text}
-        {/* Un carácter invisible alterno para que se repita el mismo aviso */}
-        {live.n % 2 ? String.fromCharCode(0x200b) : ""}
-      </p>
+      <LiveRegion live={live} />
     </div>
   );
 }

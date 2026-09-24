@@ -36,9 +36,49 @@ export const SNAP_RADIUS = 0.08;
 const unit = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= 1;
 const validAspect = (a: unknown) => typeof a === "number" && Number.isFinite(a) && a >= 0.1 && a <= 10;
 
+export const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
+
+/** URL de un archivo subido (la foto o un ícono). */
+export const fileUrl = (fileId: string) => `/api/files/${fileId}`;
+
+/** Lado de los íconos en un tablero de este ancho: el elegido, sin pasar del 12 % del ancho (celular). */
+export function iconPx(size: IconSize, boardWidth: number): number {
+  const px = ICON_PX[size];
+  return boardWidth > 0 ? Math.max(24, Math.min(px, Math.round(boardWidth * 0.12))) : px;
+}
+
 /** Distancia entre dos puntos relativos, en fracciones del ancho de la foto. */
 export function relDistance(a: Point, b: Point, aspect: number): number {
   return Math.hypot(a.x - b.x, (a.y - b.y) * aspect);
+}
+
+/**
+ * Orden de lectura de lugares o puntos: por filas de arriba abajo y, en cada
+ * fila, de izquierda a derecha. Dos están en la misma fila si su altura no
+ * difiere más de medio radio de encaje. Da la numeración «Lugar N» del alumno
+ * y de la revisión, así que no depende del orden en que lleguen.
+ */
+export function readingOrder<T extends Point>(points: T[], aspect: number): T[] {
+  const rows: T[][] = [];
+  for (const p of [...points].sort((a, b) => a.y - b.y || a.x - b.x)) {
+    const row = rows[rows.length - 1];
+    if (row && (p.y - row[0].y) * aspect <= SNAP_RADIUS / 2) row.push(p);
+    else rows.push([p]);
+  }
+  return rows.flatMap((row) => row.sort((a, b) => a.x - b.x || a.y - b.y));
+}
+
+/** «Ícono N» por archivo, en un orden fijo: el nombre no cambia con el barajado. */
+export function iconNumbers(fileIds: (string | undefined)[]): Map<string, number> {
+  const sorted = [...new Set(fileIds.filter((f): f is string => !!f))].sort();
+  return new Map(sorted.map((f, i) => [f, i + 1]));
+}
+
+/** Nombre de un elemento para leerlo: su texto, o «Ícono N». */
+export function imageItemName(item: Pick<ImageElement, "kind" | "text" | "fileId">, icons: Map<string, number>): string {
+  if (item.kind === "text") return item.text ?? "";
+  const n = item.fileId ? icons.get(item.fileId) : undefined;
+  return n ? `Ícono ${n}` : "Ícono";
 }
 
 /** null = válida; si no, el primer problema (texto que ve el maestro). */
@@ -50,6 +90,8 @@ export function imageDragProblem(config: unknown, hasImage: boolean): string | n
   if (!["sm", "md", "lg"].includes(c.iconSize as string)) return "Elige el tamaño de los íconos";
   if (c.elements.length > MAX_ELEMENTS) return `Usa como máximo ${MAX_ELEMENTS} elementos`;
   const ids = new Set<string>();
+  // Dos elementos que se ven igual no se distinguen en el banco del alumno
+  const looks = new Set<string>();
   for (const e of c.elements) {
     if (!e || typeof e.id !== "string" || !e.id || ids.has(e.id)) return "Hay elementos repetidos";
     ids.add(e.id);
@@ -61,6 +103,9 @@ export function imageDragProblem(config: unknown, hasImage: boolean): string | n
       if (text.length > MAX_LABEL) return `Las etiquetas deben tener como máximo ${MAX_LABEL} caracteres`;
     }
     if (e.kind !== "icon" && e.kind !== "text") return "Hay un elemento de un tipo desconocido";
+    const look = e.kind === "icon" ? `i:${e.fileId}` : `t:${(e.text as string).trim().toLowerCase()}`;
+    if (looks.has(look)) return "Hay dos elementos iguales: deja uno y colócalo en varios lugares";
+    looks.add(look);
   }
   if (c.zones.length === 0) return "Coloca al menos un elemento en la foto";
   if (c.zones.length > MAX_ZONES) return `Usa como máximo ${MAX_ZONES} lugares`;

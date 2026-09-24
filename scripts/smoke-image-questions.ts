@@ -29,8 +29,10 @@ import {
   imageClickScore,
   imageDragProblem,
   imageDragScore,
+  iconNumbers,
   nearestZone,
   parseClickAnswer,
+  readingOrder,
   parseDragAnswer,
   isImageQuestionType,
   readImageClick,
@@ -100,6 +102,14 @@ function mathChecks() {
   check("Encaje: salta las ocupadas", nearestZone(zones, { x: 0.22, y: 0.31 }, DRAG.aspect, (i) => i !== 0) === null);
   check("Radio de encaje razonable", SNAP_RADIUS > 0 && SNAP_RADIUS < 0.2);
 
+  // «Lugar N»: por filas y de izquierda a derecha, venga en el orden que venga
+  const pts = [{ x: 0.9, y: 0.51 }, { x: 0.1, y: 0.5 }, { x: 0.5, y: 0.1 }, { x: 0.2, y: 0.8 }];
+  const order = (p: { x: number; y: number }[]) => readingOrder(p, 0.75).map((q) => `${q.x},${q.y}`).join(" ");
+  check("Orden de lectura por filas", order(pts) === "0.5,0.1 0.1,0.5 0.9,0.51 0.2,0.8", order(pts));
+  check("Orden de lectura igual con la entrada revuelta", order([...pts].reverse()) === order(pts));
+  const icons = iconNumbers(["f-b", "f-a", undefined, "f-b"]);
+  check("«Ícono N» por archivo en orden fijo", icons.get("f-a") === 1 && icons.get("f-b") === 2 && icons.size === 2);
+
   check("Respuesta de arrastre ilegible: vacía", Object.keys(parseDragAnswer("{no json")).length === 0);
   check("Respuesta de arrastre solo con textos", JSON.stringify(parseDragAnswer('{"a":"b","c":3}')) === '{"a":"b"}');
   check("Respuesta de clic: recorta al máximo y descarta basura", parseClickAnswer('[{"x":0.1,"y":0.2},{"x":"a","y":1},{"x":0.5,"y":0.5},{"x":0.9,"y":0.9}]', 2).length === 2);
@@ -115,6 +125,9 @@ function validationChecks() {
   check("Texto vacío", imageDragProblem({ ...DRAG, elements: [...DRAG.elements, { id: "y", kind: "text", text: "  " }] }, true) === "Hay una etiqueta sin texto");
   check("Lugar de un elemento que no existe", imageDragProblem({ ...DRAG, zones: [{ x: 0.1, y: 0.1, elementId: "nada" }] }, true) !== null);
   check("Coordenadas fuera de la foto", imageDragProblem({ ...DRAG, zones: [{ x: 1.2, y: 0.1, elementId: "ext" }] }, true) !== null);
+  const twin = "Hay dos elementos iguales: deja uno y colócalo en varios lugares";
+  check("Dos íconos con el mismo archivo", imageDragProblem({ ...DRAG, elements: [...DRAG.elements, { id: "ext2", kind: "icon", fileId: "f-ext" }] }, true) === twin);
+  check("Dos etiquetas iguales (sin distinguir mayúsculas ni espacios)", imageDragProblem({ ...DRAG, elements: [...DRAG.elements, { id: "reg2", kind: "text", text: " REGADERA " }] }, true) === twin);
   check("Demasiados elementos", imageDragProblem({ ...DRAG, elements: Array.from({ length: 21 }, (_, i) => ({ id: `e${i}`, kind: "text" as const, text: "t" })) }, true) !== null);
   check("Config ilegible", imageDragProblem(null, true) !== null);
   const odd = (e: unknown) => {
@@ -330,6 +343,8 @@ async function endToEnd() {
     check("Revisión de arrastrar: tablero con cada lugar bien y la solución",
       !!bd && bd.image === photo && bd.zones.length === 4 && bd.zones.every((z) => z.correct && z.placed !== null) &&
       bd.zones[0].expected.fileId === iconExt && bd.zones[3].expected.text === "Punto de reunión", bd);
+    check("Revisión de arrastrar: lleva los archivos de todos los íconos (para numerarlos como el alumno)",
+      !!bd && [...bd.iconFiles].sort().join() === [iconExt, iconSal].sort().join(), bd?.iconFiles);
     check("Revisión de señalar: texto", vc.yourAnswer === "1 de 2 puntos señalados" && vc.result === "partial" && vc.earnedPoints === 1, vc);
     const bc = vc.board?.kind === "click" ? vc.board : null;
     check("Revisión de señalar: puntos acertados y marcas",

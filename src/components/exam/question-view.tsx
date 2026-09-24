@@ -251,7 +251,7 @@ export function QuestionControls({
         <ImageDragControl
           image={q.image}
           config={q.imageDrag}
-          value={parseDragAnswer(answer.answerText)}
+          answerText={answer.answerText}
           onChange={(placement) => onChange({ answerText: JSON.stringify(placement) })}
         />
       ) : (
@@ -263,7 +263,7 @@ export function QuestionControls({
         <ImageClickControl
           image={q.image}
           config={q.imageClick}
-          value={parseClickAnswer(answer.answerText, q.imageClick.marks)}
+          answerText={answer.answerText}
           onChange={(marks) => onChange({ answerText: JSON.stringify(marks) })}
         />
       ) : (

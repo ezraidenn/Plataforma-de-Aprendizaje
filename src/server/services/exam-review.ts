@@ -147,7 +147,16 @@ function reviewEntry(q: FullQuestion, ans: AnswerRow | null, attemptId: string):
         yourAnswer = `${zones.filter((z) => z.correct).length} de ${zones.length} lugares correctos`;
       }
       correctAnswer = "Mira la imagen con la solución";
-      board = { kind: "drag", image: drag.image, aspect: c.aspect, iconSize: c.iconSize, zones };
+      board = {
+        kind: "drag",
+        image: drag.image,
+        aspect: c.aspect,
+        iconSize: c.iconSize,
+        zones,
+        // Todos los íconos, también los distractores que no se pusieron: con
+        // ellos «Ícono N» se numera igual que en el banco del alumno
+        iconFiles: c.elements.flatMap((e) => (e.kind === "icon" && e.fileId ? [e.fileId] : [])),
+      };
       break;
     }
     case "image_click": {

@@ -299,6 +299,8 @@ export type ReviewBoard =
       aspect: number;
       iconSize: IconSize;
       zones: { x: number; y: number; correct: boolean; placed: ImageItemView | null; expected: ImageItemView }[];
+      /** Archivos de todos los íconos de la pregunta, para numerar «Ícono N» como el alumno. */
+      iconFiles: string[];
     }
   | {
       kind: "click";
