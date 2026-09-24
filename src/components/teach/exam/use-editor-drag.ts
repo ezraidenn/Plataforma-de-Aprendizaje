@@ -10,6 +10,19 @@ import { freeSpot, round4, type ImageDragConfig, type ImageElement, type ImageZo
 import type { useDragSelection } from "./use-drag-selection";
 
 /**
+ * El punto de la pantalla cae en lo que se ve de la foto: con zoom, la foto
+ * sigue por debajo de lo que rodea al lienzo (la lista, por ejemplo), y ahí no
+ * se suelta nada (un lugar sacado ahí se quita, como fuera de la foto).
+ */
+function inView(board: HTMLElement, x: number, y: number): boolean {
+  const vp = board.closest("[data-canvas-viewport]");
+  if (!vp) return true;
+  const r = vp.getBoundingClientRect();
+  const [left, top] = [r.left + vp.clientLeft, r.top + vp.clientTop];
+  return x >= left && x <= left + vp.clientWidth && y >= top && y <= top + vp.clientHeight;
+}
+
+/**
  * El arrastre (dnd-kit) del editor de «arrastrar a la imagen». Un elemento de
  * la lista soltado en la foto crea un lugar ahí. Un lugar solo se mueve (si
  * cae encima de otro, se corre lo justo) o, soltado fuera de la foto, se
@@ -72,15 +85,12 @@ export function useEditorDrag({
     return () => window.removeEventListener("pointermove", track, true);
   }, [active]);
 
-  /** Dónde quedaría lo que va en la mano; null si está fuera de la foto. */
+  /** Dónde quedaría lo que va en la mano; null si está fuera de la foto (o de lo que se ve de ella). */
   function dropPoint(): Point | null {
     if (!boardNode) return null;
-    const p = relToRect(
-      pointer.current.x + grab.current.x,
-      pointer.current.y + grab.current.y,
-      boardNode.getBoundingClientRect()
-    );
-    return p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1 ? { x: round4(p.x), y: round4(p.y) } : null;
+    const [x, y] = [pointer.current.x + grab.current.x, pointer.current.y + grab.current.y];
+    const p = relToRect(x, y, boardNode.getBoundingClientRect());
+    return p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1 && inView(boardNode, x, y) ? { x: round4(p.x), y: round4(p.y) } : null;
   }
 
   /** Un lugar solo, soltado con su centro en `p` (ya con imán): si cae encima de otro, se corre lo justo. */
@@ -101,8 +111,9 @@ export function useEditorDrag({
       const held = single.current;
       if (!held || !boardNode) return transform;
       const rect = boardNode.getBoundingClientRect();
-      const p = relToRect(held.center.x + transform.x, held.center.y + transform.y, rect);
-      if (p.x < 0 || p.x > 1 || p.y < 0 || p.y > 1) {
+      const [x, y] = [held.center.x + transform.x, held.center.y + transform.y];
+      const p = relToRect(x, y, rect);
+      if (p.x < 0 || p.x > 1 || p.y < 0 || p.y > 1 || !inView(boardNode, x, y)) {
         lastSnap.current = null;
         return transform;
       }

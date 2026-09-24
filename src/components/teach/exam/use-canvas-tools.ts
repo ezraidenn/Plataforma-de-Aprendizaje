@@ -39,10 +39,8 @@ export type Delta = { dx: number; dy: number };
 /** Distancia entre dos cajas vecinas tras repartir (en coordenadas de la foto), a lo largo de `axis`. */
 export type DistanceMark = { axis: "x" | "y"; from: Point; to: Point; label: string };
 
-/** Separación de la cuadrícula (fracción de cada lado de la foto). */
-export const GRID_STEP = 0.1;
-/** El imán pega a menos de esto (px de pantalla). */
-const SNAP_PX = 6;
+/** El imán pega a menos de esto (px de pantalla; con el zoom, la foto se mide ya ampliada). */
+export const SNAP_PX = 6;
 /** Tiempo que se ven las distancias tras repartir. */
 const DISTANCES_MS = 1500;
 const NONE: Guide[] = [];
@@ -94,8 +92,8 @@ export function useCanvasTools({
   byId: ReadonlyMap<string, ImageElement>;
   /** Interruptor «Imán» de la barra. */
   magnet: boolean;
-  /** Cuadrícula encendida: el imán también pega a sus líneas. */
-  grid: boolean;
+  /** Cuadrícula encendida (su separación): el imán también pega a sus líneas. */
+  grid: number | null;
   setConfig: SetConfig;
   /** Aviso a la vista de algo que no se hizo. */
   setNotice: (n: string | null) => void;
@@ -182,7 +180,7 @@ export function useCanvasTools({
   function snapOptions(altKey = alt.current) {
     const W = width();
     if (!magnet || altKey || W <= 0) return null;
-    return { tx: SNAP_PX / W, ty: SNAP_PX / (W * aspect), grid: grid ? GRID_STEP : null };
+    return { tx: SNAP_PX / W, ty: SNAP_PX / (W * aspect), grid };
   }
 
   function showGuides(next: Guide[]) {

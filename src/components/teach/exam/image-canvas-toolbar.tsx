@@ -14,6 +14,9 @@ import {
   CopyPlus,
   Grid3x3,
   Magnet,
+  Minus,
+  MoveHorizontal,
+  Plus,
   Redo2,
   Ruler,
   Undo2,
@@ -26,15 +29,18 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import type { AlignMode } from "@/lib/image-layout";
+import { ZOOM_MAX, ZOOM_MIN, gridStepFor, type AlignMode } from "@/lib/image-layout";
+import type { CanvasZoom } from "./use-canvas-zoom";
 
 /**
- * Barra de herramientas sobre la foto del editor de «arrastrar a la imagen»:
- * Deshacer y Rehacer · Duplicar, Alinear ▾ y Repartir ▾ · los interruptores
- * Imán, Reglas y Cuadrícula (recordados en este navegador). Después vendrán el
- * zoom (tarea 8) y las herramientas de la foto (tarea 9). En pantallas angostas
- * se acomoda en varias filas. Lo que aún no aplica (alinear con menos de dos
- * lugares) no se deshabilita del todo: así el foco no se pierde, y al pulsarlo
+ * Barra de herramientas sobre la foto de los editores de «arrastrar a la
+ * imagen» y «señalar en la imagen»: Deshacer y Rehacer · (solo en arrastrar)
+ * Duplicar, Alinear ▾ y Repartir ▾ · los interruptores Imán, Reglas y
+ * Cuadrícula (recordados en este navegador, los mismos en los dos editores) ·
+ * el zoom: −, el porcentaje, + y «Ajustar». Después vendrán las herramientas
+ * de la foto (tarea 9). En pantallas angostas se acomoda en varias filas. Lo
+ * que aún no aplica (alinear con menos de dos lugares, acercar más allá del
+ * 400 %) no se deshabilita del todo: así el foco no se pierde, y al pulsarlo
  * se dice qué falta.
  */
 
@@ -138,27 +144,36 @@ export function HistoryButtons({
   );
 }
 
-export function CanvasToolbar({
-  history,
-  count,
-  prefs,
-  onToggle,
-  onDuplicate,
-  onAlign,
-  onDistribute,
-  announce,
-}: {
-  history: { canUndo: boolean; canRedo: boolean; undo: () => void; redo: () => void };
+/** Lo propio de «arrastrar»: duplicar, alinear y repartir los lugares seleccionados. */
+export type ArrangeTools = {
   /** Lugares seleccionados. */
   count: number;
-  prefs: CanvasPrefs;
-  onToggle: (key: keyof CanvasPrefs) => void;
   onDuplicate: (viaKeyboard: boolean) => void;
   /** `said`: cómo se dice («a la izquierda»). */
   onAlign: (mode: AlignMode, said: string) => void;
   onDistribute: (axis: "x" | "y") => void;
+};
+
+export function CanvasToolbar({
+  history,
+  arrange,
+  prefs,
+  onToggle,
+  zoom,
+  what = "lugares",
+  announce,
+}: {
+  history: { canUndo: boolean; canRedo: boolean; undo: () => void; redo: () => void };
+  /** Duplicar, alinear y repartir (sin esto, no se muestran: «señalar»). */
+  arrange?: ArrangeTools;
+  prefs: CanvasPrefs;
+  onToggle: (key: keyof CanvasPrefs) => void;
+  zoom: CanvasZoom;
+  /** Lo que se acomoda, para el título del imán («lugares», «puntos»). */
+  what?: string;
   announce: (text: string) => void;
 }) {
+  const gridPct = Math.round(gridStepFor(zoom.zoom) * 100);
   return (
     <div
       role="group"
@@ -167,62 +182,134 @@ export function CanvasToolbar({
     >
       <HistoryButtons canUndo={history.canUndo} canRedo={history.canRedo} onUndo={history.undo} onRedo={history.redo} />
       <Divider />
-      <div role="group" aria-label="Acomodar lo seleccionado" className="flex flex-wrap items-center gap-1">
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          aria-keyshortcuts="Control+D"
-          title="Duplicar lo seleccionado (Ctrl+D)"
-          aria-disabled={count === 0}
-          className="aria-disabled:opacity-50"
-          onClick={(e) => onDuplicate(e.detail === 0)}
-        >
-          <CopyPlus aria-hidden />
-          Duplicar
-        </Button>
-        <MenuButton
-          label="Alinear"
-          icon={AlignStartVertical}
-          enabled={count >= 2}
-          why="Selecciona al menos 2 lugares para alinearlos"
-          announce={announce}
-        >
-          {ALIGN_OPTIONS.map(({ mode, label, said, icon: Icon }) => (
-            <DropdownMenuItem key={mode} onSelect={() => onAlign(mode, said)}>
-              <Icon aria-hidden />
-              {label}
-            </DropdownMenuItem>
-          ))}
-        </MenuButton>
-        <MenuButton
-          label="Repartir"
-          icon={AlignHorizontalDistributeCenter}
-          enabled={count >= 3}
-          why="Selecciona al menos 3 lugares para repartirlos"
-          announce={announce}
-        >
-          {DISTRIBUTE_OPTIONS.map(({ axis, label, icon: Icon }) => (
-            <DropdownMenuItem key={axis} onSelect={() => onDistribute(axis)}>
-              <Icon aria-hidden />
-              {label}
-            </DropdownMenuItem>
-          ))}
-        </MenuButton>
-      </div>
-      <Divider />
+      {arrange && (
+        <>
+          <ArrangeButtons {...arrange} announce={announce} />
+          <Divider />
+        </>
+      )}
       <div role="group" aria-label="Ayudas para acomodar" className="flex flex-wrap items-center gap-1">
         <Toggle
           on={prefs.magnet}
           icon={Magnet}
           label="Imán"
-          title="Imán: al mover o estirar, se pega a otros lugares, a la foto y a la cuadrícula (Alt lo apaga mientras lo sostienes)"
+          title={`Imán: al mover${arrange ? " o estirar" : ""}, se pega a otros ${what}, a la foto y a la cuadrícula (Alt lo apaga mientras lo sostienes)`}
           onClick={() => onToggle("magnet")}
         />
         <Toggle on={prefs.rulers} icon={Ruler} label="Reglas" title="Reglas en la orilla de la foto" onClick={() => onToggle("rulers")} />
-        <Toggle on={prefs.grid} icon={Grid3x3} label="Cuadrícula" title="Cuadrícula cada 10 %" onClick={() => onToggle("grid")} />
+        <Toggle
+          on={prefs.grid}
+          icon={Grid3x3}
+          label="Cuadrícula"
+          title={`Cuadrícula cada ${gridPct} % (cada 5 % desde el 200 % de zoom)`}
+          onClick={() => onToggle("grid")}
+        />
       </div>
-      {/* Aquí irán el zoom (tarea 8) y las herramientas de la foto (tarea 9) */}
+      <Divider />
+      <ZoomButtons zoom={zoom} announce={announce} />
+      {/* Aquí irán las herramientas de la foto (tarea 9) */}
+    </div>
+  );
+}
+
+function ArrangeButtons({ count, onDuplicate, onAlign, onDistribute, announce }: ArrangeTools & { announce: (text: string) => void }) {
+  return (
+    <div role="group" aria-label="Acomodar lo seleccionado" className="flex flex-wrap items-center gap-1">
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        aria-keyshortcuts="Control+D"
+        title="Duplicar lo seleccionado (Ctrl+D)"
+        aria-disabled={count === 0}
+        className="aria-disabled:opacity-50"
+        onClick={(e) => onDuplicate(e.detail === 0)}
+      >
+        <CopyPlus aria-hidden />
+        Duplicar
+      </Button>
+      <MenuButton
+        label="Alinear"
+        icon={AlignStartVertical}
+        enabled={count >= 2}
+        why="Selecciona al menos 2 lugares para alinearlos"
+        announce={announce}
+      >
+        {ALIGN_OPTIONS.map(({ mode, label, said, icon: Icon }) => (
+          <DropdownMenuItem key={mode} onSelect={() => onAlign(mode, said)}>
+            <Icon aria-hidden />
+            {label}
+          </DropdownMenuItem>
+        ))}
+      </MenuButton>
+      <MenuButton
+        label="Repartir"
+        icon={AlignHorizontalDistributeCenter}
+        enabled={count >= 3}
+        why="Selecciona al menos 3 lugares para repartirlos"
+        announce={announce}
+      >
+        {DISTRIBUTE_OPTIONS.map(({ axis, label, icon: Icon }) => (
+          <DropdownMenuItem key={axis} onSelect={() => onDistribute(axis)}>
+            <Icon aria-hidden />
+            {label}
+          </DropdownMenuItem>
+        ))}
+      </MenuButton>
+    </div>
+  );
+}
+
+const zoomSaid = (z: number) => `${Math.round(z * 100)} %`;
+
+/** Zoom: alejar, el porcentaje, acercar (niveles del 50 al 400 %) y «Ajustar» (al ancho: 100 %). */
+function ZoomButtons({ zoom, announce }: { zoom: CanvasZoom; announce: (text: string) => void }) {
+  const step = (dir: 1 | -1) => {
+    const next = dir > 0 ? zoom.zoomIn() : zoom.zoomOut();
+    announce(next === null ? `El zoom ya está en el ${dir > 0 ? "máximo" : "mínimo"}: ${zoomSaid(dir > 0 ? ZOOM_MAX : ZOOM_MIN)}` : `Zoom ${zoomSaid(next)}`);
+  };
+  return (
+    <div role="group" aria-label="Zoom" className="flex items-center gap-0.5">
+      <Button
+        type="button"
+        size="icon-sm"
+        variant="ghost"
+        aria-label="Alejar"
+        title="Alejar (también Ctrl+rueda sobre la foto)"
+        aria-disabled={!zoom.canZoomOut}
+        className="aria-disabled:opacity-50"
+        onClick={() => step(-1)}
+      >
+        <Minus aria-hidden />
+      </Button>
+      <output aria-label="Zoom" className="w-11 text-center text-xs font-bold tabular-nums">
+        {zoomSaid(zoom.zoom)}
+      </output>
+      <Button
+        type="button"
+        size="icon-sm"
+        variant="ghost"
+        aria-label="Acercar"
+        title="Acercar (también Ctrl+rueda sobre la foto; Espacio y arrastrar para moverte)"
+        aria-disabled={!zoom.canZoomIn}
+        className="aria-disabled:opacity-50"
+        onClick={() => step(1)}
+      >
+        <Plus aria-hidden />
+      </Button>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        title="Ajustar la foto al ancho disponible (100 %)"
+        onClick={() => {
+          const next = zoom.fitWidth();
+          announce(next === null ? "La foto ya está ajustada al ancho" : "Foto ajustada al ancho: zoom 100 %");
+        }}
+      >
+        <MoveHorizontal aria-hidden />
+        Ajustar
+      </Button>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useStableHandler } from "@/components/exam/image-dnd";
 import { TOUCH_AREA } from "@/components/exam/image-pieces";
 import {
@@ -15,6 +15,7 @@ import {
 } from "@/lib/image-layout";
 import { round4, type ImageElement } from "@/lib/image-questions";
 import { cn } from "@/lib/utils";
+import { OUTSIDE, placement, type Placement } from "./transform-box-placement";
 import { isTypingTarget } from "./use-editor-history";
 
 /**
@@ -32,6 +33,10 @@ import { isTypingTarget } from "./use-editor-history";
  * Sin `aria-keyshortcuts`: esas teclas cambian de lugar con la distribución
  * del teclado (en el español, [ y ] van con AltGr), así que se dicen en el
  * título y al pulsar el tirador con el teclado.
+ *
+ * La bolita va sobre el marco y la lectura del valor debajo, si caben en el
+ * lienzo; con un lugar pegado a la orilla se acomodan de otro modo
+ * (`transform-box-placement.ts`).
  */
 
 type Kind = "stretch" | "turn";
@@ -87,13 +92,22 @@ export const TransformBox = memo(function TransformBox({
   rotation,
   readout,
   actions,
+  layout,
 }: {
   rotation: number;
   /** El valor mientras dura el gesto («12.5 %», «30°»). */
   readout: string | null;
   actions: TransformActions;
+  /** Cambia si la ficha se mueve o cambia de tamaño (o la foto, con el zoom): se vuelve a ver dónde cabe la bolita. */
+  layout: string;
 }) {
   const frame = useRef<HTMLSpanElement>(null);
+  const box = useRef<HTMLSpanElement>(null);
+  const [place, setPlace] = useState<Placement>(OUTSIDE);
+  useLayoutEffect(() => {
+    const next = placement(box.current, rotation);
+    setPlace((prev) => (prev.knob === next.knob && prev.readout === next.readout && prev.far === next.far ? prev : next));
+  }, [rotation, layout]);
   const drag = useRef<{
     kind: Kind;
     pointer: number;
@@ -200,8 +214,15 @@ export const TransformBox = memo(function TransformBox({
 
   const turn = rotation ? { transform: `rotate(${rotation}deg)` } : undefined;
   const upright = rotation ? { transform: `rotate(${-rotation}deg)` } : undefined;
+  const inside = place.knob === "inside";
   return (
-    <span data-transform="" className="pointer-events-none absolute inset-0" style={turn}>
+    <span
+      ref={box}
+      data-transform=""
+      // Con la bolita dentro, la caja va sobre la ficha (si no, la ficha taparía la bolita)
+      className={cn("pointer-events-none absolute inset-0", inside && "z-[2]")}
+      style={turn}
+    >
       <span ref={frame} aria-hidden className="absolute -inset-1.5 rounded-[3px] border-[1.5px] border-primary" />
       {CORNERS.map(({ at, dx, dy }, k) => (
         <button
@@ -217,16 +238,38 @@ export const TransformBox = memo(function TransformBox({
           {...gesture("stretch")}
         />
       ))}
-      <span aria-hidden className="absolute -top-[22px] left-1/2 -ml-[0.75px] h-4 border-l-[1.5px] border-primary" />
+      {!inside && (
+        <span
+          aria-hidden
+          className={cn(
+            "absolute left-1/2 -ml-[0.75px] h-4 border-l-[1.5px] border-primary",
+            place.knob === "above" ? "-top-[22px]" : "-bottom-[22px]"
+          )}
+        />
+      )}
       <button
         type="button"
         aria-label="Girar"
         title="Girar (Mayús: de 15° en 15°; teclado: [ y ])"
-        className={cn(HANDLE, "-top-[34px] left-1/2 size-3 -translate-x-1/2 cursor-grab rounded-full active:cursor-grabbing")}
+        data-knob={place.knob}
+        className={cn(
+          HANDLE,
+          "left-1/2 size-3 -translate-x-1/2 cursor-grab rounded-full active:cursor-grabbing",
+          place.knob === "above" ? "-top-[34px]" : place.knob === "below" ? "-bottom-[34px]" : "top-1"
+        )}
         {...gesture("turn")}
       />
       {readout && (
-        <span className="absolute left-1/2 top-full mt-3 -translate-x-1/2" style={upright}>
+        <span
+          data-readout={place.far ? `${place.readout}-lejos` : place.readout}
+          className={cn(
+            "absolute left-1/2 -translate-x-1/2",
+            place.readout === "below" && (place.far ? "top-full mt-[42px]" : "top-full mt-3"),
+            place.readout === "above" && (place.far ? "bottom-full mb-[42px]" : "bottom-full mb-3"),
+            place.readout === "inside" && "top-1/2 -translate-y-1/2"
+          )}
+          style={upright}
+        >
           <span className="block whitespace-nowrap rounded-md bg-primary px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-primary-foreground shadow">
             {readout}
           </span>

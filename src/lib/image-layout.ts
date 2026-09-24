@@ -12,6 +12,7 @@ import {
   ICON_SIZE_RANGE,
   SNAP_RADIUS,
   TEXT_SIZE_RANGE,
+  clamp01,
   normalizeRotation,
   validAspect,
   type IconSize,
@@ -273,6 +274,44 @@ export function snapScale(
 /** Centro pegado a la línea de cuadrícula más cercana. */
 export function snapToGrid(p: Point, grid: number): Point {
   return { x: r9(Math.round(p.x / grid) * grid), y: r9(Math.round(p.y / grid) * grid) };
+}
+
+/**
+ * Imán de un punto de «señalar» (no tiene caja): se pega a la línea de otro
+ * punto, a los bordes y el centro de la foto y, con cuadrícula, a sus líneas.
+ */
+export function snapSpot(p: Point, others: Point[], opts: { tx: number; ty: number; grid?: number | null }): { p: Point; guides: Guide[] } {
+  const box = (q: Point): Bounds => ({ left: q.x, right: q.x, top: q.y, bottom: q.y });
+  const s = snapMove(box(p), others.map(box), opts);
+  return { p: { x: clamp01(r9(p.x + s.dx)), y: clamp01(r9(p.y + s.dy)) }, guides: s.guides };
+}
+
+/** Zoom del lienzo del editor: los niveles de − y + (y sus topes). */
+export const ZOOM_LEVELS = [0.5, 0.67, 0.8, 1, 1.25, 1.5, 2, 3, 4] as const;
+export const ZOOM_MIN = ZOOM_LEVELS[0];
+export const ZOOM_MAX = ZOOM_LEVELS[ZOOM_LEVELS.length - 1];
+export const clampZoom = (z: number) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
+
+/** El nivel siguiente (1) o anterior (−1), aunque el zoom esté entre dos niveles. */
+export function zoomStep(zoom: number, dir: 1 | -1): number {
+  if (dir > 0) return ZOOM_LEVELS.find((l) => l > zoom + 1e-3) ?? ZOOM_MAX;
+  return [...ZOOM_LEVELS].reverse().find((l) => l < zoom - 1e-3) ?? ZOOM_MIN;
+}
+
+/**
+ * Ctrl+rueda: una muesca de la rueda del ratón va al nivel siguiente o al
+ * anterior; los pasos finos (el pellizco del trackpad llega como Ctrl+rueda
+ * con desplazamientos chicos) acercan o alejan poco a poco.
+ */
+export function wheelZoom(zoom: number, deltaY: number, deltaMode = 0): number {
+  if (deltaY === 0) return zoom;
+  if (deltaMode !== 0 || Math.abs(deltaY) >= 50) return zoomStep(zoom, deltaY < 0 ? 1 : -1);
+  return Math.round(clampZoom(zoom * Math.exp(-deltaY / 100)) * 1e4) / 1e4;
+}
+
+/** Separación de la cuadrícula: cada 10 % de la foto, o cada 5 % desde el 200 %. */
+export function gridStepFor(zoom: number): number {
+  return zoom >= 2 - 1e-9 ? 0.05 : 0.1;
 }
 
 export type AlignMode = "left" | "hcenter" | "right" | "top" | "vcenter" | "bottom";

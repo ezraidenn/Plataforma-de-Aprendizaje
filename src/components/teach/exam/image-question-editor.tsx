@@ -35,10 +35,10 @@ import { isTypingTarget, useEditorHistory, type HistoryOptions } from "./use-edi
  * foto) conserva lugares y puntos porque son relativos a la foto. Lo propio de
  * cada tipo vive en `image-drag-editor.tsx` y `image-click-editor.tsx`; el
  * valor (qué se abre, su forma, qué impide guardar), en `image-editor-value.ts`.
- * Todo cambio (la foto y la config) pasa por el historial: Deshacer y Rehacer,
- * también con Ctrl+Z y Ctrl+Mayús+Z o Ctrl+Y mientras el foco está en el
- * editor y no en un campo de texto. Debajo, el problema que impediría
- * guardar, en vivo.
+ * Todo cambio (la foto y la config) pasa por el historial: Deshacer y Rehacer
+ * (en la barra de la foto de cada tipo), también con Ctrl+Z y Ctrl+Mayús+Z o
+ * Ctrl+Y mientras el foco está en el editor y no en un campo de texto. Debajo,
+ * el problema que impediría guardar, en vivo.
  */
 
 type SetValue = Dispatch<SetStateAction<ImageQuestionValue>>;
@@ -166,7 +166,7 @@ export function ImageQuestionEditor({
     [record, type]
   );
 
-  /** Deshacer o rehacer; si lo que tenía el foco desaparece, el foco se queda en el editor (en el de lugares, si lo hay). */
+  /** Deshacer o rehacer; si lo que tenía el foco desaparece, el foco se queda en el editor (en el de lugares o puntos, si lo hay). */
   function travel(to: "undo" | "redo") {
     const root = rootRef.current;
     const hadFocus = !!root?.contains(document.activeElement);
@@ -176,7 +176,7 @@ export function ImageQuestionEditor({
     if (hadFocus) {
       requestAnimationFrame(() => {
         if (root && !root.contains(document.activeElement)) {
-          (root.querySelector<HTMLElement>("[data-drag-editor]") ?? root).focus({ preventScroll: true });
+          (root.querySelector<HTMLElement>("[data-drag-editor], [data-click-editor]") ?? root).focus({ preventScroll: true });
         }
       });
     }
@@ -192,7 +192,7 @@ export function ImageQuestionEditor({
     undo: () => travel("undo"),
     redo: () => travel("redo"),
   };
-  // En «arrastrar» van en la barra de la foto; en «señalar» (y sin foto), aquí
+  // Con foto van en la barra de la foto; sin ella (se deshizo hasta antes de subirla), aquí
   const historyButtons = (
     <HistoryButtons canUndo={undoRedo.canUndo} canRedo={undoRedo.canRedo} onUndo={undoRedo.undo} onRedo={undoRedo.redo} />
   );
@@ -249,7 +249,6 @@ export function ImageQuestionEditor({
               {uploading === "photo" ? <Loader2 className="animate-spin" aria-hidden /> : <ImageUp aria-hidden />}
               {uploading === "photo" ? "Subiendo…" : "Cambiar foto"}
             </Button>
-            {type === "image_click" && historyButtons}
             <span className="flex-1" />
             {/* En «arrastrar», el tamaño es de cada elemento (panel «Seleccionado») */}
             {type === "image_click" && (
@@ -282,6 +281,7 @@ export function ImageQuestionEditor({
               aspect={aspect}
               config={config as ImageClickConfig}
               setConfig={setConfig<ImageClickConfig>}
+              history={undoRedo}
               uploading={uploading !== null}
               setNotice={setNotice}
               announce={announce}

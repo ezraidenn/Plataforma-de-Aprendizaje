@@ -3,9 +3,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DndContext, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { TriangleAlert } from "lucide-react";
-import { BoardCursor, useCrosshair, useElementWidth } from "@/components/exam/image-board";
+import { BoardCursor, useCrosshair } from "@/components/exam/image-board";
 import { DropVeil, QUIET_ANNOUNCEMENTS, useFileDrop, useStableHandler } from "@/components/exam/image-dnd";
 import { useMediaQuery } from "@/components/help/use-media-query";
+import { gridStepFor } from "@/lib/image-layout";
 import {
   MAX_ELEMENTS,
   MAX_ZONES,
@@ -25,7 +26,8 @@ import { ElementPanel } from "./image-element-panel";
 import { ElementList } from "./image-element-row";
 import { DragGhost, PlacedZone } from "./image-placed-zone";
 import { useTransformTool } from "./image-transform-box";
-import { GRID_STEP, useCanvasTools } from "./use-canvas-tools";
+import { useCanvasTools } from "./use-canvas-tools";
+import { useCanvasZoom } from "./use-canvas-zoom";
 import { useDragSelection } from "./use-drag-selection";
 import { useEditorDrag } from "./use-editor-drag";
 import { isTypingTarget, type HistoryOptions } from "./use-editor-history";
@@ -47,7 +49,8 @@ import { useZoneWarnings } from "./use-zone-warnings";
  * de la foto. Todo cambio pasa por el historial del editor (deshacer). Soltar
  * un archivo sobre la foto la cambia; sobre la lista, lo agrega como ícono. Un
  * clic en un elemento de la lista o en lugares de un solo elemento lo lleva al
- * panel «Seleccionado» (tamaño y giro). Arriba, la barra de herramientas.
+ * panel «Seleccionado» (tamaño y giro). Arriba, la barra de herramientas; la
+ * foto va en el lienzo con zoom (Ctrl+rueda, Espacio+arrastrar).
  */
 export function DragEditor({
   imageFileId,
@@ -81,7 +84,7 @@ export function DragEditor({
   /** Un archivo soltado sobre la foto la cambia. */
   onPhotoFile: (file: File) => void;
 }) {
-  const board = useElementWidth<HTMLDivElement>();
+  const [boardNode, setBoardNode] = useState<HTMLDivElement | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   /** Elemento elegido para colocarlo con un clic en la foto (su botón «Colocar»). */
   const [chosen, setChosen] = useState<string | null>(null);
@@ -92,11 +95,16 @@ export function DragEditor({
   const focusAfter = useRef<string | null>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
   const { prefs, toggle: togglePref } = useCanvasPrefs();
+  const zoom = useCanvasZoom({ rulers: prefs.rulers });
+  /** Ancho de la foto en pantalla, ya con el zoom: con él se mide todo lo que va encima. */
+  const { boardWidth } = zoom;
+  const gridStep = prefs.grid ? gridStepFor(zoom.zoom) : null;
 
   const { elements, zones } = config;
   const fullElements = elements.length >= MAX_ELEMENTS;
   const fullZones = zones.length >= MAX_ZONES;
-  const dense = board.width > 0 && board.width < 480;
+  // Pantalla angosta: lo dice el ancho disponible, no el zoom
+  const dense = zoom.fit > 0 && zoom.fit < 480;
   /** Puntero táctil: la pista no habla de teclas. */
   const touch = useMediaQuery("(pointer: coarse)");
   const byId = useMemo(() => new Map(elements.map((e) => [e.id, e])), [elements]);
@@ -124,8 +132,8 @@ export function DragEditor({
   const nameOf = (id: string) => names.get(id) ?? "Elemento";
   const warnings = useZoneWarnings({
     rootRef,
-    boardNode: board.node,
-    boardWidth: board.width,
+    boardNode,
+    boardWidth,
     zones,
     ordered,
     numbers,
@@ -135,13 +143,13 @@ export function DragEditor({
     announce,
   });
   const tools = useCanvasTools({
-    boardNode: board.node,
-    boardWidth: board.width,
+    boardNode,
+    boardWidth,
     aspect,
     zones,
     byId,
     magnet: prefs.magnet,
-    grid: prefs.grid,
+    grid: gridStep,
     setConfig,
     setNotice,
     announce,
@@ -153,7 +161,7 @@ export function DragEditor({
     setConfig,
     setNotice,
     announce,
-    boardNode: board.node,
+    boardNode,
     focusAfter,
     onSelectZones: () => {
       setChosen(null);
@@ -179,7 +187,7 @@ export function DragEditor({
     nameOf,
     clearSelection,
     focusAfter,
-    boardNode: board.node,
+    boardNode,
   });
   const iconTools = useEditorIcons({ elements, uploading, setUploading, setError, setNotice, announce, setConfig, nameOf });
   const crosshair = useCrosshair(aspect, (p) => {
@@ -205,12 +213,12 @@ export function DragEditor({
       announce("Elección cancelada");
       // Si lo enfocado desaparece (el deslizante del panel), el foco va a la foto y Ctrl+Z sigue a mano
       requestAnimationFrame(() => {
-        if (hadFocus && !root?.contains(document.activeElement)) board.node?.focus({ preventScroll: true });
+        if (hadFocus && !root?.contains(document.activeElement)) boardNode?.focus({ preventScroll: true });
       });
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [chosen, hasSelection, panelId, clearSelection, announce, board.node]);
+  }, [chosen, hasSelection, panelId, clearSelection, announce, boardNode]);
 
   // Tras deshacer, lo elegido (para colocar o en el panel) puede ya no existir
   useEffect(() => {
@@ -227,7 +235,7 @@ export function DragEditor({
   });
 
   const drag = useEditorDrag({
-    boardNode: board.node,
+    boardNode,
     zones,
     aspect,
     byId,
@@ -268,8 +276,8 @@ export function DragEditor({
       selection.only(zone);
       return byId.get(zones[zone]?.elementId ?? "") ?? null;
     },
-    boardNode: board.node,
-    boardWidth: board.width,
+    boardNode,
+    boardWidth,
     aspect,
     measure: tools.sizeOf,
     change: changeElement,
@@ -330,21 +338,25 @@ export function DragEditor({
         <div className="min-w-0 space-y-2">
           <CanvasToolbar
             history={history}
-            count={selected.size}
+            arrange={{
+              count: selected.size,
+              onDuplicate: selection.duplicate,
+              onAlign: (mode, said) => tools.align([...selected], mode, said),
+              onDistribute: (axis) => tools.distribute([...selected], axis),
+            }}
             prefs={prefs}
             onToggle={togglePref}
-            onDuplicate={selection.duplicate}
-            onAlign={(mode, said) => tools.align([...selected], mode, said)}
-            onDistribute={(axis) => tools.distribute([...selected], axis)}
+            zoom={zoom}
             announce={announce}
           />
           <ImageCanvas
-            ref={board.ref}
+            ref={setBoardNode}
+            zoom={zoom}
             imageUrl={fileUrl(imageFileId)}
             aspect={aspect}
             rulers={prefs.rulers}
             rulerMark={rulerMark}
-            grid={prefs.grid ? GRID_STEP : null}
+            grid={gridStep}
             guides={tools.guides}
             distances={tools.distances}
             onFocus={(e) => {
@@ -397,7 +409,7 @@ export function DragEditor({
                   element={element}
                   label={`Lugar ${numbers[i]}: ${nameOf(z.elementId)}`}
                   number={numbers[i]}
-                  boardWidth={board.width}
+                  boardWidth={boardWidth}
                   dense={dense}
                   selected={selected.has(i)}
                   removable={selected.size === 1 && selected.has(i) && !active}
@@ -430,7 +442,7 @@ export function DragEditor({
               name={panelElement ? nameOf(panelElement.id) : ""}
               several={several}
               aspect={aspect}
-              boardWidth={board.width}
+              boardWidth={boardWidth}
               onChange={onPanelChange}
               onBegin={gesture.begin}
               onCommit={gesture.commit}
@@ -474,7 +486,7 @@ export function DragEditor({
         element={drag.ghost}
         fromList={!!active?.startsWith("el:")}
         removing={removing}
-        boardWidth={board.width}
+        boardWidth={boardWidth}
         dense={dense}
         modifier={drag.ghostModifier}
       />

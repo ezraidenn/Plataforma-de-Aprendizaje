@@ -67,12 +67,16 @@ import {
   iconSizeRange,
   normalizeRotation,
   shownAtMinimum,
+  gridStepFor,
   snapMove,
   snapRadiusFor,
   snapScale,
+  snapSpot,
   snapToGrid,
   textPx,
   unionBounds,
+  wheelZoom,
+  zoomStep,
   type Bounds,
 } from "../src/lib/image-layout";
 
@@ -366,6 +370,22 @@ function canvasChecks() {
     { left: 0.2, right: 0.7, top: 0, bottom: 0.1 },
   ];
   check("Repartir cajas que no caben: hueco negativo (el editor no reparte)", distributeDeltas(crowded, "x").gap < 0, distributeDeltas(crowded, "x"));
+
+  console.log("\n— Zoom del lienzo y puntos de «señalar»");
+  check("Zoom: + y − van al nivel siguiente y al anterior", zoomStep(1, 1) === 1.25 && zoomStep(1, -1) === 0.8 && zoomStep(1.5, 1) === 2);
+  check("Zoom: entre dos niveles, + y − van al de al lado", zoomStep(1.4, 1) === 1.5 && zoomStep(1.4, -1) === 1.25);
+  check("Zoom: topes del 50 y el 400 %", zoomStep(4, 1) === 4 && zoomStep(0.5, -1) === 0.5);
+  check("Ctrl+rueda: una muesca es un nivel", wheelZoom(1, -100) === 1.25 && wheelZoom(1, 100) === 0.8 && wheelZoom(1, 3, 1) === 0.8);
+  const pinch = wheelZoom(1, -10);
+  check("Pellizco: pasos finos, poco a poco y con topes", pinch > 1 && pinch < 1.25 && wheelZoom(3.95, -10) === 4 && wheelZoom(0.51, 10) === 0.5, pinch);
+  check("Cuadrícula: cada 10 %, y cada 5 % desde el 200 %", gridStepFor(1) === 0.1 && gridStepFor(1.5) === 0.1 && gridStepFor(2) === 0.05 && gridStepFor(4) === 0.05);
+  const sp = snapSpot({ x: 0.302, y: 0.71 }, [{ x: 0.3, y: 0.2 }], { tx: 0.005, ty: 0.005 });
+  check("Punto: se pega a la línea de otro punto (y la guía se ve)", sp.p.x === 0.3 && sp.p.y === 0.71 && sp.guides.some((g) => g.axis === "x" && g.at === 0.3), sp);
+  const sc = snapSpot({ x: 0.497, y: 0.996 }, [], { tx: 0.005, ty: 0.005 });
+  check("Punto: se pega al centro y al borde de la foto", sc.p.x === 0.5 && sc.p.y === 1, sc);
+  const sg = snapSpot({ x: 0.648, y: 0.4 }, [], { tx: 0.005, ty: 0.005, grid: gridStepFor(2) });
+  check("Punto: con cuadrícula al 200 %, se pega a la línea del 65 %", Math.abs(sg.p.x - 0.65) < 1e-9, sg);
+  check("Punto: lejos de todo, no se mueve", JSON.stringify(snapSpot({ x: 0.33, y: 0.62 }, [{ x: 0.8, y: 0.1 }], { tx: 0.005, ty: 0.005 }).p) === JSON.stringify({ x: 0.33, y: 0.62 }));
 }
 
 function sanitizeChecks() {

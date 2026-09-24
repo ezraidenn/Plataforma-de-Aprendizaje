@@ -102,7 +102,14 @@ export const PlacedZone = memo(function PlacedZone({
           </span>
         </span>
       </button>
-      {transform && <TransformBox rotation={view.rotation} readout={readout ?? null} actions={transform} />}
+      {transform && (
+        <TransformBox
+          rotation={view.rotation}
+          readout={readout ?? null}
+          actions={transform}
+          layout={`${at.x},${at.y},${view.size},${boardWidth}`}
+        />
+      )}
       {removable && (
         <span className="pointer-events-none absolute inset-0" style={turn}>
           <button
