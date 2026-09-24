@@ -21,6 +21,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ExamPreview } from "@/components/exam/exam-preview";
 import { plural } from "@/lib/plural";
+import { replaceWarning } from "@/lib/replace-warning";
 import { downloadTextFile } from "@/components/teach/csv-download";
 import { analyzeChunkAction, draftsToCsvAction, importAiQuestionsAction } from "@/server/actions/ai-exam";
 import { DRAFT_TYPE_LABEL, draftProblem, type QuestionDraft } from "@/lib/question-draft";
@@ -580,15 +581,7 @@ export function AiImportDialog({
                 </RadioGroup>
               )}
               {mode === "replace" && currentCount > 0 && (
-                <p className="text-[13px] text-destructive">
-                  {plural(
-                    currentCount,
-                    "Se borrará la pregunta que tiene hoy el examen.",
-                    `Se borrarán las ${currentCount} preguntas que tiene hoy el examen.`
-                  )}
-                  {imageCount > 0 &&
-                    ` ${plural(imageCount, "1 pregunta sobre imagen se conserva.", `${imageCount} preguntas sobre imagen se conservan.`)}`}
-                </p>
+                <p className="text-[13px] text-destructive">{replaceWarning(currentCount, imageCount)}</p>
               )}
               <DialogFooter className="gap-2">
                 <Button variant="outline" onClick={downloadCsv} disabled={busy || drafts.length === 0}>

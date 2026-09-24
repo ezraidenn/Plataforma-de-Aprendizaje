@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/dialog";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { plural } from "@/lib/plural";
+import { replaceWarning } from "@/lib/replace-warning";
 import { downloadTextFile } from "@/components/teach/csv-download";
 import {
   StepIndicator,
@@ -43,42 +44,22 @@ type Preview = {
   currentImageCount: number;
 };
 
-/**
- * Aviso de «reemplazar»: qué se borra y qué se conserva, con concordancia y
- * sin frases vacías cuando uno de los dos grupos está en cero.
- */
-function replaceWarning(currentCount: number, currentImageCount: number): string {
-  const partes: string[] = [];
-  if (currentCount > 0) {
-    partes.push(
-      currentImageCount > 0
-        ? plural(
-            currentCount,
-            "se borrará la pregunta que no es sobre imagen",
-            `se borrarán las ${currentCount} preguntas que no son sobre imagen`
-          )
-        : plural(currentCount, "se borrará la pregunta actual", `se borrarán las ${currentCount} preguntas actuales`)
-    );
-  }
-  if (currentImageCount > 0) {
-    partes.push(
-      plural(
-        currentImageCount,
-        "la pregunta sobre imagen se conserva tal como está",
-        `las ${currentImageCount} preguntas sobre imagen se conservan tal como están`
-      )
-    );
-  }
-  const texto = `${partes.join("; ")}.${currentCount > 0 ? " Los intentos ya enviados conservan sus preguntas." : ""}`;
-  return texto.charAt(0).toUpperCase() + texto.slice(1);
-}
-
 /** "1 pregunta sobre imagen no cabe..." / "N preguntas sobre imagen no caben...", con la concordancia correcta. */
 function imageOmittedText(n: number): string {
   return plural(
     n,
-    "1 pregunta sobre imagen no cabe en el Excel; en el examen se queda como está.",
-    `${n} preguntas sobre imagen no caben en el Excel; en el examen se quedan como están.`
+    "1 pregunta sobre imagen no cabe en el CSV; en el examen se queda como está.",
+    `${n} preguntas sobre imagen no caben en el CSV; en el examen se quedan como están.`
+  );
+}
+
+/** Por qué no se puede exportar: sin preguntas, o solo preguntas sobre imagen (no caben en el CSV). */
+function exportBlockedText(questionCount: number, imageCount: number): string {
+  if (questionCount === 0) return "Aún no hay preguntas que exportar.";
+  return plural(
+    imageCount,
+    "Este examen solo tiene 1 pregunta sobre imagen, que no cabe en el CSV.",
+    `Este examen solo tiene ${imageCount} preguntas sobre imagen, que no caben en el CSV.`
   );
 }
 
@@ -98,8 +79,19 @@ export function ExamCsvActions({
 }) {
   const [exporting, startExport] = useTransition();
   const exportable = questionCount - imageCount;
+  const blocked = exportable === 0;
+  // Solo cuando el motivo es «puras preguntas sobre imagen» hay un texto corto
+  // visible junto a los botones (enlazado por aria-describedby); sin preguntas
+  // no hace falta: el botón ya se explica solo.
+  const noteId = "exam-csv-export-note";
+  const showNote = blocked && questionCount > 0 && imageCount > 0;
 
   function exportCsv() {
+    if (exporting) return;
+    if (blocked) {
+      toast.info(exportBlockedText(questionCount, imageCount));
+      return;
+    }
     startExport(async () => {
       const result = await exportExamCsvAction(itemId);
       if ("error" in result) {
@@ -114,28 +106,26 @@ export function ExamCsvActions({
 
   return (
     <div className="flex flex-wrap items-center gap-2">
+      {/* Sin `disabled` nativo: sigue enfocable y pulsable por teclado, mouse o
+          táctil, y al pulsarlo explica por qué con un toast (no basta con el
+          `title`, que ni el teclado ni los lectores de pantalla alcanzan). */}
       <Button
         type="button"
         variant="outline"
-        className="h-11"
+        className={cn("h-11", blocked && "opacity-50")}
         onClick={exportCsv}
-        disabled={exporting || exportable === 0}
-        title={
-          exportable > 0
-            ? undefined
-            : questionCount === 0
-              ? "Aún no hay preguntas que exportar"
-              : plural(
-                  questionCount,
-                  "Esa pregunta es sobre imagen: no se puede exportar a Excel",
-                  "Esas preguntas son sobre imagen: no se pueden exportar a Excel"
-                )
-        }
+        aria-disabled={exporting || blocked}
+        aria-describedby={showNote ? noteId : undefined}
       >
         {exporting ? <Loader2 className="animate-spin" aria-hidden /> : <Download aria-hidden />}
         Exportar CSV
       </Button>
       <ExamCsvDialog itemId={itemId} />
+      {showNote && (
+        <p id={noteId} className="w-full text-xs text-muted-foreground">
+          Este examen solo tiene preguntas sobre imagen, que no caben en el CSV.
+        </p>
+      )}
     </div>
   );
 }
@@ -371,7 +361,10 @@ export function ExamCsvDialog({ itemId }: { itemId: string }) {
               {mode === "replace" && (preview.currentCount > 0 || preview.currentImageCount > 0) && (
                 <p className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm">
                   <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
-                  <span>{replaceWarning(preview.currentCount, preview.currentImageCount)}</span>
+                  <span>
+                    {replaceWarning(preview.currentCount, preview.currentImageCount)}
+                    {preview.currentCount > 0 && " Los intentos ya enviados conservan sus preguntas."}
+                  </span>
                 </p>
               )}
             </div>

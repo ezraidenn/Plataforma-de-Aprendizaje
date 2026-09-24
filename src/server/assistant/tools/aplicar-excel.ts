@@ -228,9 +228,15 @@ function examRows(csv: string, modo: Modo, imagenesConservadas: number): { rows:
 function reemplazoTexto(examTitle: string, imported: number, kept: number, antes: number, skipped: number): string {
   const total = imported + kept;
   const reemplazadas = antes - kept;
+  // Con preguntas sobre imagen conservadas, «la que tenía» es ambiguo (¿cuál,
+  // si algunas se conservaron?): se aclara que son las que no son de imagen
+  const objetivo =
+    kept > 0
+      ? plural(reemplazadas, "la que no era sobre imagen", `las ${reemplazadas} que no eran sobre imagen`)
+      : plural(reemplazadas, "la que tenía", `las ${reemplazadas} que tenía`);
   const partes = [
     reemplazadas > 0
-      ? `${plural(imported, "1 del archivo reemplazó a", `${imported} del archivo reemplazaron a`)} ${plural(reemplazadas, "la que tenía", `las ${reemplazadas} que tenía`)}`
+      ? `${plural(imported, "1 del archivo reemplazó a", `${imported} del archivo reemplazaron a`)} ${objetivo}`
       : plural(imported, "se agregó 1 del archivo (no había ninguna que reemplazar)", `se agregaron ${imported} del archivo (no había ninguna que reemplazar)`),
   ];
   if (kept > 0) partes.push(plural(kept, "se conservó 1 sobre imagen", `se conservaron ${kept} sobre imagen`));

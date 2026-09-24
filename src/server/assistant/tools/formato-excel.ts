@@ -212,7 +212,9 @@ function plantillaExamen(examen: { id: string; title: string } | null): Plantill
       ejemplo: true,
       notas: [
         examen
-          ? "Ese examen todavía no tiene preguntas que quepan en este Excel: las filas grises son un ejemplo de cada tipo."
+          ? imagenes > 0
+            ? "Ese examen todavía no tiene preguntas que quepan en este Excel: las filas grises son un ejemplo de cada tipo."
+            : "Ese examen todavía no tiene preguntas: las filas grises son un ejemplo de cada tipo."
           : "Las filas grises son un ejemplo de cada tipo: bórralas o escribe encima.",
         ...(notaImagenes ? [notaImagenes] : []),
         ...NOTAS_EXAMEN,

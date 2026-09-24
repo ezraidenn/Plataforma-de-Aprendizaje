@@ -25,7 +25,7 @@ import {
 } from "@/server/services/exams";
 import { setExamResultsPublished } from "@/server/services/exam-results";
 import { audit } from "@/server/services/audit";
-import { sanitizeImageConfig } from "@/lib/image-questions";
+import { isImageQuestionType, sanitizeImageConfig } from "@/lib/image-questions";
 
 // ─── Guard común: el ítem debe ser un examen de un curso del maestro ─────────
 
@@ -260,7 +260,7 @@ function imageFilesError(
   input: QuestionInput,
   questionId?: string
 ): { error: string } | null {
-  if (input.type !== "image_drag" && input.type !== "image_click") return null;
+  if (!isImageQuestionType(input.type)) return null;
   const problem = imageQuestionFilesProblem(user, input.imageFileId, input.config, questionId);
   return problem ? { error: problem } : null;
 }

@@ -470,6 +470,11 @@ async function endToEnd() {
       afterR1.length === 3 && afterR1[1].id === imgId && afterR1.map((q) => q.type).join() === "single_choice,image_click,single_choice",
       afterR1.map((q) => ({ id: q.id, type: q.type }))
     );
+    check(
+      "Orden tras reemplazar con menos, por promptMd: N1 antes que N2",
+      afterR1.map((q) => q.promptMd).join() === [`${P} N1`, `${P} IMG`, `${P} N2`].join(),
+      afterR1.map((q) => q.promptMd)
+    );
     check("La imagen conserva su foto y config tras reordenar", afterR1[1].imageFileId === photo && readImageClick(afterR1[1]) !== null);
 
     // Más nuevas (4) que huecos (2): las que sobran van al final, la imagen
@@ -489,6 +494,11 @@ async function endToEnd() {
         afterR2[1].id === imgId &&
         afterR2.map((q) => q.type).join() === "single_choice,image_click,single_choice,single_choice,single_choice",
       afterR2.map((q) => q.type)
+    );
+    check(
+      "Orden tras reemplazar con más, por promptMd: M1..M4 en orden",
+      afterR2.map((q) => q.promptMd).join() === [`${P} M1`, `${P} IMG`, `${P} M2`, `${P} M3`, `${P} M4`].join(),
+      afterR2.map((q) => q.promptMd)
     );
   } finally {
     await cleanupDb();

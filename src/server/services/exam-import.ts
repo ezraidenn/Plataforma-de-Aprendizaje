@@ -13,7 +13,7 @@ import { audit } from "./audit";
  * cual en vez de borrarlas (`kept`) — y, para que el examen no quede
  * desordenado, cada una vuelve a su lugar original: las nuevas llenan los
  * huecos que dejaron las que sí se borraron, en su mismo orden, y las que
- * sobran (si hay menos nuevas que huecos) van al final. La auditoría guarda
+ * sobran (si hay más nuevas que huecos) van al final. La auditoría guarda
  * conteos, nunca el contenido.
  */
 export function importQuestionInputs(opts: {
