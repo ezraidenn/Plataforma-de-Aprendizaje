@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type ComponentProps } from "react";
+import { useCallback, useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { ImageBoard, relToRect } from "@/components/exam/image-board";
 import type { Guide } from "@/lib/image-layout";
 import { clamp01, type Point } from "@/lib/image-questions";
@@ -28,6 +28,9 @@ import { RULER_PX, useCanvasGestures, type CanvasZoom } from "./use-canvas-zoom"
  * clic que el navegador manda al soltar no cuenta como clic en la foto. Esc
  * lo cancela a medio dibujar, y también se cancela si el botón se soltó
  * fuera sin que la foto se enterara.
+ *
+ * `cover` (el rectángulo del recorte) va encima de todo; mientras está, lo
+ * colocado queda inerte y la foto sale del orden de Tab y no atiende teclas.
  */
 
 /** Rectángulo en coordenadas de la foto (0–1). */
@@ -49,12 +52,15 @@ export function ImageCanvas({
   grid,
   guides,
   distances,
+  cover,
   children,
   ref,
   className,
   style,
   ...board
 }: ComponentProps<typeof ImageBoard> & {
+  /** Capa encima de todo (el recorte de la foto): mientras está, lo demás no se toca. */
+  cover?: ReactNode;
   /** Zoom del lienzo (`useCanvasZoom`): el ancho de la foto y el contenedor que se desplaza. */
   zoom: CanvasZoom;
   /** Recuadro terminado. Sin esto (p. ej. mientras se coloca un elemento) no hay recuadro. */
@@ -77,6 +83,22 @@ export function ImageCanvas({
   const [area, setArea] = useState<Area | null>(null);
   const { wrapperProps, hand } = useCanvasGestures(zoom);
   const { boardRef, boardWidth, pad } = zoom;
+
+  // Al aparecer el recorte, la foto entera a la vista (con todos sus tiradores): se aleja lo justo, nunca se
+  // acerca. Al terminar vuelve el zoom de antes, si no se cambió mientras tanto
+  const covered = useRef<{ from: number; to: number | null } | null>(null);
+  useEffect(() => {
+    if (cover && !covered.current && zoom.viewport && zoom.fit > 0) {
+      const room = zoom.viewport.clientHeight - (rulers ? RULER_PX : 0) - 2 * pad;
+      const whole = Math.min(1, room / (zoom.fit * board.aspect));
+      const from = zoom.current.current;
+      covered.current = { from, to: from > whole + 1e-3 ? zoom.zoomTo(whole) : null };
+    } else if (!cover && covered.current) {
+      const { from, to } = covered.current;
+      covered.current = null;
+      if (to !== null && Math.abs(zoom.current.current - to) < 1e-3) zoom.zoomTo(from);
+    }
+  });
   // La foto la miden el zoom (para dejar quieto un punto) y quien usa el lienzo
   const setBoard = useCallback(
     (node: HTMLDivElement | null) => {
@@ -124,6 +146,8 @@ export function ImageCanvas({
   const photo = (
     <ImageBoard
       {...board}
+      // Con el recorte encima, la foto no se enfoca ni atiende teclas (Enter marcaría con la mira)
+      {...(cover ? { tabIndex: -1, onKeyDown: undefined } : {})}
       ref={setBoard}
       // Aislada: lo de dentro (lugares, guías) no pasa por encima de las reglas
       className={cn("isolate", className)}
@@ -183,7 +207,13 @@ export function ImageCanvas({
       }}
     >
       {grid ? <GridLines step={grid} /> : null}
-      {children}
+      {cover ? (
+        <div className="contents" inert>
+          {children}
+        </div>
+      ) : (
+        children
+      )}
       {guides?.map((g) => (
         <span
           key={`${g.axis}${g.at}`}
@@ -211,6 +241,7 @@ export function ImageCanvas({
           }}
         />
       )}
+      {cover}
     </ImageBoard>
   );
 

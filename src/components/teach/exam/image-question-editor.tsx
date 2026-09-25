@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
-import { CheckCircle2, CircleAlert, Eye, ImagePlus, ImageUp, Loader2, TriangleAlert } from "lucide-react";
+import { CheckCircle2, CircleAlert, Eye, ImagePlus, Loader2, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useFileDrop } from "@/components/exam/image-dnd";
 import { LiveRegion, useAnnouncer } from "@/components/exam/live-region";
@@ -26,15 +26,18 @@ import { cn } from "@/lib/utils";
 import { HistoryButtons } from "./image-canvas-toolbar";
 import { ClickEditor } from "./image-click-editor";
 import { DragEditor } from "./image-drag-editor";
+import { usePhotoTools } from "./image-photo-tools";
 import { PreviewDialog } from "./preview-button";
 import { isTypingTarget, useEditorHistory, type HistoryOptions } from "./use-editor-history";
 
 /**
  * Editor de las preguntas sobre imagen, dentro del banco de preguntas. Primero
  * la foto (clic o soltar el archivo); «Cambiar foto» (o soltar otra sobre la
- * foto) conserva lugares y puntos porque son relativos a la foto. Lo propio de
- * cada tipo vive en `image-drag-editor.tsx` y `image-click-editor.tsx`; el
- * valor (qué se abre, su forma, qué impide guardar), en `image-editor-value.ts`.
+ * foto) conserva lugares y puntos porque son relativos a la foto, y recortarla
+ * o girarla los recoloca (`image-photo-tools.tsx`; esas herramientas van en la
+ * barra de la foto). Lo propio de cada tipo vive en `image-drag-editor.tsx` y
+ * `image-click-editor.tsx`; el valor (qué se abre, su forma, qué impide
+ * guardar), en `image-editor-value.ts`.
  * Todo cambio (la foto y la config) pasa por el historial: Deshacer y Rehacer
  * (en la barra de la foto de cada tipo), también con Ctrl+Z y Ctrl+Mayús+Z o
  * Ctrl+Y mientras el foco está en el editor y no en un campo de texto. Debajo,
@@ -166,6 +169,20 @@ export function ImageQuestionEditor({
     [record, type]
   );
 
+  const photo = usePhotoTools({
+    type,
+    imageFileId,
+    config,
+    record,
+    uploading,
+    setUploading,
+    setError,
+    setNotice,
+    announce,
+    rootRef,
+    onPickPhoto: () => photoInput.current?.click(),
+  });
+
   /** Deshacer o rehacer; si lo que tenía el foco desaparece, el foco se queda en el editor (en el de lugares o puntos, si lo hay). */
   function travel(to: "undo" | "redo") {
     const root = rootRef.current;
@@ -236,30 +253,15 @@ export function ImageQuestionEditor({
         </>
       ) : (
         <>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              // Mientras sube no se deshabilita del todo: así el foco no se pierde (ni Ctrl+Z)
-              aria-disabled={uploading !== null}
-              className="aria-disabled:opacity-60"
-              onClick={() => uploading === null && photoInput.current?.click()}
-            >
-              {uploading === "photo" ? <Loader2 className="animate-spin" aria-hidden /> : <ImageUp aria-hidden />}
-              {uploading === "photo" ? "Subiendo…" : "Cambiar foto"}
-            </Button>
-            <span className="flex-1" />
-            {/* En «arrastrar», el tamaño es de cada elemento (panel «Seleccionado») */}
-            {type === "image_click" && (
-              <Segmented
-                label="Precisión"
-                value={(config as ImageClickConfig).precision}
-                options={PRECISIONS}
-                onChange={(precision) => setConfig<ImageClickConfig>((c) => ({ ...c, precision }))}
-              />
-            )}
-          </div>
+          {/* «Cambiar foto» va en la barra de la foto; en «arrastrar», el tamaño es de cada elemento (panel «Seleccionado») */}
+          {type === "image_click" && (
+            <Segmented
+              label="Precisión"
+              value={(config as ImageClickConfig).precision}
+              options={PRECISIONS}
+              onChange={(precision) => setConfig<ImageClickConfig>((c) => ({ ...c, precision }))}
+            />
+          )}
           {type === "image_drag" ? (
             <DragEditor
               imageFileId={imageFileId}
@@ -268,6 +270,7 @@ export function ImageQuestionEditor({
               setConfig={setConfig<ImageDragConfig>}
               gesture={history}
               history={undoRedo}
+              photo={photo}
               uploading={uploading}
               setUploading={setUploading}
               setError={setError}
@@ -282,6 +285,7 @@ export function ImageQuestionEditor({
               config={config as ImageClickConfig}
               setConfig={setConfig<ImageClickConfig>}
               history={undoRedo}
+              photo={photo}
               uploading={uploading !== null}
               setNotice={setNotice}
               announce={announce}

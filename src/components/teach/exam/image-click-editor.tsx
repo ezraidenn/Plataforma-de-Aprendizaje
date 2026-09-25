@@ -18,6 +18,7 @@ import {
 import { cn } from "@/lib/utils";
 import { ImageCanvas } from "./image-canvas";
 import { CanvasToolbar, useCanvasPrefs } from "./image-canvas-toolbar";
+import type { PhotoTools } from "./image-photo-tools";
 import { crosshairKeys, revealSoon, useCanvasZoom } from "./use-canvas-zoom";
 import type { HistoryOptions } from "./use-editor-history";
 import { useSpotDrag } from "./use-spot-drag";
@@ -25,7 +26,8 @@ import { useSpotDrag } from "./use-spot-drag";
 /**
  * «Señalar en la imagen» en el editor del maestro, sobre el mismo lienzo que
  * «arrastrar» (zoom, reglas, cuadrícula y guías) y con su barra: Deshacer y
- * Rehacer, Imán, Reglas, Cuadrícula y zoom. Clic en la foto marca un punto
+ * Rehacer, Imán, Reglas, Cuadrícula, zoom y la foto (recortar, girar,
+ * cambiar: los puntos se recolocan solos). Clic en la foto marca un punto
  * correcto; arrastrar un punto lo mueve (con imán a la línea de otros puntos,
  * a los bordes y el centro de la foto y a la cuadrícula) y un clic en él sin
  * moverlo lo quita. Con teclado: en la foto, flechas y Enter marcan (la mira);
@@ -50,6 +52,7 @@ export function ClickEditor({
   config,
   setConfig,
   history,
+  photo,
   uploading,
   setNotice,
   announce,
@@ -63,6 +66,8 @@ export function ClickEditor({
   setConfig: (fn: (c: ImageClickConfig) => ImageClickConfig, options?: HistoryOptions) => ImageClickConfig;
   /** Deshacer y Rehacer, para la barra. */
   history: { canUndo: boolean; canRedo: boolean; undo: () => void; redo: () => void };
+  /** Recortar, girar y cambiar la foto (la barra y el rectángulo del recorte). */
+  photo: PhotoTools;
   uploading: boolean;
   setNotice: (n: string | null) => void;
   announce: (text: string) => void;
@@ -155,7 +160,15 @@ export function ClickEditor({
       data-click-editor=""
       className="min-w-0 space-y-2 outline-none"
     >
-      <CanvasToolbar history={history} prefs={prefs} onToggle={toggle} zoom={zoom} what="puntos" announce={announce} />
+      <CanvasToolbar
+        history={history}
+        prefs={prefs}
+        onToggle={toggle}
+        zoom={zoom}
+        photo={photo}
+        what="puntos"
+        announce={announce}
+      />
       <ImageCanvas
         ref={setBoardNode}
         zoom={zoom}
@@ -165,6 +178,7 @@ export function ClickEditor({
         rulerMark={rulerMark}
         grid={grid}
         guides={drag.guides}
+        cover={photo.cover}
         onPointer={(p) => addSpot(p)}
         tabIndex={0}
         role="application"

@@ -58,6 +58,7 @@ import {
   alphaBounds,
   boxBounds,
   boxesOverlap,
+  cropConfig,
   distributeDeltas,
   elementBox,
   elementRatio,
@@ -66,6 +67,7 @@ import {
   iconBoxPx,
   iconSizeRange,
   normalizeRotation,
+  rotateConfig,
   shownAtMinimum,
   gridStepFor,
   snapMove,
@@ -79,6 +81,7 @@ import {
   zoomStep,
   type Bounds,
 } from "../src/lib/image-layout";
+import { MIN_CROP, cropRatio, fitCropRatio, moveCrop, resizeCrop, scaleCrop, type CropRect } from "../src/lib/photo-crop";
 
 let failures = 0;
 function check(name: string, cond: boolean, detail?: unknown) {
@@ -386,6 +389,77 @@ function canvasChecks() {
   const sg = snapSpot({ x: 0.648, y: 0.4 }, [], { tx: 0.005, ty: 0.005, grid: gridStepFor(2) });
   check("Punto: con cuadrícula al 200 %, se pega a la línea del 65 %", Math.abs(sg.p.x - 0.65) < 1e-9, sg);
   check("Punto: lejos de todo, no se mueve", JSON.stringify(snapSpot({ x: 0.33, y: 0.62 }, [{ x: 0.8, y: 0.1 }], { tx: 0.005, ty: 0.005 }).p) === JSON.stringify({ x: 0.33, y: 0.62 }));
+}
+
+function photoChecks() {
+  console.log("\n— Recortar y girar la foto");
+  const drag: ImageDragConfig = {
+    aspect: 0.5,
+    elements: [{ id: "a", kind: "icon", fileId: "f", size: 0.1, ratio: 1 }, { id: "t", kind: "text", text: "Hola", size: 0.02 }],
+    zones: [{ x: 0.3, y: 0.5, elementId: "a" }, { x: 0.9, y: 0.5, elementId: "t" }],
+  };
+  const c = cropConfig("image_drag", drag, { x: 0.2, y: 0.25, w: 0.5, h: 0.5 }) as { config: ImageDragConfig; removed: number };
+  check("Recorte: recoloca lo que queda dentro", c.config.zones.length === 1 && Math.abs(c.config.zones[0].x - 0.2) < 1e-9 && Math.abs(c.config.zones[0].y - 0.5) < 1e-9, c);
+  check("Recorte: quita y cuenta lo que queda fuera", c.removed === 1);
+  check("Recorte: el tamaño se ve igual sobre la foto", Math.abs((c.config.elements[0].size ?? 0) - 0.2) < 1e-9 && Math.abs((c.config.elements[1].size ?? 0) - 0.04) < 1e-9);
+  check("Recorte: nueva proporción", Math.abs(c.config.aspect - 0.5) < 1e-9, c.config.aspect);
+  const r = rotateConfig("image_drag", drag, "cw") as ImageDragConfig;
+  check("Girar a la derecha: (x, y) → (1 − y, x)", Math.abs(r.zones[0].x - 0.5) < 1e-9 && Math.abs(r.zones[0].y - 0.3) < 1e-9, r.zones[0]);
+  check("Girar: proporción invertida y tamaño ajustado", r.aspect === 2 && Math.abs((r.elements[0].size ?? 0) - 0.2) < 1e-9, r);
+  const l = rotateConfig("image_drag", drag, "ccw") as ImageDragConfig;
+  check("Girar a la izquierda: (x, y) → (y, 1 − x)", Math.abs(l.zones[0].x - 0.5) < 1e-9 && Math.abs(l.zones[0].y - 0.7) < 1e-9, l.zones[0]);
+  const click = { aspect: 1, precision: "md" as const, spots: [{ x: 0.1, y: 0.1 }, { x: 0.6, y: 0.6 }] };
+  const cc = cropConfig("image_click", click, { x: 0.5, y: 0.5, w: 0.5, h: 0.5 }) as { config: typeof click; removed: number };
+  check("Recorte en «Señalar»: puntos recolocados y fuera contados", cc.removed === 1 && Math.abs(cc.config.spots[0].x - 0.2) < 1e-9);
+  check("Elementos sin size: se materializa el suyo antes de escalar", Math.abs(((cropConfig("image_drag", { aspect: 1, iconSize: "md", elements: [{ id: "a", kind: "icon", fileId: "f" }], zones: [{ x: 0.5, y: 0.5, elementId: "a" }] }, { x: 0, y: 0, w: 0.5, h: 1 }) as { config: ImageDragConfig }).config.elements[0].size ?? 0) - (56 / 700) * 2) < 1e-9);
+
+  // Acotado: tras escalar, el tamaño queda dentro de lo que el editor ofrece con la foto nueva
+  const big: ImageDragConfig = {
+    aspect: 1,
+    elements: [{ id: "a", kind: "icon", fileId: "f", size: 0.3, ratio: 1.5, rotation: 30 }, { id: "t", kind: "text", text: "Hola", size: 0.05, rotation: -20 }],
+    zones: [{ x: 0.5, y: 0.5, elementId: "a" }, { x: 0.45, y: 0.2, elementId: "t" }],
+  };
+  const narrow = cropConfig("image_drag", big, { x: 0.4, y: 0, w: 0.2, h: 1 }).config as ImageDragConfig;
+  check("Acotado: ícono al máximo (0.5) y letra al máximo (0.08) en un recorte angosto", narrow.elements[0].size === 0.5 && narrow.elements[1].size === 0.08 && narrow.aspect === 5, narrow.elements);
+  const flat = cropConfig("image_drag", big, { x: 0, y: 0.45, w: 0.5, h: 0.1 }).config as ImageDragConfig;
+  check("Acotado: en una foto nueva muy apaisada, al tope de iconSizeRange", Math.abs(flat.aspect - 0.2) < 1e-9 && flat.elements[0].size === iconSizeRange(flat.aspect)[1] && flat.elements[0].size === 0.18, flat);
+  const tall: ImageDragConfig = { ...big, aspect: 2, elements: [{ ...big.elements[0], size: 0.03 }, { ...big.elements[1], size: 0.015 }] };
+  const turned = rotateConfig("image_drag", tall, "cw") as ImageDragConfig;
+  check("Acotado: al girar una foto alta, ícono y letra no bajan de su mínimo", turned.aspect === 0.5 && turned.elements[0].size === 0.02 && turned.elements[1].size === 0.01, turned.elements);
+  check("Tras acotar, la pregunta sigue siendo válida", imageDragProblem(narrow, true) === null && imageDragProblem(turned, true) === null, [imageDragProblem(narrow, true), imageDragProblem(turned, true)]);
+  const kept = [narrow, turned, rotateConfig("image_drag", big, "ccw") as ImageDragConfig];
+  check("La proporción y el giro de los elementos no cambian", kept.every((k) => k.elements[0].ratio === 1.5 && k.elements[0].rotation === 30 && k.elements[1].rotation === -20), kept.map((k) => k.elements));
+  const old = { ...big, iconSize: "md" as const };
+  check("El resultado ya no lleva iconSize", !("iconSize" in cropConfig("image_drag", old, { x: 0, y: 0, w: 1, h: 1 }).config) && !("iconSize" in rotateConfig("image_drag", old, "cw")));
+  const back = rotateConfig("image_drag", rotateConfig("image_drag", drag, "cw"), "ccw") as ImageDragConfig;
+  check("Girar a la derecha y a la izquierda: todo vuelve", back.aspect === drag.aspect && JSON.stringify(back.zones) === JSON.stringify(drag.zones) && back.elements[0].size === 0.1, back);
+  const four = [1, 2, 3, 4].reduce<ImageDragConfig>((k) => rotateConfig("image_drag", k, "cw") as ImageDragConfig, drag);
+  check("Cuatro giros a la derecha: todo vuelve", four.aspect === drag.aspect && JSON.stringify(four.zones) === JSON.stringify(drag.zones), four.zones);
+  const whole = cropConfig("image_drag", drag, { x: 0, y: 0, w: 1, h: 1 });
+  check("Recorte de la foto entera: nada cambia de sitio", whole.removed === 0 && JSON.stringify((whole.config as ImageDragConfig).zones) === JSON.stringify(drag.zones));
+  const edge = cropConfig("image_click", click, { x: 0.1, y: 0.1, w: 0.5, h: 0.5 });
+  check("Un punto justo en la orilla del recorte se queda", edge.removed === 0 && JSON.stringify((edge.config as ImageClickConfig).spots) === JSON.stringify([{ x: 0, y: 0 }, { x: 1, y: 1 }]), edge);
+  const cr = rotateConfig("image_click", { ...click, aspect: 0.5 }, "cw") as ImageClickConfig;
+  check("Girar en «Señalar»: puntos girados, proporción invertida y la precisión igual", cr.aspect === 2 && cr.precision === "md" && cr.spots[0].x === 0.9 && cr.spots[0].y === 0.1, cr);
+
+  console.log("\n— El rectángulo del recorte");
+  const full: CropRect = { x: 0, y: 0, w: 1, h: 1 };
+  const eq = (a: CropRect, b: CropRect) => (["x", "y", "w", "h"] as const).every((k) => Math.abs(a[k] - b[k]) < 1e-9);
+  check("Proporciones: 4:3 y 16:9 en la orientación de la foto; original, la suya; libre, ninguna",
+    cropRatio("4:3", 0.75) === 0.75 && cropRatio("4:3", 1.5) === 4 / 3 && cropRatio("16:9", 0.5) === 9 / 16 && cropRatio("1:1", 2) === 1 && cropRatio("original", 0.6) === 0.6 && cropRatio("free", 1) === null);
+  check("Elegir 1:1 con la foto entera (2:1): el cuadrado más grande, al centro", eq(fitCropRatio(full, 1, 0.5), { x: 0.25, y: 0, w: 0.5, h: 1 }), fitCropRatio(full, 1, 0.5));
+  check("Elegir 1:1 con un recorte ya hecho: cabe en él, con su mismo centro", eq(fitCropRatio({ x: 0, y: 0, w: 0.4, h: 0.4 }, 1, 0.5), { x: 0.1, y: 0, w: 0.2, h: 0.4 }), fitCropRatio({ x: 0, y: 0, w: 0.4, h: 0.4 }, 1, 0.5));
+  check("Libre: una esquina mueve sus dos lados", eq(resizeCrop(full, "se", { dx: -0.2, dy: -0.1 }, null, 1), { x: 0, y: 0, w: 0.8, h: 0.9 }));
+  check("Libre: un lado no cruza al de enfrente (mínimo)", eq(resizeCrop(full, "w", { dx: 2, dy: 0 }, null, 0.25), { x: 1 - MIN_CROP, y: 0, w: MIN_CROP, h: 1 }));
+  check("Libre: un lado no deja una franja de más de diez a uno", eq(resizeCrop(full, "w", { dx: 2, dy: 0 }, null, 1), { x: 0.9, y: 0, w: 0.1, h: 1 }));
+  check("Libre: una franja de más de diez a uno se detiene", eq(resizeCrop(full, "n", { dx: 0, dy: 0.97 }, null, 1), { x: 0, y: 0.9, w: 1, h: 0.1 }), resizeCrop(full, "n", { dx: 0, dy: 0.97 }, null, 1));
+  const sq: CropRect = { x: 0.25, y: 0, w: 0.5, h: 1 };
+  check("Con proporción: la esquina sigue al lado que más se movió", eq(resizeCrop(sq, "se", { dx: -0.1, dy: 0 }, 1, 0.5), { x: 0.25, y: 0, w: 0.4, h: 0.8 }), resizeCrop(sq, "se", { dx: -0.1, dy: 0 }, 1, 0.5));
+  check("Con proporción: no sale de la foto", eq(resizeCrop(sq, "se", { dx: 0.3, dy: 0 }, 1, 0.5), sq));
+  check("Con proporción: un lado cambia el otro, centrado", eq(resizeCrop(sq, "e", { dx: -0.1, dy: 0 }, 1, 0.5), { x: 0.25, y: 0.1, w: 0.4, h: 0.8 }), resizeCrop(sq, "e", { dx: -0.1, dy: 0 }, 1, 0.5));
+  check("Mover: se queda dentro de la foto", eq(moveCrop(sq, 0.5, -0.2), { x: 0.5, y: 0, w: 0.5, h: 1 }));
+  const mid: CropRect = { x: 0.25, y: 0.25, w: 0.5, h: 0.5 };
+  check("+ y −: desde el centro, hasta la foto entera y hasta el mínimo", eq(scaleCrop(mid, 2), full) && eq(scaleCrop(mid, 0.01), { x: 0.475, y: 0.475, w: MIN_CROP, h: MIN_CROP }), scaleCrop(mid, 0.01));
 }
 
 function sanitizeChecks() {
@@ -875,6 +949,7 @@ async function main() {
   validationChecks();
   layoutChecks();
   canvasChecks();
+  photoChecks();
   sanitizeChecks();
   previewChecks();
   await endToEnd();

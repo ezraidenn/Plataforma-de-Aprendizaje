@@ -1,9 +1,10 @@
 /**
  * Geometría de «arrastrar a la imagen»: tamaño efectivo de cada elemento,
- * cajas (con proporción y giro), píxeles con mínimos de legibilidad y límites
- * del dibujo de un ícono. Puro (sin DOM ni BD): lo usan el servidor, el
- * alumno, el editor y las pruebas. Coordenadas relativas a la foto: x en
- * fracciones del ancho, y en fracciones del alto; `aspect` = alto / ancho.
+ * cajas (con proporción y giro), píxeles con mínimos de legibilidad, límites
+ * del dibujo de un ícono, y lugares y puntos recolocados al recortar o girar
+ * la foto. Puro (sin DOM ni BD): lo usan el servidor, el alumno, el editor y
+ * las pruebas. Coordenadas relativas a la foto: x en fracciones del ancho, y
+ * en fracciones del alto; `aspect` = alto / ancho.
  */
 import {
   DEFAULT_ICON_SIZE,
@@ -14,8 +15,11 @@ import {
   TEXT_SIZE_RANGE,
   clamp01,
   normalizeRotation,
+  round4,
   validAspect,
   type IconSize,
+  type ImageClickConfig,
+  type ImageDragConfig,
   type ImageElement,
   type ImageItemView,
   type Point,
@@ -91,6 +95,70 @@ export function shownAtMinimum(kind: ImageElement["kind"], size: number, boardWi
 /** Tamaño de letra en píxeles, sin bajar de MIN_TEXT_PX. */
 export function textPx(size: number, boardWidth: number): number {
   return Math.max(MIN_TEXT_PX, Math.round(size * (boardWidth > 0 ? boardWidth : REF_WIDTH) * 10) / 10);
+}
+
+/** Rectángulo de la foto: x y ancho en fracciones del ancho; y y alto, del alto. */
+export type CropRect = { x: number; y: number; w: number; h: number };
+type AnyConfig = ImageDragConfig | ImageClickConfig;
+
+const inside = (p: Point) => p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1;
+const clampTo = (n: number, [min, max]: readonly [number, number]) => Math.min(max, Math.max(min, n));
+
+/**
+ * Los elementos con su tamaño ya escrito (los de antes lo derivan de
+ * `iconSize`) y multiplicado por `scale`, dentro de lo que el editor ofrece
+ * con la foto nueva de proporción `aspect`. Su proporción y su giro no cambian.
+ */
+function scaledElements(c: ImageDragConfig, scale: number, aspect: number): ImageElement[] {
+  return c.elements.map((e) => ({
+    ...e,
+    size: round4(clampTo(elementSize(e, c.iconSize) * scale, e.kind === "icon" ? iconSizeRange(aspect) : TEXT_SIZE_RANGE)),
+  }));
+}
+
+/**
+ * La config tras recortar la foto a `crop`: lugares (o puntos) recolocados
+ * para seguir sobre lo mismo, los que quedan fuera quitados (y contados), y
+ * tamaños que se ven igual sobre la foto (el ancho nuevo es `crop.w` del de
+ * antes). Sin `iconSize`: cada elemento lleva el suyo.
+ */
+export function cropConfig(type: "image_drag" | "image_click", config: AnyConfig, crop: CropRect): { config: AnyConfig; removed: number } {
+  const move = (p: Point): Point => ({ x: round4((p.x - crop.x) / crop.w), y: round4((p.y - crop.y) / crop.h) });
+  const aspect = round4((crop.h / crop.w) * config.aspect);
+  if (type === "image_click") {
+    const c = config as ImageClickConfig;
+    const spots = c.spots.map(move);
+    const kept = spots.filter(inside);
+    return { config: { ...c, aspect, spots: kept }, removed: spots.length - kept.length };
+  }
+  const c = config as ImageDragConfig;
+  const zones = c.zones.map((z) => ({ ...z, ...move(z) }));
+  const kept = zones.filter(inside);
+  const { iconSize: _old, ...rest } = c;
+  void _old;
+  return {
+    config: { ...rest, aspect, elements: scaledElements(c, 1 / crop.w, aspect), zones: kept },
+    removed: zones.length - kept.length,
+  };
+}
+
+/**
+ * La config tras girar la foto 90° a la derecha (cw) o a la izquierda (ccw):
+ * lugares y puntos girados con ella. Los elementos no giran (son símbolos que
+ * deben verse derechos); el ancho nuevo es el alto de antes (ancho × aspect),
+ * así que el mismo tamaño en píxeles es `size / aspect`.
+ */
+export function rotateConfig(type: "image_drag" | "image_click", config: AnyConfig, dir: "cw" | "ccw"): AnyConfig {
+  const turn = (p: Point): Point => (dir === "cw" ? { x: round4(1 - p.y), y: round4(p.x) } : { x: round4(p.y), y: round4(1 - p.x) });
+  const aspect = round4(1 / config.aspect);
+  if (type === "image_click") {
+    const c = config as ImageClickConfig;
+    return { ...c, aspect, spots: c.spots.map(turn) };
+  }
+  const c = config as ImageDragConfig;
+  const { iconSize: _old, ...rest } = c;
+  void _old;
+  return { ...rest, aspect, elements: scaledElements(c, 1 / c.aspect, aspect), zones: c.zones.map((z) => ({ ...z, ...turn(z) })) };
 }
 
 /** Radio de encaje de un elemento: el general o, si es grande, la mitad de su tamaño (en un ícono, de su lado mayor). */

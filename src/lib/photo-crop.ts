@@ -1,0 +1,170 @@
+/**
+ * El rectángulo del recorte de la foto en el editor: tiradores, proporciones,
+ * mover y agrandar o achicar con el teclado. Puro (sin DOM): lo usa
+ * `image-photo-tools.tsx` y lo prueba `pnpm smoke:image`.
+ *
+ * Todo en coordenadas de la foto (`CropRect`: x y ancho en fracciones del
+ * ancho; y y alto, del alto). Una proporción es alto / ancho en píxeles: con
+ * la foto de proporción `aspect`, un rectángulo de ancho `w` la tiene si su
+ * alto es `R · w / aspect`. El rectángulo nunca sale de la foto, no baja de
+ * MIN_CROP por lado ni deja una foto más de diez veces más ancha que alta (ni
+ * al revés), lo máximo que se acepta.
+ */
+import type { CropRect } from "./image-layout";
+
+export type { CropRect };
+
+/** Lo más chico que se deja recortar: esta fracción de cada lado de la foto. */
+export const MIN_CROP = 0.05;
+/** La foto entera: el recorte con el que se empieza. */
+export const FULL_CROP: CropRect = { x: 0, y: 0, w: 1, h: 1 };
+
+export type CropHandle = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
+export type CropChoice = "free" | "original" | "1:1" | "4:3" | "16:9";
+
+/** Proporción (alto / ancho) de una elección, en la orientación de la foto (una foto vertical recorta 3:4); null: libre. */
+export function cropRatio(choice: CropChoice, aspect: number): number | null {
+  const tall = aspect > 1;
+  switch (choice) {
+    case "free":
+      return null;
+    case "original":
+      return aspect;
+    case "1:1":
+      return 1;
+    case "4:3":
+      return tall ? 4 / 3 : 3 / 4;
+    case "16:9":
+      return tall ? 16 / 9 : 9 / 16;
+  }
+}
+
+const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n));
+const r9 = (n: number) => Math.round(n * 1e9) / 1e9;
+const tidy = (r: CropRect): CropRect => ({ x: r9(r.x), y: r9(r.y), w: r9(r.w), h: r9(r.h) });
+
+/** Es la foto entera (o casi): recortar no cambiaría nada. */
+export function isFullCrop(r: CropRect): boolean {
+  return r.x < 1e-3 && r.y < 1e-3 && r.w > 1 - 1e-3 && r.h > 1 - 1e-3;
+}
+
+/** El rectángulo de ancho `w` y alto `h` con centro en (cx, cy), corrido lo justo para quedar dentro de la foto. */
+function centered(cx: number, cy: number, w: number, h: number): CropRect {
+  return tidy({ x: clamp(cx - w / 2, 0, 1 - w), y: clamp(cy - h / 2, 0, 1 - h), w, h });
+}
+
+/** Límites del ancho de un rectángulo de proporción R (en px), dado el ancho y el alto que hay. */
+function widthLimits(R: number, aspect: number, roomW: number, roomH: number): { min: number; max: number } {
+  const max = Math.min(roomW, (roomH * aspect) / R);
+  return { min: Math.min(max, Math.max(MIN_CROP, (MIN_CROP * aspect) / R)), max };
+}
+
+/**
+ * Al elegir una proporción: el rectángulo más grande que la tiene dentro del
+ * recorte de ahora, con su mismo centro (desde la foto entera: el más grande
+ * de la foto, al centro). Nunca más chico que el mínimo.
+ */
+export function fitCropRatio(r: CropRect, R: number, aspect: number): CropRect {
+  const cx = r.x + r.w / 2;
+  const cy = r.y + r.h / 2;
+  const lim = widthLimits(R, aspect, 1, 1);
+  const w = clamp(Math.min(r.w, (r.h * aspect) / R), lim.min, lim.max);
+  return centered(cx, cy, w, (R * w) / aspect);
+}
+
+/** Mover el rectángulo entero, sin salir de la foto. */
+export function moveCrop(r: CropRect, dx: number, dy: number): CropRect {
+  return tidy({ ...r, x: clamp(r.x + dx, 0, 1 - r.w), y: clamp(r.y + dy, 0, 1 - r.h) });
+}
+
+/** + y −: agrandar o achicar desde el centro, con su proporción, entre el mínimo y la foto entera. */
+export function scaleCrop(r: CropRect, factor: number): CropRect {
+  const f = clamp(factor, Math.max(MIN_CROP / r.w, MIN_CROP / r.h), Math.min(1 / r.w, 1 / r.h));
+  return centered(r.x + r.w / 2, r.y + r.h / 2, r.w * f, r.h * f);
+}
+
+/**
+ * Arrastrar un tirador desde el rectángulo `start` (d: lo que se movió el
+ * puntero, en fracciones de la foto). Libre (R null): cada tirador mueve sus
+ * lados; si la foto quedaría de más de diez a uno, el lado arrastrado se
+ * detiene (en una esquina, se acorta el lado que sobra). Con proporción: la
+ * esquina de enfrente queda fija y manda el lado que más se movió; un tirador
+ * de lado cambia también el otro lado, desde el centro.
+ */
+export function resizeCrop(start: CropRect, handle: CropHandle, d: { dx: number; dy: number }, R: number | null, aspect: number): CropRect {
+  const west = handle.includes("w");
+  const east = handle.includes("e");
+  const north = handle.includes("n");
+  const south = handle.includes("s");
+  const right = start.x + start.w;
+  const bottom = start.y + start.h;
+  if (R !== null) return tidy(resizeLocked(start, { west, east, north, south }, d, R, aspect));
+
+  let left = start.x;
+  let rgt = right;
+  let top = start.y;
+  let bot = bottom;
+  if (west) left = clamp(left + d.dx, 0, rgt - MIN_CROP);
+  if (east) rgt = clamp(rgt + d.dx, left + MIN_CROP, 1);
+  if (north) top = clamp(top + d.dy, 0, bot - MIN_CROP);
+  if (south) bot = clamp(bot + d.dy, top + MIN_CROP, 1);
+  let w = rgt - left;
+  let h = bot - top;
+  const ratio = (h / w) * aspect;
+  const corner = (west || east) && (north || south);
+  if (ratio > 10 || ratio < 0.1) {
+    const tooTall = ratio > 10;
+    // Se ajusta el lado que se arrastra; en una esquina, se acorta el que sobra
+    const fixWidth = corner ? !tooTall : west || east;
+    if (fixWidth) {
+      w = (h * aspect) / (tooTall ? 10 : 0.1);
+      if (west) left = rgt - w;
+      else if (east) rgt = left + w;
+      else left = (left + rgt) / 2 - w / 2;
+    } else {
+      h = (w * (tooTall ? 10 : 0.1)) / aspect;
+      if (north) top = bot - h;
+      else if (south) bot = top + h;
+      else top = (top + bot) / 2 - h / 2;
+    }
+  }
+  return tidy({ x: left, y: top, w, h });
+}
+
+function resizeLocked(
+  start: CropRect,
+  side: { west: boolean; east: boolean; north: boolean; south: boolean },
+  d: { dx: number; dy: number },
+  R: number,
+  aspect: number
+): CropRect {
+  const { west, east, north, south } = side;
+  const right = start.x + start.w;
+  const bottom = start.y + start.h;
+  const cx = start.x + start.w / 2;
+  const cy = start.y + start.h / 2;
+  const candW = start.w + (east ? d.dx : west ? -d.dx : 0);
+  const candH = start.h + (south ? d.dy : north ? -d.dy : 0);
+  if ((west || east) && (north || south)) {
+    // Esquina: la de enfrente queda fija; manda el lado que más cambió
+    const fw = candW / start.w;
+    const fh = candH / start.h;
+    const f = Math.abs(fw - 1) >= Math.abs(fh - 1) ? fw : fh;
+    const lim = widthLimits(R, aspect, east ? 1 - start.x : right, south ? 1 - start.y : bottom);
+    const w = clamp(start.w * f, lim.min, lim.max);
+    const h = (R * w) / aspect;
+    return { x: east ? start.x : right - w, y: south ? start.y : bottom - h, w, h };
+  }
+  if (west || east) {
+    // Lado izquierdo o derecho: el alto acompaña, centrado
+    const lim = widthLimits(R, aspect, east ? 1 - start.x : right, 2 * Math.min(cy, 1 - cy));
+    const w = clamp(candW, lim.min, lim.max);
+    const h = (R * w) / aspect;
+    return { x: east ? start.x : right - w, y: cy - h / 2, w, h };
+  }
+  // Lado de arriba o de abajo: el ancho acompaña, centrado
+  const lim = widthLimits(R, aspect, 2 * Math.min(cx, 1 - cx), south ? 1 - start.y : bottom);
+  const w = clamp((candH * aspect) / R, lim.min, lim.max);
+  const h = (R * w) / aspect;
+  return { x: cx - w / 2, y: south ? start.y : bottom - h, w, h };
+}

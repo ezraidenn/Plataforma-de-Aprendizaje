@@ -30,6 +30,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ZOOM_MAX, ZOOM_MIN, gridStepFor, type AlignMode } from "@/lib/image-layout";
+import { CropBar, PhotoButtons, type PhotoTools } from "./image-photo-tools";
 import type { CanvasZoom } from "./use-canvas-zoom";
 
 /**
@@ -37,11 +38,12 @@ import type { CanvasZoom } from "./use-canvas-zoom";
  * imagen» y «señalar en la imagen»: Deshacer y Rehacer · (solo en arrastrar)
  * Duplicar, Alinear ▾ y Repartir ▾ · los interruptores Imán, Reglas y
  * Cuadrícula (recordados en este navegador, los mismos en los dos editores) ·
- * el zoom: −, el porcentaje, + y «Ajustar». Después vendrán las herramientas
- * de la foto (tarea 9). En pantallas angostas se acomoda en varias filas. Lo
- * que aún no aplica (alinear con menos de dos lugares, acercar más allá del
- * 400 %) no se deshabilita del todo: así el foco no se pierde, y al pulsarlo
- * se dice qué falta.
+ * el zoom: −, el porcentaje, + y «Ajustar» · la foto: Recortar, Girar ⟲ ⟳ y
+ * Cambiar (`image-photo-tools.tsx`). Mientras se recorta, en su lugar va la
+ * barra del recorte (con el zoom). En pantallas angostas se acomoda en varias
+ * filas. Lo que aún no aplica (alinear con menos de dos lugares, acercar más
+ * allá del 400 %) no se deshabilita del todo: así el foco no se pierde, y al
+ * pulsarlo se dice qué falta.
  */
 
 export type CanvasPrefs = { magnet: boolean; rulers: boolean; grid: boolean };
@@ -160,6 +162,7 @@ export function CanvasToolbar({
   prefs,
   onToggle,
   zoom,
+  photo,
   what = "lugares",
   announce,
 }: {
@@ -169,11 +172,14 @@ export function CanvasToolbar({
   prefs: CanvasPrefs;
   onToggle: (key: keyof CanvasPrefs) => void;
   zoom: CanvasZoom;
+  /** Recortar, girar y cambiar la foto. */
+  photo: PhotoTools;
   /** Lo que se acomoda, para el título del imán («lugares», «puntos»). */
   what?: string;
   announce: (text: string) => void;
 }) {
   const gridPct = Math.round(gridStepFor(zoom.zoom) * 100);
+  if (photo.crop) return <CropBar photo={photo} zoom={<ZoomButtons zoom={zoom} announce={announce} />} />;
   return (
     <div
       role="group"
@@ -207,7 +213,8 @@ export function CanvasToolbar({
       </div>
       <Divider />
       <ZoomButtons zoom={zoom} announce={announce} />
-      {/* Aquí irán las herramientas de la foto (tarea 9) */}
+      <Divider />
+      <PhotoButtons photo={photo} />
     </div>
   );
 }

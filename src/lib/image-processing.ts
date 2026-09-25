@@ -1,13 +1,18 @@
 /**
- * Preparación de imágenes en el navegador antes de subirlas (canvas → Blob).
+ * Preparación de imágenes en el navegador antes de subirlas (canvas → Blob):
+ * íconos sin márgenes transparentes, y la foto de fondo recortada o girada.
  * Solo navegador: usa `createImageBitmap` y `document`. La geometría pura
- * (límites del dibujo) vive en image-layout.
+ * (límites del dibujo, recolocar lugares) vive en image-layout.
  */
-import { alphaBounds } from "./image-layout";
+import { alphaBounds, type CropRect } from "./image-layout";
 import { round4 } from "./image-questions";
 
 /** Lado mayor máximo de un ícono guardado. */
 export const MAX_ICON_SIDE = 800;
+/** Máximo que acepta la subida (una imagen del editor). */
+export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+/** Cada cuántos píxeles (en cada eje) se mira si la foto tiene transparencia. */
+const ALPHA_STRIDE = 16;
 /** Más píxeles que esto: se reduce antes de leerla (no hace falta leer cada píxel de una foto enorme). */
 const MAX_READ_PIXELS = 16_000_000;
 /** Lado de la versión chica con la que se revisa si un ícono ya subido tiene margen. */
@@ -42,13 +47,13 @@ function opaqueWithin(data: Uint8ClampedArray, width: number, r: Rect): boolean 
   return true;
 }
 
-/** El lienzo en el formato pedido. */
-function encode(canvas: HTMLCanvasElement, type: "image/png" | "image/jpeg"): Promise<Blob> {
+/** El lienzo en el formato pedido (JPEG, con esa calidad). */
+function encode(canvas: HTMLCanvasElement, type: "image/png" | "image/jpeg", quality = 0.9): Promise<Blob> {
   return new Promise<Blob>((ok, fail) =>
     canvas.toBlob(
       (b) => (b ? ok(b) : fail(new Error("El navegador no exportó la imagen"))),
       type,
-      type === "image/jpeg" ? 0.9 : undefined
+      type === "image/jpeg" ? quality : undefined
     )
   );
 }
@@ -162,5 +167,97 @@ export async function inspectIcon(blob: Blob): Promise<IconInspection> {
   } finally {
     bitmap.close();
     release(canvas);
+  }
+}
+
+/** Una operación sobre la foto de fondo: recortarla a un rectángulo relativo o girarla 90°. */
+export type PhotoOp = { crop: CropRect } | { rotate: "cw" | "ccw" };
+/**
+ * La foto transformada, lista para subir. `aspect`: alto / ancho del
+ * resultado. `crop`: el recorte hecho de verdad (a píxeles enteros, relativo a
+ * la foto de antes): con él se recolocan lugares y puntos.
+ */
+export type TransformedPhoto = { blob: Blob; aspect: number; name: string; crop?: CropRect };
+
+/** Algún píxel con transparencia, mirando uno de cada ALPHA_STRIDE en cada eje (y la última fila y columna). */
+function hasTransparency(ctx: CanvasRenderingContext2D, width: number, height: number): boolean {
+  const rows = new Set<number>([height - 1]);
+  for (let y = 0; y < height; y += ALPHA_STRIDE) rows.add(y);
+  for (const y of rows) {
+    // Fila por fila: una foto grande no se copia entera a la memoria
+    const data = ctx.getImageData(0, y, width, 1).data;
+    if (data[(width - 1) * 4 + 3] < 255) return true;
+    for (let x = 0; x < width; x += ALPHA_STRIDE) if (data[x * 4 + 3] < 255) return true;
+  }
+  return false;
+}
+
+/** Un rectángulo relativo en píxeles enteros de una imagen de W×H (al menos 1×1). */
+function pixelRect(r: CropRect, W: number, H: number) {
+  const x = Math.min(W - 1, Math.max(0, Math.round(r.x * W)));
+  const y = Math.min(H - 1, Math.max(0, Math.round(r.y * H)));
+  const right = Math.min(W, Math.max(x + 1, Math.round((r.x + r.w) * W)));
+  const bottom = Math.min(H, Math.max(y + 1, Math.round((r.y + r.h) * H)));
+  return { x, y, w: right - x, h: bottom - y };
+}
+
+/**
+ * Recorta (a la resolución original) o gira 90° la foto. Sale en JPEG 0.9 si
+ * no tiene transparencia; si la tiene, en PNG. Si pasa de MAX_UPLOAD_BYTES:
+ * JPEG 0.8 (sin transparencia) y luego cada vez al 85 % hasta que quepa. El
+ * nombre es el de la foto con «-recorte» o «-girada». Lanza Error si el
+ * navegador no la puede leer o exportar.
+ */
+export async function transformPhoto(src: Blob, op: PhotoOp, name = src instanceof File ? src.name : "foto"): Promise<TransformedPhoto> {
+  const bitmap = await createImageBitmap(src, { imageOrientation: "from-image" });
+  const canvas = document.createElement("canvas");
+  const smaller = document.createElement("canvas");
+  try {
+    const { width: W, height: H } = bitmap;
+    const rect = "crop" in op ? pixelRect(op.crop, W, H) : null;
+    canvas.width = rect ? rect.w : H;
+    canvas.height = rect ? rect.h : W;
+    // Un JPEG no tiene transparencia: ni se lee. Lo demás, sin la tarjeta gráfica (se lee más rápido)
+    const mayBeClear = src.type !== "image/jpeg";
+    const ctx = canvas.getContext("2d", { willReadFrequently: mayBeClear });
+    if (!ctx) throw new Error("Sin contexto 2d para preparar la foto");
+    if (rect) ctx.drawImage(bitmap, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w, rect.h);
+    else if ("rotate" in op) {
+      // A la derecha, (x, y) → (H − y, x); a la izquierda, (x, y) → (y, W − x)
+      const cw = op.rotate === "cw";
+      ctx.translate(cw ? H : 0, cw ? 0 : W);
+      ctx.rotate(cw ? Math.PI / 2 : -Math.PI / 2);
+      ctx.drawImage(bitmap, 0, 0);
+    }
+    const clear = mayBeClear && hasTransparency(ctx, canvas.width, canvas.height);
+    const type = clear ? "image/png" : "image/jpeg";
+    let quality = 0.9;
+    let out = canvas;
+    let blob = await encode(canvas, type, quality);
+    if (blob.size > MAX_UPLOAD_BYTES && !clear) {
+      quality = 0.8;
+      blob = await encode(canvas, type, quality);
+    }
+    for (let scale = 0.85; blob.size > MAX_UPLOAD_BYTES; scale *= 0.85) {
+      if (scale < 0.05) throw new Error("La foto quedó demasiado pesada: usa una más ligera");
+      smaller.width = Math.max(1, Math.round(canvas.width * scale));
+      smaller.height = Math.max(1, Math.round(canvas.height * scale));
+      const sctx = smaller.getContext("2d");
+      if (!sctx) throw new Error("Sin contexto 2d para reducir la foto");
+      sctx.imageSmoothingQuality = "high";
+      sctx.drawImage(canvas, 0, 0, smaller.width, smaller.height);
+      out = smaller;
+      blob = await encode(smaller, type, quality);
+    }
+    const base = name.replace(/\.[^.]+$/, "").replace(/-(recorte|girada)$/, "") || "foto";
+    return {
+      blob,
+      aspect: round4(out.height / out.width),
+      name: `${base}-${rect ? "recorte" : "girada"}.${clear ? "png" : "jpg"}`,
+      ...(rect ? { crop: { x: rect.x / W, y: rect.y / H, w: rect.w / W, h: rect.h / H } } : {}),
+    };
+  } finally {
+    bitmap.close();
+    release(canvas, smaller);
   }
 }

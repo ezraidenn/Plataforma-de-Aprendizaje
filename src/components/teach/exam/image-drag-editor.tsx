@@ -24,6 +24,7 @@ import { CanvasToolbar, useCanvasPrefs } from "./image-canvas-toolbar";
 import { ElementAdder } from "./image-element-adder";
 import { ElementPanel } from "./image-element-panel";
 import { ElementList } from "./image-element-row";
+import type { PhotoTools } from "./image-photo-tools";
 import { DragGhost, PlacedZone } from "./image-placed-zone";
 import { useTransformTool } from "./image-transform-box";
 import { useCanvasTools } from "./use-canvas-tools";
@@ -37,20 +38,16 @@ import { useZoneWarnings } from "./use-zone-warnings";
 
 /**
  * «Arrastrar a la imagen» en el editor del maestro. A la derecha (debajo en
- * pantallas angostas) los elementos, íconos o etiquetas. Arrastrar uno a la
- * foto crea un lugar donde se suelta (también: su botón «Colocar» y un clic en
- * la foto, o con teclado Enter, flechas y Enter). Los lugares muestran el
- * elemento real y el número «Lugar N» que ve el alumno; se seleccionan con un
- * clic (Mayús+clic suma, arrastrar sobre la foto hace un recuadro, Ctrl+A
- * todos, Espacio sobre uno lo suma) y lo seleccionado se arrastra junto (con
- * imán y guías), se mueve con las flechas, se duplica (Ctrl+D), se alinea, se
- * reparte o se quita (Supr). Con lugares de un solo elemento, su caja estira y
- * gira el elemento (también + − [ ]). Un lugar solo se quita también sacándolo
- * de la foto. Todo cambio pasa por el historial del editor (deshacer). Soltar
- * un archivo sobre la foto la cambia; sobre la lista, lo agrega como ícono. Un
- * clic en un elemento de la lista o en lugares de un solo elemento lo lleva al
- * panel «Seleccionado» (tamaño y giro). Arriba, la barra de herramientas; la
- * foto va en el lienzo con zoom (Ctrl+rueda, Espacio+arrastrar).
+ * pantallas angostas) los elementos. Arrastrar uno a la foto crea un lugar
+ * (también «Colocar» y un clic, o Enter, flechas y Enter). Los lugares, con el
+ * «Lugar N» del alumno, se seleccionan (clic, Mayús+clic, recuadro, Ctrl+A,
+ * Espacio) y lo seleccionado se arrastra junto (imán y guías), se mueve con
+ * las flechas, se duplica, se alinea, se reparte o se quita. Con lugares de un
+ * solo elemento, su caja lo estira y gira (+ − [ ]), como el panel
+ * «Seleccionado». Todo pasa por el historial. Un archivo soltado sobre la foto
+ * la cambia; sobre la lista, es un ícono. Arriba, la barra (también recortar y
+ * girar la foto: mientras se recorta, nada más se toca); la foto va en el
+ * lienzo con zoom (Ctrl+rueda, Espacio+arrastrar).
  */
 export function DragEditor({
   imageFileId,
@@ -59,6 +56,7 @@ export function DragEditor({
   setConfig,
   gesture,
   history,
+  photo,
   uploading,
   setUploading,
   setError,
@@ -76,6 +74,8 @@ export function DragEditor({
   gesture: { begin: () => void; commit: () => void; cancel: () => void };
   /** Deshacer y Rehacer, para la barra. */
   history: { canUndo: boolean; canRedo: boolean; undo: () => void; redo: () => void };
+  /** Recortar, girar y cambiar la foto (la barra y el rectángulo del recorte). */
+  photo: PhotoTools;
   uploading: "photo" | "icon" | null;
   setUploading: (u: "photo" | "icon" | null) => void;
   setError: (e: string | null) => void;
@@ -221,11 +221,14 @@ export function DragEditor({
     return () => document.removeEventListener("keydown", onKey);
   }, [chosen, hasSelection, panelId, clearSelection, announce, boardNode]);
 
-  // Tras deshacer, lo elegido (para colocar o en el panel) puede ya no existir
+  // Tras deshacer, lo elegido (para colocar o en el panel) puede ya no existir; al recortar
+  // la foto se suelta todo, también lo seleccionado (mientras, nada más se toca)
+  const cropping = photo.crop !== null;
   useEffect(() => {
-    if (chosen && !byId.has(chosen)) setChosen(null);
-    if (panelId && !byId.has(panelId)) setPanelId(null);
-  }, [byId, chosen, panelId]);
+    if (chosen && (cropping || !byId.has(chosen))) setChosen(null);
+    if (panelId && (cropping || !byId.has(panelId))) setPanelId(null);
+    if (cropping) clearSelection();
+  }, [byId, chosen, panelId, cropping, clearSelection]);
 
   // Foco tras una acción: el botón nuevo (o el que se movió) está en el siguiente render
   useEffect(() => {
@@ -348,6 +351,7 @@ export function DragEditor({
             prefs={prefs}
             onToggle={togglePref}
             zoom={zoom}
+            photo={photo}
             announce={announce}
           />
           <ImageCanvas
@@ -360,6 +364,7 @@ export function DragEditor({
             grid={gridStep}
             guides={tools.guides}
             distances={tools.distances}
+            cover={photo.cover}
             onFocus={(e) => {
               const zone = (e.target as HTMLElement).closest<HTMLElement>("[data-zone]");
               if (zone) setFocusZone(Number(zone.dataset.zone));
@@ -437,7 +442,7 @@ export function DragEditor({
           )}
         </div>
 
-        <div className="relative space-y-2 rounded-xl" {...panelDrop.dropProps}>
+        <div className={cn("relative space-y-2 rounded-xl", cropping && "opacity-50")} inert={cropping} {...panelDrop.dropProps}>
           {elements.length > 0 && (
             <ElementPanel
               element={panelElement}
