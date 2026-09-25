@@ -7,8 +7,12 @@
  * ancho; y y alto, del alto). Una proporción es alto / ancho en píxeles: con
  * la foto de proporción `aspect`, un rectángulo de ancho `w` la tiene si su
  * alto es `R · w / aspect`. El rectángulo nunca sale de la foto, no baja de
- * MIN_CROP por lado ni deja una foto más de diez veces más ancha que alta (ni
- * al revés), lo máximo que se acepta.
+ * MIN_CROP por lado ni deja una foto más de MAX_CROP_RATIO veces más ancha que
+ * alta (ni al revés), un poco menos del diez a uno que se acepta.
+ *
+ * También, en píxeles: el recorte redondeado que se hará de verdad
+ * (`pixelRect`, `snapCrop`) y el tamaño de una foto reducida (`scaledSize`),
+ * siempre dentro de ese diez a uno (`validAspect`).
  */
 import type { CropRect } from "./image-layout";
 
@@ -16,6 +20,10 @@ export type { CropRect };
 
 /** Lo más chico que se deja recortar: esta fracción de cada lado de la foto. */
 export const MIN_CROP = 0.05;
+/** Lo más alargado que se deja el recorte (alto / ancho, o al revés): un poco adentro del 10 que se acepta. */
+export const MAX_CROP_RATIO = 9.99;
+/** Lo que se acepta de verdad (`validAspect`), ya en píxeles enteros. */
+const MAX_RATIO = 10;
 /** La foto entera: el recorte con el que se empieza. */
 export const FULL_CROP: CropRect = { x: 0, y: 0, w: 1, h: 1 };
 
@@ -46,6 +54,47 @@ const tidy = (r: CropRect): CropRect => ({ x: r9(r.x), y: r9(r.y), w: r9(r.w), h
 /** Es la foto entera (o casi): recortar no cambiaría nada. */
 export function isFullCrop(r: CropRect): boolean {
   return r.x < 1e-3 && r.y < 1e-3 && r.w > 1 - 1e-3 && r.h > 1 - 1e-3;
+}
+
+/** Un rectángulo en píxeles enteros. */
+export type PixelRect = { x: number; y: number; w: number; h: number };
+
+/**
+ * El recorte `r` en píxeles enteros de una imagen de W×H (al menos 1×1). Si
+ * al redondear quedaría de más de diez a uno (o al revés), el lado corto se
+ * agranda lo justo (1 px), sin salir de la imagen: la de W×H ya cumple.
+ */
+export function pixelRect(r: CropRect, W: number, H: number): PixelRect {
+  let x = clamp(Math.round(r.x * W), 0, W - 1);
+  let y = clamp(Math.round(r.y * H), 0, H - 1);
+  let w = clamp(Math.round((r.x + r.w) * W) - x, 1, W - x);
+  let h = clamp(Math.round((r.y + r.h) * H) - y, 1, H - y);
+  if (h > MAX_RATIO * w) {
+    w = Math.min(W, Math.ceil(h / MAX_RATIO));
+    x = Math.min(x, W - w);
+  }
+  if (w > MAX_RATIO * h) {
+    h = Math.min(H, Math.ceil(w / MAX_RATIO));
+    y = Math.min(y, H - h);
+  }
+  return { x, y, w, h };
+}
+
+/** El recorte tal como se hará en una imagen de W×H: redondeado a píxeles, en fracciones otra vez. */
+export function snapCrop(r: CropRect, W: number, H: number): CropRect {
+  const p = pixelRect(r, W, H);
+  return { x: p.x / W, y: p.y / H, w: p.w / W, h: p.h / H };
+}
+
+/**
+ * Una imagen de w×h reducida a `scale`: el ancho redondeado y el alto
+ * calculado desde él (no redondeados cada uno por su lado), sin pasar de diez
+ * a uno.
+ */
+export function scaledSize(w: number, h: number, scale: number): { w: number; h: number } {
+  const sw = Math.max(1, Math.round(w * scale));
+  const sh = clamp(Math.round((sw * h) / w), Math.max(1, Math.ceil(sw / MAX_RATIO)), sw * MAX_RATIO);
+  return { w: sw, h: sh };
 }
 
 /** El rectángulo de ancho `w` y alto `h` con centro en (cx, cy), corrido lo justo para quedar dentro de la foto. */
@@ -86,8 +135,8 @@ export function scaleCrop(r: CropRect, factor: number): CropRect {
 /**
  * Arrastrar un tirador desde el rectángulo `start` (d: lo que se movió el
  * puntero, en fracciones de la foto). Libre (R null): cada tirador mueve sus
- * lados; si la foto quedaría de más de diez a uno, el lado arrastrado se
- * detiene (en una esquina, se acorta el lado que sobra). Con proporción: la
+ * lados; si la foto quedaría de más de MAX_CROP_RATIO a uno, el lado
+ * arrastrado se detiene (en una esquina, se acorta el lado que sobra). Con proporción: la
  * esquina de enfrente queda fija y manda el lado que más se movió; un tirador
  * de lado cambia también el otro lado, desde el centro.
  */
@@ -112,17 +161,18 @@ export function resizeCrop(start: CropRect, handle: CropHandle, d: { dx: number;
   let h = bot - top;
   const ratio = (h / w) * aspect;
   const corner = (west || east) && (north || south);
-  if (ratio > 10 || ratio < 0.1) {
-    const tooTall = ratio > 10;
+  const [lo, hi] = [1 / MAX_CROP_RATIO, MAX_CROP_RATIO];
+  if (ratio > hi || ratio < lo) {
+    const tooTall = ratio > hi;
     // Se ajusta el lado que se arrastra; en una esquina, se acorta el que sobra
     const fixWidth = corner ? !tooTall : west || east;
     if (fixWidth) {
-      w = (h * aspect) / (tooTall ? 10 : 0.1);
+      w = (h * aspect) / (tooTall ? hi : lo);
       if (west) left = rgt - w;
       else if (east) rgt = left + w;
       else left = (left + rgt) / 2 - w / 2;
     } else {
-      h = (w * (tooTall ? 10 : 0.1)) / aspect;
+      h = (w * (tooTall ? hi : lo)) / aspect;
       if (north) top = bot - h;
       else if (south) bot = top + h;
       else top = (top + bot) / 2 - h / 2;

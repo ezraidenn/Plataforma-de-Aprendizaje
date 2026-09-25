@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { apiUser } from "@/server/auth/guards";
 import { saveStream, type FileKind } from "@/server/services/storage";
 import { canEditBranding } from "@/server/services/profile";
-import { resolveUploadMime } from "@/lib/upload-types";
+import { EDITOR_IMAGE_MAX_BYTES, resolveUploadMime } from "@/lib/upload-types";
 
 export const runtime = "nodejs";
 
@@ -26,7 +26,7 @@ const MAX_BYTES: Record<string, number> = {
   branding: 6 * 1024 * 1024, // logo (2 MB, validado en servicio) o foto de portada (6 MB)
   resource: 200 * 1024 * 1024,
   attachment: 50 * 1024 * 1024,
-  editor_image: 5 * 1024 * 1024,
+  editor_image: EDITOR_IMAGE_MAX_BYTES,
   assistant_attachment: 10 * 1024 * 1024, // el servidor lo lee entero para resumirlo
 };
 

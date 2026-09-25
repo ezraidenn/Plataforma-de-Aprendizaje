@@ -138,6 +138,20 @@ export function useEditorHistory<T>(value: T, onChange: (v: T) => void): EditorH
   );
 }
 
+/** Ctrl+Z, Ctrl+Mayús+Z o Ctrl+Y (Cmd en Mac): deshacer o rehacer. */
+export function isUndoKey(e: { key: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean }): boolean {
+  return (e.ctrlKey || e.metaKey) && !e.altKey && (e.key.toLowerCase() === "z" || e.key.toLowerCase() === "y");
+}
+
+/**
+ * Ctrl+A o Ctrl+D (seleccionar todos los lugares, duplicar): mientras se
+ * recorta la foto no hacen nada, y tampoco lo del navegador (seleccionar toda
+ * la página, que luego se arrastraría en lugar del tirador; guardar un marcador).
+ */
+export function blockEditorShortcut(e: { key: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean; preventDefault: () => void }): void {
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && /^[ad]$/i.test(e.key)) e.preventDefault();
+}
+
 const TEXT_INPUTS = new Set([
   "text",
   "search",

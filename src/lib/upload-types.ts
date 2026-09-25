@@ -9,6 +9,13 @@
  * `nosniff` y solo muestra en línea tipos seguros (src/lib/inline-mime.ts).
  */
 
+/**
+ * Lo más que pesa una imagen del editor (`editor_image`: la foto de una
+ * pregunta sobre imagen, sus íconos): lo revisa /api/uploads y lo usan el
+ * editor (lo que dice y hasta dónde reduce una foto recortada o girada).
+ */
+export const EDITOR_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+
 const PNG = "image/png";
 const JPEG = "image/jpeg";
 const WEBP = "image/webp";

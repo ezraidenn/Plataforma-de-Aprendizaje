@@ -30,7 +30,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ZOOM_MAX, ZOOM_MIN, gridStepFor, type AlignMode } from "@/lib/image-layout";
-import { CropBar, PhotoButtons, type PhotoTools } from "./image-photo-tools";
+import { CropBar, PhotoButtons } from "./image-photo-bar";
+import type { PhotoTools } from "./image-photo-tools";
 import type { CanvasZoom } from "./use-canvas-zoom";
 
 /**
@@ -39,7 +40,7 @@ import type { CanvasZoom } from "./use-canvas-zoom";
  * Duplicar, Alinear ▾ y Repartir ▾ · los interruptores Imán, Reglas y
  * Cuadrícula (recordados en este navegador, los mismos en los dos editores) ·
  * el zoom: −, el porcentaje, + y «Ajustar» · la foto: Recortar, Girar ⟲ ⟳ y
- * Cambiar (`image-photo-tools.tsx`). Mientras se recorta, en su lugar va la
+ * Cambiar (`image-photo-bar.tsx`). Mientras se recorta, en su lugar va la
  * barra del recorte (con el zoom). En pantallas angostas se acomoda en varias
  * filas. Lo que aún no aplica (alinear con menos de dos lugares, acercar más
  * allá del 400 %) no se deshabilita del todo: así el foco no se pierde, y al

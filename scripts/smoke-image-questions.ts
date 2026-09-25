@@ -57,6 +57,7 @@ import {
   alignDeltas,
   alphaBounds,
   boxBounds,
+  boundSizes,
   boxesOverlap,
   cropConfig,
   distributeDeltas,
@@ -81,7 +82,7 @@ import {
   zoomStep,
   type Bounds,
 } from "../src/lib/image-layout";
-import { MIN_CROP, cropRatio, fitCropRatio, moveCrop, resizeCrop, scaleCrop, type CropRect } from "../src/lib/photo-crop";
+import { MAX_CROP_RATIO, MIN_CROP, cropRatio, fitCropRatio, moveCrop, pixelRect, resizeCrop, scaleCrop, scaledSize, snapCrop, type CropRect } from "../src/lib/photo-crop";
 
 let failures = 0;
 function check(name: string, cond: boolean, detail?: unknown) {
@@ -451,8 +452,9 @@ function photoChecks() {
   check("Elegir 1:1 con un recorte ya hecho: cabe en él, con su mismo centro", eq(fitCropRatio({ x: 0, y: 0, w: 0.4, h: 0.4 }, 1, 0.5), { x: 0.1, y: 0, w: 0.2, h: 0.4 }), fitCropRatio({ x: 0, y: 0, w: 0.4, h: 0.4 }, 1, 0.5));
   check("Libre: una esquina mueve sus dos lados", eq(resizeCrop(full, "se", { dx: -0.2, dy: -0.1 }, null, 1), { x: 0, y: 0, w: 0.8, h: 0.9 }));
   check("Libre: un lado no cruza al de enfrente (mínimo)", eq(resizeCrop(full, "w", { dx: 2, dy: 0 }, null, 0.25), { x: 1 - MIN_CROP, y: 0, w: MIN_CROP, h: 1 }));
-  check("Libre: un lado no deja una franja de más de diez a uno", eq(resizeCrop(full, "w", { dx: 2, dy: 0 }, null, 1), { x: 0.9, y: 0, w: 0.1, h: 1 }));
-  check("Libre: una franja de más de diez a uno se detiene", eq(resizeCrop(full, "n", { dx: 0, dy: 0.97 }, null, 1), { x: 0, y: 0.9, w: 1, h: 0.1 }), resizeCrop(full, "n", { dx: 0, dy: 0.97 }, null, 1));
+  const tope = 1 / MAX_CROP_RATIO;
+  check("Libre: un lado no deja una franja de más de 9.99 a uno", eq(resizeCrop(full, "w", { dx: 2, dy: 0 }, null, 1), { x: 1 - tope, y: 0, w: tope, h: 1 }), resizeCrop(full, "w", { dx: 2, dy: 0 }, null, 1));
+  check("Libre: una franja de más de 9.99 a uno se detiene", eq(resizeCrop(full, "n", { dx: 0, dy: 0.97 }, null, 1), { x: 0, y: 1 - tope, w: 1, h: tope }), resizeCrop(full, "n", { dx: 0, dy: 0.97 }, null, 1));
   const sq: CropRect = { x: 0.25, y: 0, w: 0.5, h: 1 };
   check("Con proporción: la esquina sigue al lado que más se movió", eq(resizeCrop(sq, "se", { dx: -0.1, dy: 0 }, 1, 0.5), { x: 0.25, y: 0, w: 0.4, h: 0.8 }), resizeCrop(sq, "se", { dx: -0.1, dy: 0 }, 1, 0.5));
   check("Con proporción: no sale de la foto", eq(resizeCrop(sq, "se", { dx: 0.3, dy: 0 }, 1, 0.5), sq));
@@ -460,6 +462,39 @@ function photoChecks() {
   check("Mover: se queda dentro de la foto", eq(moveCrop(sq, 0.5, -0.2), { x: 0.5, y: 0, w: 0.5, h: 1 }));
   const mid: CropRect = { x: 0.25, y: 0.25, w: 0.5, h: 0.5 };
   check("+ y −: desde el centro, hasta la foto entera y hasta el mínimo", eq(scaleCrop(mid, 2), full) && eq(scaleCrop(mid, 0.01), { x: 0.475, y: 0.475, w: MIN_CROP, h: MIN_CROP }), scaleCrop(mid, 0.01));
+
+  console.log("\n— Recortes siempre válidos, ya en píxeles");
+  const fits = (p: { w: number; h: number }) => p.h <= 10 * p.w && p.w <= 10 * p.h;
+  const before = pixelRect({ x: 0.9, y: 0, w: 0.1, h: 1 }, 1234, 1234);
+  check("1234×1234 con el tope de antes (saldría 123×1234, 10.03): el lado corto crece 1 px", JSON.stringify(before) === JSON.stringify({ x: 1110, y: 0, w: 124, h: 1234 }), before);
+  const atTope = pixelRect(resizeCrop(full, "w", { dx: 2, dy: 0 }, null, 1), 1234, 1234);
+  check("1234×1234, Libre, lado izquierdo al tope: 124×1234, válida", fits(atTope) && atTope.w === 124 && atTope.x + atTope.w === 1234, atTope);
+  const flatPx = pixelRect({ x: 0, y: 0.45, w: 1, h: 0.0996 }, 1234, 1234);
+  check("Al revés (1234×123): crece el alto, sin salir de la foto", flatPx.h === 124 && fits(flatPx) && flatPx.y + flatPx.h <= 1234, flatPx);
+  check("Pegado a la orilla derecha: crece hacia la izquierda", before.x + before.w === 1234 && before.x === 1110, before);
+  let broken = 0;
+  for (let W = 200; W <= 5000; W += 37) {
+    for (const H of [W, Math.round(W * 0.37), Math.round(W * 1.9)]) {
+      for (const [handle, dx, dy] of [["w", 2, 0], ["e", -2, 0], ["n", 0, 2], ["s", 0, -2]] as const) {
+        if (!fits(pixelRect(resizeCrop(full, handle, { dx, dy }, null, H / W), W, H))) broken++;
+      }
+    }
+  }
+  check("Cientos de fotos con un lado al tope: ninguna pasa de diez a uno", broken === 0, broken);
+  const naive = { w: Math.round(124 * (5.49 / 124)), h: Math.round(1234 * (5.49 / 124)) };
+  const reduced = scaledSize(124, 1234, 5.49 / 124);
+  check("Reducir 124×1234: cada lado por su cuenta daría 5×55 (11 a uno); el alto desde el ancho, 5×50", naive.w === 5 && naive.h === 55 && reduced.w === 5 && reduced.h === 50, [naive, reduced]);
+  let badScale = 0;
+  for (let s = 0.85; s > 0.01; s *= 0.85) {
+    for (const [w, h] of [[124, 1234], [1234, 124], [4000, 3000], [997, 9960]]) if (!fits(scaledSize(w, h, s))) badScale++;
+  }
+  check("Reducir al 85 % una y otra vez: nunca pasa de diez a uno", badScale === 0, badScale);
+  check("snapCrop: el recorte que se hará, en fracciones", eq(snapCrop({ x: 0.9, y: 0, w: 0.1, h: 1 }, 1234, 1234), { x: 1110 / 1234, y: 0, w: 124 / 1234, h: 1 }));
+
+  console.log("\n— Tamaños que se quedan en su tope");
+  check("Recorte angosto: ícono y letra, al máximo", JSON.stringify(boundSizes(big, 1 / 0.2, 5)) === JSON.stringify({ max: 2, min: 0 }), boundSizes(big, 5, 5));
+  check("Foto alta girada: ícono y letra, al mínimo", JSON.stringify(boundSizes(tall, 1 / 2, 0.5)) === JSON.stringify({ max: 0, min: 2 }), boundSizes(tall, 0.5, 0.5));
+  check("Un recorte común: ninguno", JSON.stringify(boundSizes(drag, 1 / 0.5, 0.5)) === JSON.stringify({ max: 0, min: 0 }));
 }
 
 function sanitizeChecks() {

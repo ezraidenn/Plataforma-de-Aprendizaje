@@ -7,6 +7,7 @@ import { useFileDrop } from "@/components/exam/image-dnd";
 import { LiveRegion, useAnnouncer } from "@/components/exam/live-region";
 import { imagePreview, type PreviewQuestion } from "@/lib/preview-question";
 import { EDITOR_IMAGE_ACCEPT, uploadFile } from "@/lib/upload-client";
+import { EDITOR_IMAGE_MAX_BYTES } from "@/lib/upload-types";
 import {
   fileUrl,
   round4,
@@ -68,12 +69,15 @@ export function ImageQuestionEditor({
   value,
   onChange,
   onBusyChange,
+  hasAttempts = false,
 }: {
   type: ImageQuestionType;
   value: ImageQuestionValue;
   onChange: SetValue;
   /** Hay una subida en curso: mientras tanto no se guarda. */
   onBusyChange?: (busy: boolean) => void;
+  /** El examen ya tiene intentos enviados: recortar o girar la foto pide confirmación. */
+  hasAttempts?: boolean;
 }) {
   const [uploading, setUploading] = useState<"photo" | "icon" | null>(null);
   /** Error de una subida o de la foto. */
@@ -174,6 +178,8 @@ export function ImageQuestionEditor({
     imageFileId,
     config,
     record,
+    undo: history.undo,
+    hasAttempts,
     uploading,
     setUploading,
     setError,
@@ -229,10 +235,13 @@ export function ImageQuestionEditor({
         const key = e.key.toLowerCase();
         if (key === "z" || key === "y") {
           e.preventDefault();
-          travel(key === "y" || e.shiftKey ? "redo" : "undo");
+          // Mientras se recorta la foto no se deshace nada, venga la tecla de donde venga
+          if (photo.crop) announce("Mientras recortas, Deshacer no actúa: Esc cancela el recorte");
+          else travel(key === "y" || e.shiftKey ? "redo" : "undo");
         }
       }}
     >
+      {photo.dialog}
       <input
         ref={photoInput}
         type="file"
@@ -352,7 +361,8 @@ function PhotoDrop({
       )}
       <span className="font-heading text-base font-semibold">{uploading ? "Subiendo la foto…" : "Sube la foto"}</span>
       <span className="max-w-sm text-sm text-muted-foreground">
-        Haz clic o suelta aquí el archivo: PNG, JPG, WEBP o GIF, hasta 5 MB. Sobre ella marcarás las respuestas.
+        Haz clic o suelta aquí el archivo: PNG, JPG, WEBP o GIF, hasta {EDITOR_IMAGE_MAX_BYTES / 1024 / 1024} MB. Sobre ella
+        marcarás las respuestas.
       </span>
     </button>
   );

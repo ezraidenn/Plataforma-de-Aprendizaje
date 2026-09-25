@@ -6,11 +6,15 @@
  */
 import { alphaBounds, type CropRect } from "./image-layout";
 import { round4 } from "./image-questions";
+import { pixelRect, scaledSize } from "./photo-crop";
+import { EDITOR_IMAGE_MAX_BYTES } from "./upload-types";
 
 /** Lado mayor máximo de un ícono guardado. */
 export const MAX_ICON_SIDE = 800;
 /** Máximo que acepta la subida (una imagen del editor). */
-export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+export const MAX_UPLOAD_BYTES = EDITOR_IMAGE_MAX_BYTES;
+/** Lo más grande que sale una foto recortada o girada: más, se reduce (memoria; Safari en iPhone no pasa de ~16 MP). */
+export const MAX_PHOTO_PIXELS = 16_000_000;
 /** Cada cuántos píxeles (en cada eje) se mira si la foto tiene transparencia. */
 const ALPHA_STRIDE = 16;
 /** Más píxeles que esto: se reduce antes de leerla (no hace falta leer cada píxel de una foto enorme). */
@@ -192,60 +196,88 @@ function hasTransparency(ctx: CanvasRenderingContext2D, width: number, height: n
   return false;
 }
 
-/** Un rectángulo relativo en píxeles enteros de una imagen de W×H (al menos 1×1). */
-function pixelRect(r: CropRect, W: number, H: number) {
-  const x = Math.min(W - 1, Math.max(0, Math.round(r.x * W)));
-  const y = Math.min(H - 1, Math.max(0, Math.round(r.y * H)));
-  const right = Math.min(W, Math.max(x + 1, Math.round((r.x + r.w) * W)));
-  const bottom = Math.min(H, Math.max(y + 1, Math.round((r.y + r.h) * H)));
-  return { x, y, w: right - x, h: bottom - y };
+/** Un problema con un mensaje para el maestro (no uno técnico del navegador): se muestra tal cual. */
+export class PhotoError extends Error {}
+
+/** Decodifica con la orientación de la foto; si el navegador no acepta esa opción, sin ella (la proporción se revisa después). */
+async function decodeOriented(blob: Blob): Promise<ImageBitmap> {
+  try {
+    return await createImageBitmap(blob, { imageOrientation: "from-image" });
+  } catch {
+    return createImageBitmap(blob);
+  }
 }
 
 /**
- * Recorta (a la resolución original) o gira 90° la foto. Sale en JPEG 0.9 si
- * no tiene transparencia; si la tiene, en PNG. Si pasa de MAX_UPLOAD_BYTES:
- * JPEG 0.8 (sin transparencia) y luego cada vez al 85 % hasta que quepa. El
- * nombre es el de la foto con «-recorte» o «-girada». Lanza Error si el
- * navegador no la puede leer o exportar.
+ * Recorta o gira 90° la foto, a su resolución (hasta MAX_PHOTO_PIXELS: si el
+ * trozo pasa de ahí, sale reducido). El recorte se redondea a píxeles como
+ * `pixelRect` (sin pasar de diez a uno). Formato: un PNG sigue en PNG si cabe
+ * (un plano o un diagrama no se ensucia); si no, JPEG 0.9, salvo que tenga
+ * transparencia (PNG). Si pasa de MAX_UPLOAD_BYTES: JPEG 0.8 (sin
+ * transparencia) y luego cada vez al 85 % hasta que quepa, el alto calculado
+ * desde el ancho (`scaledSize`). El nombre es el de la foto con «-recorte» o
+ * «-girada». `aspect`: la proporción con la que se ve en el editor; si la
+ * foto leída no cuadra con ella (más de un 1 %: orientación EXIF que el
+ * navegador no aplicó), no se toca. Lanza PhotoError con un mensaje para el
+ * maestro, o Error si el navegador no la puede leer o exportar.
  */
-export async function transformPhoto(src: Blob, op: PhotoOp, name = src instanceof File ? src.name : "foto"): Promise<TransformedPhoto> {
-  const bitmap = await createImageBitmap(src, { imageOrientation: "from-image" });
+export async function transformPhoto(
+  src: Blob,
+  op: PhotoOp,
+  { name = src instanceof File ? src.name : "foto", aspect }: { name?: string; aspect?: number } = {}
+): Promise<TransformedPhoto> {
+  const bitmap = await decodeOriented(src);
   const canvas = document.createElement("canvas");
   const smaller = document.createElement("canvas");
   try {
     const { width: W, height: H } = bitmap;
-    const rect = "crop" in op ? pixelRect(op.crop, W, H) : null;
-    canvas.width = rect ? rect.w : H;
-    canvas.height = rect ? rect.h : W;
+    if (aspect && Math.abs(H / W / aspect - 1) > 0.01) {
+      throw new PhotoError(
+        "La foto no se leyó con la forma que se ve en el editor (su orientación no cuadra): recórtala o gírala en tu equipo y súbela con «Cambiar foto»."
+      );
+    }
+    const rect = "crop" in op ? pixelRect(op.crop, W, H) : { x: 0, y: 0, w: W, h: H };
+    const turn = "rotate" in op ? op.rotate : null;
+    // Lo que sale, reducido desde el principio si pasa de MAX_PHOTO_PIXELS
+    const k = Math.min(1, Math.sqrt(MAX_PHOTO_PIXELS / (rect.w * rect.h)));
+    const size = k < 1 ? scaledSize(rect.w, rect.h, k) : { w: rect.w, h: rect.h };
+    canvas.width = turn ? size.h : size.w;
+    canvas.height = turn ? size.w : size.h;
     // Un JPEG no tiene transparencia: ni se lee. Lo demás, sin la tarjeta gráfica (se lee más rápido)
     const mayBeClear = src.type !== "image/jpeg";
     const ctx = canvas.getContext("2d", { willReadFrequently: mayBeClear });
     if (!ctx) throw new Error("Sin contexto 2d para preparar la foto");
-    if (rect) ctx.drawImage(bitmap, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w, rect.h);
-    else if ("rotate" in op) {
-      // A la derecha, (x, y) → (H − y, x); a la izquierda, (x, y) → (y, W − x)
-      const cw = op.rotate === "cw";
-      ctx.translate(cw ? H : 0, cw ? 0 : W);
+    ctx.imageSmoothingQuality = "high";
+    if (turn) {
+      // A la derecha, (x, y) → (alto − y, x); a la izquierda, (x, y) → (y, ancho − x)
+      const cw = turn === "cw";
+      ctx.translate(cw ? size.h : 0, cw ? 0 : size.w);
       ctx.rotate(cw ? Math.PI / 2 : -Math.PI / 2);
-      ctx.drawImage(bitmap, 0, 0);
     }
-    const clear = mayBeClear && hasTransparency(ctx, canvas.width, canvas.height);
-    const type = clear ? "image/png" : "image/jpeg";
+    ctx.drawImage(bitmap, rect.x, rect.y, rect.w, rect.h, 0, 0, size.w, size.h);
+    const clear = () => mayBeClear && hasTransparency(ctx, canvas.width, canvas.height);
+    let type: "image/png" | "image/jpeg" = src.type === "image/png" || clear() ? "image/png" : "image/jpeg";
     let quality = 0.9;
-    let out = canvas;
     let blob = await encode(canvas, type, quality);
-    if (blob.size > MAX_UPLOAD_BYTES && !clear) {
+    // Un PNG que no cabe: sin transparencia, pasa a JPEG
+    if (blob.size > MAX_UPLOAD_BYTES && type === "image/png" && src.type === "image/png" && !clear()) {
+      type = "image/jpeg";
+      blob = await encode(canvas, type, quality);
+    }
+    if (blob.size > MAX_UPLOAD_BYTES && type === "image/jpeg") {
       quality = 0.8;
       blob = await encode(canvas, type, quality);
     }
+    let out = canvas;
     for (let scale = 0.85; blob.size > MAX_UPLOAD_BYTES; scale *= 0.85) {
-      if (scale < 0.05) throw new Error("La foto quedó demasiado pesada: usa una más ligera");
-      smaller.width = Math.max(1, Math.round(canvas.width * scale));
-      smaller.height = Math.max(1, Math.round(canvas.height * scale));
+      if (scale < 0.05) throw new PhotoError("La foto quedó demasiado pesada: usa una más ligera.");
+      const s = scaledSize(canvas.width, canvas.height, scale);
+      smaller.width = s.w;
+      smaller.height = s.h;
       const sctx = smaller.getContext("2d");
       if (!sctx) throw new Error("Sin contexto 2d para reducir la foto");
       sctx.imageSmoothingQuality = "high";
-      sctx.drawImage(canvas, 0, 0, smaller.width, smaller.height);
+      sctx.drawImage(canvas, 0, 0, s.w, s.h);
       out = smaller;
       blob = await encode(smaller, type, quality);
     }
@@ -253,8 +285,8 @@ export async function transformPhoto(src: Blob, op: PhotoOp, name = src instance
     return {
       blob,
       aspect: round4(out.height / out.width),
-      name: `${base}-${rect ? "recorte" : "girada"}.${clear ? "png" : "jpg"}`,
-      ...(rect ? { crop: { x: rect.x / W, y: rect.y / H, w: rect.w / W, h: rect.h / H } } : {}),
+      name: `${base}-${turn ? "girada" : "recorte"}.${type === "image/png" ? "png" : "jpg"}`,
+      ...(turn ? {} : { crop: { x: rect.x / W, y: rect.y / H, w: rect.w / W, h: rect.h / H } }),
     };
   } finally {
     bitmap.close();

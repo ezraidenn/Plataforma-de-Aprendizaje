@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { TOUCH_AREA } from "@/components/exam/image-pieces";
 import { moveCrop, resizeCrop, scaleCrop, type CropHandle, type CropRect } from "@/lib/photo-crop";
 import { cn } from "@/lib/utils";
+import { blockEditorShortcut, isUndoKey } from "./use-editor-history";
 
 /**
  * El rectángulo del recorte sobre la foto del editor (en `ImageCanvas`, encima
@@ -14,9 +15,13 @@ import { cn } from "@/lib/utils";
  * arrastre lo deja como estaba; si no, cancela el recorte (eso lo atiende
  * `usePhotoTools`).
  *
- * Con teclado, el rectángulo toma el foco: las flechas lo mueven 1 % (Mayús:
- * 5 %), + y − lo agrandan o achican desde el centro y Enter aplica el recorte.
- * Sus teclas no llegan al editor: no mueven lugares ni deshacen.
+ * Con teclado, el rectángulo toma el foco (también con un clic en lo
+ * oscurecido): las flechas lo mueven 1 % (Mayús: 5 %), Alt+flechas mueven el
+ * lado derecho o el de abajo y Alt+Mayús+flechas el izquierdo o el de arriba
+ * (con proporción fija, el otro lado acompaña), + y − lo agrandan o achican
+ * desde el centro y Enter aplica el recorte. Al cambiar su tamaño con el
+ * teclado se dice cuánto mide. Sus teclas no llegan al editor (no mueven
+ * lugares), salvo Ctrl+Z: el editor dice que mientras se recorta no se deshace.
  */
 
 const HANDLES: { handle: CropHandle; at: string; cursor: string }[] = [
@@ -50,6 +55,7 @@ export function CropCover({
   aspect,
   busy,
   onChange,
+  onResize,
   onApply,
 }: {
   rect: CropRect;
@@ -60,8 +66,11 @@ export function CropCover({
   /** Se está aplicando: el rectángulo ya no se mueve. */
   busy: boolean;
   onChange: (rect: CropRect) => void;
+  /** Cambió de tamaño con el teclado: para decirlo. */
+  onResize: (rect: CropRect) => void;
   onApply: () => void;
 }) {
+  const boxRef = useRef<HTMLDivElement>(null);
   /** El arrastre en curso: qué se arrastra, desde dónde (px) y el rectángulo y el tamaño de la foto al empezar. */
   const drag = useRef<{ kind: CropHandle | "move"; pointer: number; x: number; y: number; start: CropRect; w: number; h: number } | null>(null);
   const [dragging, setDragging] = useState<CropHandle | "move" | null>(null);
@@ -86,8 +95,13 @@ export function CropCover({
       | CropHandle
       | "move"
       | undefined;
-    // Sobre lo oscurecido no pasa nada (ni llega a la foto)
-    if (!kind || e.button !== 0 || busy || drag.current) return;
+    // Sobre lo oscurecido no pasa nada (ni llega a la foto), y el foco se queda en el rectángulo
+    if (!kind) {
+      e.preventDefault();
+      boxRef.current?.focus({ preventScroll: true });
+      return;
+    }
+    if (e.button !== 0 || busy || drag.current) return;
     const r = e.currentTarget.getBoundingClientRect();
     const start = rect;
     drag.current = { kind, pointer: e.pointerId, x: e.clientX, y: e.clientY, start, w: r.width, h: r.height };
@@ -122,18 +136,28 @@ export function CropCover({
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Escape" || e.key === "Tab") return;
-    // Nada de esto es del editor (mover lugares, Supr, Ctrl+Z…)
+    if (e.key === "Escape" || e.key === "Tab" || isUndoKey(e)) return;
+    // Nada de esto es del editor (mover lugares, Supr, Ctrl+A…) ni del navegador (Ctrl+A, Ctrl+D)
     e.stopPropagation();
+    blockEditorShortcut(e);
     if (busy || drag.current) return;
     const arrow = ARROWS[e.key];
-    if (arrow && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    if (arrow && e.altKey && !e.ctrlKey && !e.metaKey) {
+      // Un lado: el derecho o el de abajo; con Mayús, el izquierdo o el de arriba (Alt+← tampoco vuelve atrás)
+      e.preventDefault();
+      const handle: CropHandle = arrow[0] !== 0 ? (e.shiftKey ? "w" : "e") : e.shiftKey ? "n" : "s";
+      const next = resizeCrop(rect, handle, { dx: arrow[0] * NUDGE, dy: (arrow[1] * NUDGE) / aspect }, ratio, aspect);
+      onChange(next);
+      onResize(next);
+    } else if (arrow && !e.ctrlKey && !e.metaKey) {
       e.preventDefault();
       const step = e.shiftKey ? NUDGE_BIG : NUDGE;
       onChange(moveCrop(rect, arrow[0] * step, (arrow[1] * step) / aspect));
     } else if ((e.key === "+" || e.key === "=" || e.key === "-") && !e.ctrlKey && !e.metaKey) {
       e.preventDefault();
-      onChange(scaleCrop(rect, e.key === "-" ? 1 / SIZE_STEP : SIZE_STEP));
+      const next = scaleCrop(rect, e.key === "-" ? 1 / SIZE_STEP : SIZE_STEP);
+      onChange(next);
+      onResize(next);
     } else if (e.key === "Enter") {
       e.preventDefault();
       onApply();
@@ -157,6 +181,7 @@ export function CropCover({
         <div className="absolute shadow-[0_0_0_9999px_rgb(2_6_23/0.58)]" style={box} />
       </div>
       <div
+        ref={boxRef}
         data-crop-box=""
         data-crop-handle="move"
         tabIndex={0}

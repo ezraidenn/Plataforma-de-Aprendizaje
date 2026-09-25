@@ -207,13 +207,10 @@ export function ImageCanvas({
       }}
     >
       {grid ? <GridLines step={grid} /> : null}
-      {cover ? (
-        <div className="contents" inert>
-          {children}
-        </div>
-      ) : (
-        children
-      )}
+      {/* Siempre el mismo envoltorio (sin caja propia): al recortar, lo colocado no se vuelve a montar */}
+      <div className="contents" inert={!!cover}>
+        {children}
+      </div>
       {guides?.map((g) => (
         <span
           key={`${g.axis}${g.at}`}

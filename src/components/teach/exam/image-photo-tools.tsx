@@ -1,45 +1,60 @@
 "use client";
 
-import { useEffect, useState, type ReactNode, type RefObject } from "react";
-import { Check, Crop, ImageUp, Loader2, RotateCcw, RotateCw, TriangleAlert, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { useEffect, useRef, useState, type RefObject } from "react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useStableHandler } from "@/components/exam/image-dnd";
 import { shapedImageValue as shaped, type ImageQuestionValue } from "@/lib/image-editor-value";
-import { cropConfig, rotateConfig } from "@/lib/image-layout";
-import { transformPhoto } from "@/lib/image-processing";
+import { boundSizes, cropConfig, rotateConfig } from "@/lib/image-layout";
+import { PhotoError, transformPhoto } from "@/lib/image-processing";
 import {
   fileUrl,
+  iconNumbers,
+  imageItemName,
   validAspect,
   type ImageClickConfig,
   type ImageDragConfig,
   type ImageQuestionType,
 } from "@/lib/image-questions";
-import { FULL_CROP, cropRatio, fitCropRatio, isFullCrop, type CropChoice, type CropRect } from "@/lib/photo-crop";
-import { plural } from "@/lib/plural";
+import { FULL_CROP, cropRatio, fitCropRatio, isFullCrop, snapCrop, type CropChoice, type CropRect } from "@/lib/photo-crop";
+import { joinY, plural } from "@/lib/plural";
 import { uploadFile } from "@/lib/upload-client";
-import { cn } from "@/lib/utils";
 import { CropCover } from "./image-crop-cover";
 import { isTypingTarget } from "./use-editor-history";
 
 /**
- * Herramientas de la foto de fondo en la barra del lienzo (arrastrar y
- * señalar): Recortar foto, Girar a la izquierda y a la derecha, y Cambiar foto.
+ * Herramientas de la foto de fondo (arrastrar y señalar): recortarla, girarla
+ * 90° y cambiarla. Lo que se ve está en `image-photo-bar.tsx` (el grupo de la
+ * barra y la barra del recorte) y en `image-crop-cover.tsx` (el rectángulo).
  *
- * Recortar abre un modo sobre la foto (`image-crop-cover.tsx`): la barra de
- * siempre deja su lugar a la del recorte (proporción Libre, Original, 1:1, 4:3
- * o 16:9, el zoom, Cancelar y Aplicar recorte) y, en vivo, cuántos lugares o
- * puntos quedan fuera y se quitarán. Aplicar y girar hacen la foto nueva en el
- * navegador (`transformPhoto`), la suben como `editor_image` (como «Cambiar
- * foto») y recolocan lugares y puntos (`cropConfig`, `rotateConfig`): la foto
- * y la config cambian en un solo paso del historial, así que deshacer vuelve a
- * la foto de antes (su archivo sigue ahí). Mientras se prepara y sube, «Guardar»
- * espera (`uploading`) y el botón lleva el indicador.
+ * Recortar abre un modo sobre la foto: proporción Libre, Original, 1:1, 4:3 o
+ * 16:9 y, en vivo, cuántos lugares o puntos quedan fuera (con el recorte ya
+ * redondeado a los píxeles de la foto, como se hará). Mientras, el resto del
+ * editor no se toca y Deshacer no actúa (lo dice la pista); Esc cancela.
+ * Aplicar y girar hacen la foto nueva en el navegador (`transformPhoto`), la
+ * suben como `editor_image` (como «Cambiar foto») y recolocan lugares y
+ * puntos (`cropConfig`, `rotateConfig`): foto y config cambian en un solo
+ * paso del historial, así que deshacer vuelve a la foto de antes (su archivo
+ * sigue ahí). Un giro justo contrario al anterior solo lo deshace (no sube otra
+ * foto). Mientras se prepara y sube, «Guardar» espera (`uploading`) y el botón
+ * lleva el indicador. Si el examen ya tiene intentos, antes se pide
+ * confirmación (una vez por editor abierto): sus revisiones se dibujan sobre la
+ * foto de ahora.
  */
 
 type Uploading = "photo" | "icon" | null;
 type Kind = "crop" | "cw" | "ccw";
+type AnyConfig = ImageDragConfig | ImageClickConfig;
 
-const CHOICES: { choice: CropChoice; label: string; title: string; said: string }[] = [
+export const CROP_CHOICES: { choice: CropChoice; label: string; title: string; said: string }[] = [
   { choice: "free", label: "Libre", title: "Cualquier proporción", said: "libre" },
   { choice: "original", label: "Original", title: "La proporción de la foto", said: "la de la foto" },
   { choice: "1:1", label: "1:1", title: "Cuadrada", said: "cuadrada" },
@@ -47,11 +62,49 @@ const CHOICES: { choice: CropChoice; label: string; title: string; said: string 
   { choice: "16:9", label: "16:9", title: "16:9 (9:16 con una foto vertical)", said: "16:9" },
 ];
 
+/** La pista mientras se recorta (debajo del lienzo, y dicha al empezar). */
+export const CROP_HINT =
+  "Recorte: arrastra el rectángulo o sus tiradores. Con el teclado, las flechas lo mueven; Alt+flechas mueven el lado derecho o el de abajo y Alt+Mayús+flechas el izquierdo o el de arriba; + y − lo agrandan o achican. Enter aplica y Esc cancela. Mientras recortas, Deshacer no actúa.";
 const PRECISION_NOTE = "La precisión es relativa al ancho de la foto: revisa que el círculo siga siendo el que quieres.";
 
 /** «1 lugar queda fuera y se quitará», «2 puntos quedan fuera y se quitarán». */
 export function outsideText(n: number, what: readonly [string, string]): string {
   return `${n} ${plural(n, what[0], what[1])} ${plural(n, "queda", "quedan")} fuera y se ${plural(n, "quitará", "quitarán")}`;
+}
+
+/** «Recorte: 62 % del ancho y 80 % del alto de la foto». */
+const sizeSaid = (r: CropRect) => `Recorte: ${Math.round(r.w * 100)} % del ancho y ${Math.round(r.h * 100)} % del alto de la foto`;
+
+/**
+ * Lo que cambió además de la foto: lo que quedó fuera, los elementos que se
+ * quedaron sin lugar (el alumno los verá como distractores) y los tamaños que
+ * se quedaron en su tope (se verán distintos que antes).
+ */
+function changesSaid(before: AnyConfig, after: AnyConfig, removed: number, scale: number, what: readonly [string, string]): string {
+  const parts: string[] = [];
+  if (removed > 0) {
+    parts.push(
+      `Se ${plural(removed, "quitó", "quitaron")} ${removed} ${plural(removed, what[0], what[1])} que ${plural(removed, "quedaba", "quedaban")} fuera (Deshacer ${plural(removed, "lo", "los")} devuelve).`
+    );
+  }
+  if ("elements" in before && "zones" in after) {
+    const placed = new Set(after.zones.map((z) => z.elementId));
+    const icons = iconNumbers(before.elements.map((e) => e.fileId));
+    const orphans = before.elements
+      .filter((e) => before.zones.some((z) => z.elementId === e.id) && !placed.has(e.id))
+      .map((e) => (e.kind === "icon" ? `el ${imageItemName(e, icons)}` : `la etiqueta «${e.text ?? ""}»`));
+    if (orphans.length > 0) {
+      const who = joinY(orphans);
+      parts.push(
+        `${who[0].toUpperCase()}${who.slice(1)} ${plural(orphans.length, "quedó", "quedaron")} sin lugar: el alumno ${plural(orphans.length, "lo", "los")} verá como ${plural(orphans.length, "distractor", "distractores")}.`
+      );
+    }
+    const bound = boundSizes(before, scale, after.aspect);
+    for (const [n, which] of [[bound.max, "máximo"], [bound.min, "mínimo"]] as const) {
+      if (n > 0) parts.push(`${n} ${plural(n, "elemento se ajustó", "elementos se ajustaron")} a su tamaño ${which}.`);
+    }
+  }
+  return parts.join(" ");
 }
 
 /** La foto de ahora como archivo, con su nombre (el de la descarga). */
@@ -76,6 +129,8 @@ export function usePhotoTools({
   imageFileId,
   config,
   record,
+  undo,
+  hasAttempts = false,
   uploading,
   setUploading,
   setError,
@@ -86,9 +141,13 @@ export function usePhotoTools({
 }: {
   type: ImageQuestionType;
   imageFileId: string | null;
-  config: ImageDragConfig | ImageClickConfig;
-  /** Cambia la foto y la config (un paso del historial). */
+  config: AnyConfig;
+  /** Cambia la foto y la config (un paso del historial) y devuelve el valor nuevo. */
   record: (fn: (prev: ImageQuestionValue) => ImageQuestionValue) => ImageQuestionValue;
+  /** Deshacer el último paso (un giro contrario al anterior): false si no había. */
+  undo: () => boolean;
+  /** El examen ya tiene intentos enviados: antes de recortar o girar, se confirma. */
+  hasAttempts?: boolean;
   uploading: Uploading;
   setUploading: (u: Uploading) => void;
   setError: (e: string | null) => void;
@@ -99,8 +158,16 @@ export function usePhotoTools({
   /** «Cambiar foto»: elegir otro archivo. */
   onPickPhoto: () => void;
 }) {
-  const [crop, setCrop] = useState<{ fileId: string; rect: CropRect; choice: CropChoice } | null>(null);
+  /** El recorte en curso, de qué foto y con qué tamaño en píxeles (para redondear como se hará). */
+  const [crop, setCrop] = useState<{ fileId: string; rect: CropRect; choice: CropChoice; px: { w: number; h: number } | null } | null>(null);
   const [busy, setBusy] = useState<Kind | null>(null);
+  /** Lo que espera la confirmación de «ya tiene intentos». */
+  const [asking, setAsking] = useState<Kind | null>(null);
+  const confirmed = useRef(false);
+  /** Lo que tenía el foco al preguntar: el diálogo no tiene botón que lo abra, al cerrarse vuelve ahí. */
+  const returnFocus = useRef<HTMLElement | null>(null);
+  /** El último giro y cómo quedó todo: el giro contrario justo después solo lo deshace. */
+  const lastTurn = useRef<{ dir: "cw" | "ccw"; value: ImageQuestionValue } | null>(null);
   // El recorte es de una foto: si cambió (deshacer, soltar otra), se deja (y no vuelve al volver a ella)
   if (crop && crop.fileId !== imageFileId) setCrop(null);
   const active = crop && crop.fileId === imageFileId ? crop : null;
@@ -108,7 +175,8 @@ export function usePhotoTools({
   /** Otra subida en curso, o la foto aún sin medir: las herramientas esperan. */
   const locked = uploading !== null || !imageFileId || !validAspect(aspect);
   const what = type === "image_drag" ? (["lugar", "lugares"] as const) : (["punto", "puntos"] as const);
-  const outside = active ? cropConfig(type, config, active.rect).removed : 0;
+  const snapped = (c: NonNullable<typeof crop>) => (c.px ? snapCrop(c.rect, c.px.w, c.px.h) : c.rect);
+  const outside = active ? cropConfig(type, config, snapped(active)).removed : 0;
 
   const focusSoon = (selector: string) =>
     requestAnimationFrame(() => rootRef.current?.querySelector<HTMLElement>(selector)?.focus({ preventScroll: true }));
@@ -117,11 +185,12 @@ export function usePhotoTools({
 
   function startCrop() {
     if (locked || !imageFileId) return waitSaid();
-    setCrop({ fileId: imageFileId, rect: FULL_CROP, choice: "free" });
+    // El tamaño de la foto en píxeles: el aviso cuenta con el recorte redondeado como se hará
+    const img = rootRef.current?.querySelector<HTMLImageElement>("[data-canvas-viewport] img");
+    const px = img && img.naturalWidth > 0 ? { w: img.naturalWidth, h: img.naturalHeight } : null;
+    setCrop({ fileId: imageFileId, rect: FULL_CROP, choice: "free", px });
     setNotice(null);
-    announce(
-      "Recorte: arrastra el rectángulo o sus tiradores. Con el teclado, las flechas lo mueven y + y − lo agrandan o achican; Enter aplica el recorte y Esc lo cancela."
-    );
+    announce(CROP_HINT);
     focusSoon("[data-crop-box]");
   }
 
@@ -151,19 +220,36 @@ export function usePhotoTools({
     if (busy) return;
     const R = cropRatio(choice, aspect);
     setCrop((c) => c && { ...c, choice, rect: R === null ? c.rect : fitCropRatio(c.rect, R, aspect) });
-    announce(`Proporción ${CHOICES.find((c) => c.choice === choice)?.said ?? ""}`);
+    announce(`Proporción: ${CROP_CHOICES.find((c) => c.choice === choice)?.said ?? ""}`);
   }
 
-  /** Recorta o gira: la foto nueva, subida, y la config recolocada, en un solo paso. */
-  async function transform(kind: Kind) {
+  /** Recortar o girar: primero, lo que no necesita foto nueva (deshacer un giro) y la confirmación si hay intentos. */
+  function run(kind: Kind) {
     if (busy) return;
     if (locked || !imageFileId) return waitSaid();
-    const from = imageFileId;
-    const rect = active?.rect;
-    if (kind === "crop" && (!rect || isFullCrop(rect))) {
+    const turn = lastTurn.current;
+    if (kind !== "crop" && turn && turn.dir !== kind && turn.value.imageFileId === imageFileId && turn.value.config === config) {
+      lastTurn.current = null;
+      if (undo()) {
+        setNotice(null);
+        return announce(`Foto girada a la ${kind === "cw" ? "derecha" : "izquierda"}: quedó como antes del giro anterior`);
+      }
+    }
+    if (kind === "crop" && (!active || isFullCrop(active.rect))) {
       return announce("Mueve el rectángulo o sus tiradores para recortar: así la foto quedaría igual");
     }
-    const hadFocus = inEditor();
+    if (hasAttempts && !confirmed.current) {
+      returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      return setAsking(kind);
+    }
+    void transform(kind, inEditor());
+  }
+
+  /** Recorta o gira: la foto nueva, subida, y la config recolocada, en un solo paso. `hadFocus`: el foco estaba en el editor. */
+  async function transform(kind: Kind, hadFocus: boolean) {
+    if (!imageFileId || (kind === "crop" && !active)) return;
+    const from = imageFileId;
+    const rect = active?.rect ?? FULL_CROP;
     setBusy(kind);
     setUploading("photo");
     setError(null);
@@ -171,40 +257,43 @@ export function usePhotoTools({
     announce(kind === "crop" ? "Recortando la foto…" : "Girando la foto…");
     try {
       const original = await fetchPhoto(from);
-      const done = await transformPhoto(original, kind === "crop" ? { crop: rect! } : { rotate: kind }).catch((err: unknown) => {
+      const done = await transformPhoto(original, kind === "crop" ? { crop: rect } : { rotate: kind }, { aspect }).catch((err: unknown) => {
+        if (err instanceof PhotoError) throw err;
         console.error("No se pudo preparar la foto:", err);
-        throw new Error("Este navegador no pudo preparar la foto: recórtala o gírala antes y súbela con «Cambiar foto».");
+        throw new PhotoError("Este navegador no pudo preparar la foto: recórtala o gírala antes y súbela con «Cambiar foto».");
       });
+      // Nunca se sube (ni se guarda) una foto que la pregunta no aceptaría
+      if (!validAspect(done.aspect)) {
+        throw new PhotoError("La foto quedaría más de diez veces más ancha que alta (o al revés): deja el recorte un poco más amplio.");
+      }
       const fileId = await uploadFile(new File([done.blob], done.name, { type: done.blob.type }), "editor_image");
-      let removed = -1;
-      record((prev) => {
+      let said = null as string | null;
+      const next = record((prev) => {
         const p = shaped(type, prev);
         // Mientras se preparaba se cambió la foto (deshacer, otra foto): no se toca nada
         if (p.imageFileId !== from) return prev;
-        const next =
-          kind === "crop" ? cropConfig(type, p.config, done.crop ?? rect!) : { config: rotateConfig(type, p.config, kind), removed: 0 };
-        removed = next.removed;
-        return { imageFileId: fileId, config: { ...next.config, aspect: done.aspect } };
+        const cut = done.crop ?? rect;
+        const out =
+          kind === "crop" ? cropConfig(type, p.config, cut) : { config: rotateConfig(type, p.config, kind), removed: 0 };
+        said = changesSaid(p.config, out.config, out.removed, kind === "crop" ? 1 / cut.w : 1 / p.config.aspect, what);
+        return { imageFileId: fileId, config: { ...out.config, aspect: done.aspect } };
       });
-      if (removed < 0) {
+      if (said === null) {
         const text = "La foto cambió mientras se preparaba: no se aplicó.";
         setNotice(text);
         return announce(text);
       }
+      lastTurn.current = kind === "crop" ? null : { dir: kind, value: next };
       if (kind === "crop") {
         setCrop(null);
         if (hadFocus) focusSoon('[data-photo-tool="crop"]');
       }
-      const gone =
-        removed > 0
-          ? `Se ${plural(removed, "quitó", "quitaron")} ${removed} ${plural(removed, what[0], what[1])} que ${plural(removed, "quedaba", "quedaban")} fuera (Deshacer ${plural(removed, "lo", "los")} devuelve).`
-          : "";
       // En «señalar» el círculo de acierto es una fracción del ancho, y el ancho cambió
       const precision = type === "image_click" && (kind === "crop" || aspect !== 1) ? PRECISION_NOTE : "";
-      const note = [gone, precision].filter(Boolean).join(" ");
+      const note = [said, precision].filter(Boolean).join(" ");
       if (note) setNotice(note);
-      const said = kind === "crop" ? "Foto recortada" : `Foto girada a la ${kind === "cw" ? "derecha" : "izquierda"}`;
-      announce(`${said}; los ${what[1]} siguen sobre lo mismo. ${note}`.trim());
+      const headline = kind === "crop" ? "Foto recortada" : `Foto girada a la ${kind === "cw" ? "derecha" : "izquierda"}`;
+      announce(`${headline}; los ${what[1]} siguen sobre lo mismo. ${note}`.trim());
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo preparar la foto");
     } finally {
@@ -226,8 +315,8 @@ export function usePhotoTools({
     startCrop,
     cancelCrop,
     choose,
-    applyCrop: () => void transform("crop"),
-    rotate: (dir: "cw" | "ccw") => void transform(dir),
+    applyCrop: () => run("crop"),
+    rotate: (dir: "cw" | "ccw") => run(dir),
     changePhoto: () => (uploading !== null ? waitSaid() : onPickPhoto()),
     /** El rectángulo sobre la foto (para `ImageCanvas`), solo mientras se recorta. */
     cover: active ? (
@@ -237,158 +326,46 @@ export function usePhotoTools({
         aspect={aspect}
         busy={busy !== null}
         onChange={(rect) => setCrop((c) => c && { ...c, rect })}
-        onApply={() => void transform("crop")}
+        onResize={(rect) => announce(sizeSaid(rect))}
+        onApply={() => run("crop")}
       />
     ) : null,
-  };
-}
-
-const spinner = <Loader2 className="animate-spin" aria-hidden />;
-
-/** Recortar, girar y cambiar la foto: su grupo en la barra. */
-export function PhotoButtons({ photo }: { photo: PhotoTools }) {
-  const { busy, locked, what } = photo;
-  const changing = photo.uploading === "photo" && busy === null;
-  return (
-    <div role="group" aria-label="La foto" className="flex flex-wrap items-center gap-1">
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        data-photo-tool="crop"
-        aria-disabled={locked}
-        aria-busy={busy === "crop" || undefined}
-        className="aria-disabled:opacity-50"
-        title={`Recortar la foto: los ${what[1]} se recolocan solos`}
-        onClick={photo.startCrop}
-      >
-        {busy === "crop" ? spinner : <Crop aria-hidden />}
-        Recortar foto
-      </Button>
-      {(["ccw", "cw"] as const).map((dir) => (
-        <Button
-          key={dir}
-          type="button"
-          size="icon-sm"
-          variant="outline"
-          data-photo-tool={dir}
-          aria-label={dir === "cw" ? "Girar a la derecha" : "Girar a la izquierda"}
-          title={`Girar la foto 90° a la ${dir === "cw" ? "derecha" : "izquierda"}: los ${what[1]} giran con ella`}
-          aria-disabled={locked}
-          aria-busy={busy === dir || undefined}
-          className="aria-disabled:opacity-50"
-          onClick={() => photo.rotate(dir)}
+    /** «Este examen ya tiene intentos…»: la confirmación antes de recortar o girar. */
+    dialog: (
+      <AlertDialog open={asking !== null} onOpenChange={(open) => !open && setAsking(null)}>
+        {/* En un portal, pero sus teclas suben por React hasta el editor: ahí no son atajos */}
+        <AlertDialogContent
+          onKeyDown={(e) => e.stopPropagation()}
+          onCloseAutoFocus={(e) => {
+            e.preventDefault();
+            // Si ya no está («Aplicar recorte» se fue al terminar de recortar), al rectángulo o a «Recortar foto»
+            const back = returnFocus.current?.isConnected
+              ? returnFocus.current
+              : rootRef.current?.querySelector<HTMLElement>('[data-crop-box], [data-photo-tool="crop"]');
+            back?.focus({ preventScroll: true });
+          }}
         >
-          {busy === dir ? spinner : dir === "cw" ? <RotateCw aria-hidden /> : <RotateCcw aria-hidden />}
-        </Button>
-      ))}
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        data-photo-tool="change"
-        // Mientras sube no se deshabilita del todo: así el foco no se pierde (ni Ctrl+Z)
-        aria-disabled={photo.uploading !== null}
-        className="aria-disabled:opacity-50"
-        title={`Cambiar la foto por otra: los ${what[1]} se conservan`}
-        onClick={photo.changePhoto}
-      >
-        {changing ? spinner : <ImageUp aria-hidden />}
-        {changing ? "Subiendo…" : "Cambiar foto"}
-      </Button>
-    </div>
-  );
-}
-
-/** Las teclas de la barra del recorte no son atajos del editor (Ctrl+A, Supr, Ctrl+Z…); Esc y Tab, sí siguen. */
-function keepKeys(e: React.KeyboardEvent) {
-  if (e.key !== "Escape" && e.key !== "Tab") e.stopPropagation();
-}
-
-/** La barra mientras se recorta: proporción, el zoom (`zoom`), Cancelar y Aplicar, y lo que queda fuera. */
-export function CropBar({ photo, zoom }: { photo: PhotoTools; zoom: ReactNode }) {
-  const { crop, outside, what } = photo;
-  if (!crop) return null;
-  const working = photo.busy === "crop";
-  const same = isFullCrop(crop.rect);
-  return (
-    <div className="space-y-1.5" onKeyDown={keepKeys}>
-      <div
-        role="group"
-        aria-label="Recortar la foto"
-        className="flex flex-wrap items-center gap-x-1 gap-y-1.5 rounded-xl border border-primary/40 bg-primary/5 p-1.5"
-      >
-        <span className="flex items-center gap-1.5 px-1.5 text-sm font-semibold text-primary">
-          <Crop className="size-4" aria-hidden />
-          Recortar foto
-        </span>
-        <div role="group" aria-label="Proporción" className="inline-flex overflow-hidden rounded-lg border bg-background">
-          {CHOICES.map(({ choice, label, title }) => (
-            <button
-              key={choice}
-              type="button"
-              aria-pressed={choice === crop.choice}
-              title={title}
-              onClick={() => photo.choose(choice)}
-              className={cn(
-                "px-2.5 py-1 text-xs font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary",
-                choice === crop.choice
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:bg-accent hover:text-foreground"
-              )}
+          <AlertDialogHeader>
+            <AlertDialogTitle>Este examen ya tiene intentos</AlertDialogTitle>
+            <AlertDialogDescription>
+              Recortar o girar la foto cambia cómo se ven sus revisiones. ¿Continuar?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                const kind = asking;
+                confirmed.current = true;
+                setAsking(null);
+                if (kind) void transform(kind, !!rootRef.current?.contains(returnFocus.current));
+              }}
             >
-              {label}
-            </button>
-          ))}
-        </div>
-        <span aria-hidden className="mx-0.5 hidden h-5 w-px bg-border sm:block" />
-        {zoom}
-        {/* Juntos y a la derecha, también si la barra se parte en dos filas */}
-        <div className="ml-auto flex items-center gap-1">
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            aria-disabled={working}
-            aria-keyshortcuts="Escape"
-            className="aria-disabled:opacity-50"
-            title="Cancelar el recorte (Esc)"
-            onClick={photo.cancelCrop}
-          >
-            <X aria-hidden />
-            Cancelar
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            aria-disabled={working || same}
-            aria-busy={working || undefined}
-            className="aria-disabled:opacity-60"
-            title={same ? "Mueve el rectángulo o sus tiradores para recortar" : "Aplicar el recorte (Enter sobre el rectángulo)"}
-            onClick={photo.applyCrop}
-          >
-            {working ? spinner : <Check aria-hidden />}
-            {working ? "Recortando…" : "Aplicar recorte"}
-          </Button>
-        </div>
-      </div>
-      {/* La pista y el aviso en el mismo lugar: al aparecer el aviso, el lienzo no brinca a medio arrastre */}
-      <div className="grid text-xs">
-        <p aria-hidden={outside > 0} className={cn("text-muted-foreground [grid-area:1/1]", outside > 0 && "invisible")}>
-          Arrastra el rectángulo o sus tiradores; con el teclado, las flechas lo mueven y + y − lo agrandan o achican.
-          Enter aplica y Esc cancela.
-        </p>
-        <p
-          role="status"
-          className={cn(
-            "flex items-start gap-1.5 font-medium text-amber-700 [grid-area:1/1] dark:text-warning",
-            outside === 0 && "invisible"
-          )}
-        >
-          {outside > 0 && <TriangleAlert className="mt-px size-3.5 shrink-0" aria-hidden />}
-          {outside > 0 && `${outsideText(outside, what)}.`}
-        </p>
-      </div>
-    </div>
-  );
+              Continuar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    ),
+  };
 }

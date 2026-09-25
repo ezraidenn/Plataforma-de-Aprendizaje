@@ -24,30 +24,36 @@ import { CanvasToolbar, useCanvasPrefs } from "./image-canvas-toolbar";
 import { ElementAdder } from "./image-element-adder";
 import { ElementPanel } from "./image-element-panel";
 import { ElementList } from "./image-element-row";
-import type { PhotoTools } from "./image-photo-tools";
+import { CROP_HINT, type PhotoTools } from "./image-photo-tools";
 import { DragGhost, PlacedZone } from "./image-placed-zone";
 import { useTransformTool } from "./image-transform-box";
 import { useCanvasTools } from "./use-canvas-tools";
 import { crosshairKeys, useCanvasZoom } from "./use-canvas-zoom";
+import { useDragRelease } from "./use-drag-release";
 import { useDragSelection } from "./use-drag-selection";
 import { useEditorDrag } from "./use-editor-drag";
-import { isTypingTarget, type HistoryOptions } from "./use-editor-history";
+import { blockEditorShortcut, type HistoryOptions } from "./use-editor-history";
 import { useEditorIcons } from "./use-editor-icons";
 import { useElementActions } from "./use-element-actions";
 import { useZoneWarnings } from "./use-zone-warnings";
 
 /**
  * «Arrastrar a la imagen» en el editor del maestro. A la derecha (debajo en
- * pantallas angostas) los elementos. Arrastrar uno a la foto crea un lugar
- * (también «Colocar» y un clic, o Enter, flechas y Enter). Los lugares, con el
- * «Lugar N» del alumno, se seleccionan (clic, Mayús+clic, recuadro, Ctrl+A,
- * Espacio) y lo seleccionado se arrastra junto (imán y guías), se mueve con
- * las flechas, se duplica, se alinea, se reparte o se quita. Con lugares de un
- * solo elemento, su caja lo estira y gira (+ − [ ]), como el panel
- * «Seleccionado». Todo pasa por el historial. Un archivo soltado sobre la foto
- * la cambia; sobre la lista, es un ícono. Arriba, la barra (también recortar y
- * girar la foto: mientras se recorta, nada más se toca); la foto va en el
- * lienzo con zoom (Ctrl+rueda, Espacio+arrastrar).
+ * pantallas angostas) los elementos, íconos o etiquetas. Arrastrar uno a la
+ * foto crea un lugar donde se suelta (también: su botón «Colocar» y un clic en
+ * la foto, o con teclado Enter, flechas y Enter). Los lugares muestran el
+ * elemento real y el número «Lugar N» que ve el alumno; se seleccionan con un
+ * clic (Mayús+clic suma, arrastrar sobre la foto hace un recuadro, Ctrl+A
+ * todos, Espacio sobre uno lo suma) y lo seleccionado se arrastra junto (con
+ * imán y guías), se mueve con las flechas, se duplica (Ctrl+D), se alinea, se
+ * reparte o se quita (Supr). Con lugares de un solo elemento, su caja estira y
+ * gira el elemento (también + − [ ]). Un lugar solo se quita también sacándolo
+ * de la foto. Todo cambio pasa por el historial del editor (deshacer). Soltar
+ * un archivo sobre la foto la cambia; sobre la lista, lo agrega como ícono. Un
+ * clic en un elemento de la lista o en lugares de un solo elemento lo lleva al
+ * panel «Seleccionado» (tamaño y giro). Arriba, la barra de herramientas (con
+ * recortar y girar la foto: mientras se recorta, nada más se toca ni atiende
+ * teclas); la foto va en el lienzo con zoom (Ctrl+rueda, Espacio+arrastrar).
  */
 export function DragEditor({
   imageFileId,
@@ -198,37 +204,21 @@ export function DragEditor({
   const boardDrop = useFileDrop(onPhotoFile, uploading === null);
   const panelDrop = useFileDrop((file) => void iconTools.addIcon(file), uploading === null && !fullElements);
 
-  // Esc suelta lo elegido y lo seleccionado, esté donde esté el foco, salvo en
-  // un campo (el del panel, con Esc, solo deshace lo escrito) o si ya lo
-  // atendió un diálogo
-  const hasSelection = selected.size > 0;
-  useEffect(() => {
-    if (!chosen && !hasSelection && !panelId) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape" || e.defaultPrevented || isTypingTarget(e.target)) return;
-      const root = rootRef.current;
-      const hadFocus = !!root?.contains(document.activeElement);
-      setChosen(null);
-      setPanelId(null);
-      clearSelection();
-      announce("Elección cancelada");
-      // Si lo enfocado desaparece (el deslizante del panel), el foco va a la foto y Ctrl+Z sigue a mano
-      requestAnimationFrame(() => {
-        if (hadFocus && !root?.contains(document.activeElement)) boardNode?.focus({ preventScroll: true });
-      });
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [chosen, hasSelection, panelId, clearSelection, announce, boardNode]);
-
-  // Tras deshacer, lo elegido (para colocar o en el panel) puede ya no existir; al recortar
-  // la foto se suelta todo, también lo seleccionado (mientras, nada más se toca)
+  // Esc, deshacer y recortar la foto sueltan lo elegido y lo seleccionado
   const cropping = photo.crop !== null;
-  useEffect(() => {
-    if (chosen && (cropping || !byId.has(chosen))) setChosen(null);
-    if (panelId && (cropping || !byId.has(panelId))) setPanelId(null);
-    if (cropping) clearSelection();
-  }, [byId, chosen, panelId, cropping, clearSelection]);
+  useDragRelease({
+    chosen,
+    setChosen,
+    panelId,
+    setPanelId,
+    hasSelection: selected.size > 0,
+    clearSelection,
+    byId,
+    cropping,
+    rootRef,
+    boardNode,
+    announce,
+  });
 
   // Foco tras una acción: el botón nuevo (o el que se movió) está en el siguiente render
   useEffect(() => {
@@ -295,14 +285,16 @@ export function DragEditor({
   const span = (vs: number[]) => (Math.min(...vs) + Math.max(...vs)) / 2;
   const rulerMark =
     tools.held ?? (shown.length ? { x: span(shown.map((p) => p.x)), y: span(shown.map((p) => p.y)) } : null);
-  const hint = dragEditorHint({
-    removing,
-    placing: chosen && nameOf(chosen),
-    empty: elements.length === 0,
-    selectedCount: selected.size,
-    framed: frameAt !== null,
-    touch,
-  });
+  const hint = cropping
+    ? CROP_HINT
+    : dragEditorHint({
+        removing,
+        placing: chosen && nameOf(chosen),
+        empty: elements.length === 0,
+        selectedCount: selected.size,
+        framed: frameAt !== null,
+        touch,
+      });
   // Acciones fijas para las piezas memorizadas: mover un grupo no vuelve a pintar la lista ni los demás lugares
   const onZoneClick = useStableHandler((i: number, e: React.MouseEvent) => selection.click(i, e.shiftKey, e.detail === 0));
   const onZoneRemove = useStableHandler((i: number, e: React.MouseEvent) => selection.remove([i], e.detail === 0));
@@ -333,6 +325,8 @@ export function DragEditor({
         aria-label="Lugares en la foto y elementos"
         data-drag-editor=""
         onKeyDown={(e) => {
+          // Mientras se recorta la foto, sus atajos (Ctrl+A, Supr, flechas, Ctrl+D…) no tocan los lugares
+          if (cropping) return blockEditorShortcut(e);
           selection.onKeyDown(e);
           transform.onKeyDown(e);
         }}

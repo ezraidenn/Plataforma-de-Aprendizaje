@@ -57,6 +57,8 @@ export default async function ExamEditPage({
   });
   // La IA nunca crea preguntas sobre imagen; "reemplazar" solo borra las demás
   const imageQuestionCount = rawQuestions.filter((q) => isImageQuestionType(q.type)).length;
+  // Alumnos con un intento enviado: la publicación de resultados y el editor de fotos (cambiar una foto cambia sus revisiones)
+  const attempted = studentsWithAttempts(itemId);
 
   return (
     <div className="space-y-4">
@@ -119,7 +121,7 @@ export default async function ExamEditPage({
             exam.showResultsMode === "after_close" &&
             exam.closesAt !== null &&
             exam.closesAt.getTime() <= Date.now(),
-          studentsWithAttempts: studentsWithAttempts(itemId),
+          studentsWithAttempts: attempted,
         }}
       />
 
@@ -128,6 +130,7 @@ export default async function ExamEditPage({
         itemId={itemId}
         questions={questions}
         drawCount={exam.drawCount}
+        hasAttempts={attempted > 0}
       />
     </div>
   );

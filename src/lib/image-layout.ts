@@ -105,15 +105,29 @@ const inside = (p: Point) => p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1;
 const clampTo = (n: number, [min, max]: readonly [number, number]) => Math.min(max, Math.max(min, n));
 
 /**
- * Los elementos con su tamaño ya escrito (los de antes lo derivan de
- * `iconSize`) y multiplicado por `scale`, dentro de lo que el editor ofrece
- * con la foto nueva de proporción `aspect`. Su proporción y su giro no cambian.
+ * El tamaño de un elemento (el suyo o, si es de antes, el de `iconSize`)
+ * multiplicado por `scale`, dentro de lo que el editor ofrece con una foto de
+ * proporción `aspect`; `bound`: el tope que lo detuvo, si alguno.
  */
+function rescaled(e: ImageElement, iconSize: IconSize | undefined, scale: number, aspect: number): { size: number; bound: "max" | "min" | null } {
+  const range = e.kind === "icon" ? iconSizeRange(aspect) : TEXT_SIZE_RANGE;
+  const raw = elementSize(e, iconSize) * scale;
+  return { size: round4(clampTo(raw, range)), bound: raw > range[1] ? "max" : raw < range[0] ? "min" : null };
+}
+
+/** Los elementos con su tamaño ya escrito y escalado (`rescaled`). Su proporción y su giro no cambian. */
 function scaledElements(c: ImageDragConfig, scale: number, aspect: number): ImageElement[] {
-  return c.elements.map((e) => ({
-    ...e,
-    size: round4(clampTo(elementSize(e, c.iconSize) * scale, e.kind === "icon" ? iconSizeRange(aspect) : TEXT_SIZE_RANGE)),
-  }));
+  return c.elements.map((e) => ({ ...e, size: rescaled(e, c.iconSize, scale, aspect).size }));
+}
+
+/**
+ * Cuántos elementos se quedan en su tamaño máximo o mínimo al escalarlos por
+ * `scale` con una foto nueva de proporción `aspect` (recortar: 1 / ancho del
+ * recorte; girar: 1 / aspect de antes): se verán distintos que antes.
+ */
+export function boundSizes(c: ImageDragConfig, scale: number, aspect: number): { max: number; min: number } {
+  const bounds = c.elements.map((e) => rescaled(e, c.iconSize, scale, aspect).bound);
+  return { max: bounds.filter((b) => b === "max").length, min: bounds.filter((b) => b === "min").length };
 }
 
 /**

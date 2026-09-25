@@ -18,7 +18,7 @@ import {
 import { cn } from "@/lib/utils";
 import { ImageCanvas } from "./image-canvas";
 import { CanvasToolbar, useCanvasPrefs } from "./image-canvas-toolbar";
-import type { PhotoTools } from "./image-photo-tools";
+import { CROP_HINT, type PhotoTools } from "./image-photo-tools";
 import { crosshairKeys, revealSoon, useCanvasZoom } from "./use-canvas-zoom";
 import type { HistoryOptions } from "./use-editor-history";
 import { useSpotDrag } from "./use-spot-drag";
@@ -233,8 +233,9 @@ export function ClickEditor({
         <DropVeil show={boardDrop.over} text="Suelta la foto para cambiarla (los puntos se conservan)" />
       </ImageCanvas>
       <p className="text-xs text-muted-foreground">
-        Haz clic en la foto para marcar cada punto correcto; arrastra un punto para moverlo y haz clic en él para
-        quitarlo. El círculo verde es el margen: cuenta cualquier clic del alumno que caiga dentro.
+        {photo.crop
+          ? CROP_HINT
+          : "Haz clic en la foto para marcar cada punto correcto; arrastra un punto para moverlo y haz clic en él para quitarlo. El círculo verde es el margen: cuenta cualquier clic del alumno que caiga dentro."}
       </p>
       <p className="text-xs tabular-nums text-muted-foreground">
         {n} de {MAX_SPOTS} puntos

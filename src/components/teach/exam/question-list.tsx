@@ -118,12 +118,15 @@ export function QuestionList({
   itemId,
   questions,
   drawCount = null,
+  hasAttempts = false,
 }: {
   courseId: string;
   itemId: string;
   questions: QuestionData[];
   /** Pool aleatorio activo: preguntas sorteadas por intento (null = todas) */
   drawCount?: number | null;
+  /** El examen ya tiene intentos enviados (cambiar la foto de una pregunta cambia sus revisiones). */
+  hasAttempts?: boolean;
 }) {
   const router = useRouter();
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -197,6 +200,7 @@ export function QuestionList({
                 <QuestionEditor
                   type={question.type}
                   initial={question}
+                  hasAttempts={hasAttempts}
                   onCancel={() => setEditingId(null)}
                   onSave={async (input) => {
                     const result = await updateQuestionAction(courseId, itemId, question.id, input);
@@ -393,12 +397,15 @@ function QuestionEditor({
   initial,
   onCancel,
   onSave,
+  hasAttempts = false,
 }: {
   type: QuestionType;
   initial: QuestionData | null;
   onCancel: () => void;
   /** Devuelve el mensaje de error del servidor o null si todo salió bien. */
   onSave: (input: QuestionFormInput) => Promise<string | null>;
+  /** La pregunta ya está en intentos enviados: recortar o girar su foto pide confirmación. */
+  hasAttempts?: boolean;
 }) {
   const [promptMd, setPromptMd] = useState(initial?.promptMd ?? "");
   const [points, setPoints] = useState(String(initial?.points ?? 1));
@@ -809,7 +816,13 @@ function QuestionEditor({
       )}
 
       {isImageQuestionType(type) && (
-        <ImageQuestionEditor type={type} value={image} onChange={changeImage} onBusyChange={setUploading} />
+        <ImageQuestionEditor
+          type={type}
+          value={image}
+          onChange={changeImage}
+          onBusyChange={setUploading}
+          hasAttempts={hasAttempts}
+        />
       )}
 
       {error && (
