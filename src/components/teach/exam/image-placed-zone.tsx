@@ -29,6 +29,7 @@ export const PlacedZone = memo(function PlacedZone({
   label,
   number,
   boardWidth,
+  aspect,
   dense,
   selected,
   removable,
@@ -45,6 +46,8 @@ export const PlacedZone = memo(function PlacedZone({
   label: string;
   number: number;
   boardWidth: number;
+  /** Alto / ancho de la foto: con otra foto, la bolita y la lectura se reacomodan. */
+  aspect: number;
   dense: boolean;
   selected: boolean;
   /** Es el único seleccionado: muestra la «×». */
@@ -107,7 +110,7 @@ export const PlacedZone = memo(function PlacedZone({
           rotation={view.rotation}
           readout={readout ?? null}
           actions={transform}
-          layout={`${at.x},${at.y},${view.size},${boardWidth}`}
+          layout={`${at.x},${at.y},${view.size},${boardWidth},${aspect}`}
         />
       )}
       {removable && (
@@ -160,8 +163,9 @@ export function DragGhost({
   return createPortal(
     <DragOverlay dropAnimation={null} modifiers={fromList ? [centerOnPointer] : modifier ? [modifier] : undefined}>
       {element ? (
-        // El fantasma toma el tamaño de lo que se arrastra: la ficha va centrada en él
-        <div className="flex size-full items-center justify-center">
+        // El fantasma toma el tamaño de lo que se arrastra: la ficha va centrada en él.
+        // `data-canvas-ghost`: Ctrl+rueda sobre él no cambia el zoom del navegador a medio arrastre
+        <div data-canvas-ghost="" className="flex size-full items-center justify-center">
           <span
             className={cn(
               "block cursor-grabbing drop-shadow-[0_12px_12px_rgb(15_23_42/0.35)] transition-opacity",

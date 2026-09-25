@@ -7,19 +7,18 @@ import { relToRect } from "@/components/exam/image-board";
 import { useStableHandler } from "@/components/exam/image-dnd";
 import type { Guide } from "@/lib/image-layout";
 import { freeSpot, round4, type ImageDragConfig, type ImageElement, type ImageZone, type Point } from "@/lib/image-questions";
+import { visibleArea } from "./use-canvas-zoom";
 import type { useDragSelection } from "./use-drag-selection";
 
 /**
  * El punto de la pantalla cae en lo que se ve de la foto: con zoom, la foto
- * sigue por debajo de lo que rodea al lienzo (la lista, por ejemplo), y ahí no
- * se suelta nada (un lugar sacado ahí se quita, como fuera de la foto).
+ * sigue por debajo de lo que rodea al lienzo (la lista, por ejemplo) y de las
+ * reglas, y ahí no se suelta nada (un lugar sacado ahí se quita, como fuera de
+ * la foto).
  */
 function inView(board: HTMLElement, x: number, y: number): boolean {
-  const vp = board.closest("[data-canvas-viewport]");
-  if (!vp) return true;
-  const r = vp.getBoundingClientRect();
-  const [left, top] = [r.left + vp.clientLeft, r.top + vp.clientTop];
-  return x >= left && x <= left + vp.clientWidth && y >= top && y <= top + vp.clientHeight;
+  const v = visibleArea(board);
+  return x >= v.left && x <= v.right && y >= v.top && y <= v.bottom;
 }
 
 /**

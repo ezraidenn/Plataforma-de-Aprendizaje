@@ -18,7 +18,7 @@ import {
 import { cn } from "@/lib/utils";
 import { ImageCanvas } from "./image-canvas";
 import { CanvasToolbar, useCanvasPrefs } from "./image-canvas-toolbar";
-import { useCanvasZoom } from "./use-canvas-zoom";
+import { crosshairKeys, revealSoon, useCanvasZoom } from "./use-canvas-zoom";
 import type { HistoryOptions } from "./use-editor-history";
 import { useSpotDrag } from "./use-spot-drag";
 
@@ -139,6 +139,8 @@ export function ClickEditor({
       { coalesce: `punto:${i}` }
     );
     focusAfter.current = i;
+    // Con zoom, si sale de la vista se lleva a ella
+    revealSoon(boardNode, `[data-spot="${i}"]`);
   }
 
   // Reglas: el punto que va en la mano o el que tiene el foco
@@ -167,7 +169,7 @@ export function ClickEditor({
         tabIndex={0}
         role="application"
         aria-label="Foto: mueve la mira con las flechas y pulsa Enter para marcar un punto correcto"
-        onKeyDown={crosshair.onKeyDown}
+        onKeyDown={(e) => crosshairKeys(e, crosshair.onKeyDown, boardNode)}
         onFocus={(e) => {
           const spot = (e.target as HTMLElement).closest<HTMLElement>("[data-spot]");
           setFocused(spot ? Number(spot.dataset.spot) : null);

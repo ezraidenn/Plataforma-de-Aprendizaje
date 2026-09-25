@@ -156,7 +156,7 @@ export function BoardCursor({ x, y }: Point) {
       y={y}
       className="pointer-events-none hidden text-primary drop-shadow-[0_0_2px_white] group-focus-visible:block"
     >
-      <Crosshair className="size-7" strokeWidth={2.5} aria-hidden />
+      <Crosshair data-board-cursor="" className="size-7" strokeWidth={2.5} aria-hidden />
     </BoardSpot>
   );
 }

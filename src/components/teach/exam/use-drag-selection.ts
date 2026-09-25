@@ -12,6 +12,7 @@ import {
 } from "@/lib/image-questions";
 import { joinY, plural } from "@/lib/plural";
 import type { Area } from "./image-canvas";
+import { revealSoon } from "./use-canvas-zoom";
 import { isTypingTarget, type HistoryOptions } from "./use-editor-history";
 
 /**
@@ -209,6 +210,9 @@ export function useDragSelection({
     moveBy(indices, sx * d, (sy * d) / aspect, { coalesce: `mover:${[...indices].sort((a, b) => a - b).join(",")}` });
     // Si cambia su número, el botón cambia de sitio en el orden: el foco lo sigue
     if (focused !== null) focusAfter.current = `[data-zone="${focused}"]`;
+    // Con zoom, lo movido que sale de la vista se lleva a ella (el que tiene el foco, o el primero)
+    const shown = focused ?? indices[0];
+    if (shown !== undefined) revealSoon(boardNode, `[data-zone="${shown}"]`);
   }
 
   /** Ctrl+D: cada seleccionado da un lugar nuevo del mismo elemento, un poco desplazado; quedan seleccionados los nuevos. */

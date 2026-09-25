@@ -42,7 +42,7 @@ export const ElementPanel = memo(function ElementPanel({
   name,
   several,
   aspect,
-  boardWidth,
+  fitWidth,
   onChange,
   onBegin,
   onCommit,
@@ -55,8 +55,8 @@ export const ElementPanel = memo(function ElementPanel({
   several?: number;
   /** Alto / ancho de la foto: acota el tamaño de los íconos para que quepan en ella. */
   aspect: number;
-  /** Ancho de la foto del editor en px: para avisar si se ve al mínimo. */
-  boardWidth: number;
+  /** Ancho de la foto del editor al 100 % (px): para avisar si se ve al mínimo (no cambia con el zoom). */
+  fitWidth: number;
   onChange: (patch: Pick<ImageElement, "size" | "rotation">) => void;
   /** Se tomó un deslizante: hasta soltarlo, un solo paso del historial. */
   onBegin: () => void;
@@ -71,7 +71,7 @@ export const ElementPanel = memo(function ElementPanel({
   // El giro tal como se guardó (−180 no salta a 180 mientras se arrastra); si no, normalizado
   const raw = element?.rotation;
   const rotation = view ? Math.round(typeof raw === "number" && raw >= -180 && raw <= 180 ? raw : view.rotation) : 0;
-  const atMinimum = !!view && shownAtMinimum(view.kind, view.size, boardWidth);
+  const atMinimum = !!view && shownAtMinimum(view.kind, view.size, fitWidth);
   const off = !view;
   return (
     <section aria-labelledby={headingId} className="space-y-2.5 rounded-xl border bg-muted/30 p-2.5">

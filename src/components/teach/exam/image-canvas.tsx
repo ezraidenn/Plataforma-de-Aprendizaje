@@ -10,8 +10,9 @@ import { RULER_PX, useCanvasGestures, type CanvasZoom } from "./use-canvas-zoom"
 
 /**
  * Lienzo del editor (arrastrar y señalar): la foto (`ImageBoard`) y sus capas,
- * dentro de un contenedor con desplazamiento (alto máximo 70 % de la ventana)
- * que hace el zoom: `use-canvas-zoom.ts` (Ctrl+rueda, Espacio+arrastrar). De
+ * dentro de un contenedor con desplazamiento (del alto del lienzo al 100 %, con
+ * 70 % de la ventana de tope; por debajo del 100 % la foto va centrada) que
+ * hace el zoom: `use-canvas-zoom.ts` (Ctrl+rueda, Espacio+arrastrar). De
  * abajo arriba: la foto, la cuadrícula, lo colocado (`children`), las guías
  * del imán, las distancias tras repartir y el recuadro de selección.
  *
@@ -213,20 +214,31 @@ export function ImageCanvas({
     </ImageBoard>
   );
 
+  const boardHeight = boardWidth * board.aspect;
+  // Alto fijo: el del lienzo al 100 % (borde, regla, margen, foto y el hueco de la barra
+  // horizontal que sale al acercar), con 70 vh de tope
+  const frame = Math.ceil(2 + (rulers ? RULER_PX : 0) + 2 * pad + Math.floor(zoom.fit) * board.aspect + zoom.bar);
   return (
     <div {...wrapperProps} className="relative min-w-0">
       <div
         ref={zoom.viewportRef}
         data-canvas-viewport=""
+        data-rulers={rulers ? "" : undefined}
         // Sin desplazamiento suave (el ancla del zoom se corrige al instante) y con el hueco de la barra
         // siempre reservado: el ancho al 100 % no cambia al aparecer la barra vertical
         className="max-h-[70vh] scroll-auto overflow-auto rounded-xl border bg-muted/40 [scrollbar-gutter:stable]"
+        style={{
+          height: zoom.fit > 0 ? `min(70vh, ${frame}px)` : undefined,
+          // Lo que se enfoca o se lleva a la vista no queda bajo las reglas
+          scrollPaddingTop: rulers ? RULER_PX : undefined,
+          scrollPaddingLeft: rulers ? RULER_PX : undefined,
+        }}
       >
-        {/* Al menos tan ancho como el lienzo (la foto va centrada entre las reglas) y recortado:
-            un tirador que se sale del margen no agranda el desplazamiento */}
-        <div className="w-max min-w-full overflow-clip">
+        {/* Al menos tan ancho y tan alto como el lienzo (la foto va centrada entre las reglas) y
+            recortado: un tirador que se sale del margen no agranda el desplazamiento */}
+        <div className="flex min-h-full w-max min-w-full flex-col overflow-clip">
           {rulers && (
-            <div className="sticky top-0 z-20 flex border-b bg-background" style={{ height: RULER_PX }}>
+            <div className="sticky top-0 z-20 flex shrink-0 border-b bg-background" style={{ height: RULER_PX }}>
               <span aria-hidden className="sticky left-0 z-10 shrink-0 border-r bg-background" style={{ width: RULER_PX }} />
               {/* Mismo acomodo que la fila de la foto: la regla queda justo sobre ella */}
               <div className="flex flex-1 justify-center">
@@ -236,16 +248,19 @@ export function ImageCanvas({
               </div>
             </div>
           )}
-          <div className="flex">
+          <div className="flex flex-1">
             {rulers && (
+              // La columna llega hasta abajo; la regla, centrada como la foto
               <div
-                className="sticky left-0 z-10 shrink-0 border-r bg-background"
-                style={{ width: RULER_PX, paddingBlock: pad }}
+                className="sticky left-0 z-10 flex shrink-0 flex-col justify-center border-r bg-background"
+                style={{ width: RULER_PX }}
               >
-                <Ruler axis="y" mark={rulerMark?.y} length={boardWidth * board.aspect} />
+                <div className="shrink-0" style={{ height: boardHeight, marginBlock: pad }}>
+                  <Ruler axis="y" mark={rulerMark?.y} length={boardHeight} />
+                </div>
               </div>
             )}
-            <div className="flex flex-1 justify-center">
+            <div className="flex flex-1 items-center justify-center">
               <div className="shrink-0" data-pad={pad} style={{ padding: pad }}>
                 {photo}
               </div>

@@ -4,18 +4,25 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject }
 import { boxBounds, boxesOverlap, elementBox, elementView, type Box } from "@/lib/image-layout";
 import { MIN_ZONE_GAP, overlapNumbers, relDistance, type ImageElement, type ImageZone } from "@/lib/image-questions";
 import { joinY } from "@/lib/plural";
+import { elementSizeAt } from "./use-canvas-tools";
 
 /**
  * Avisos del editor de «arrastrar». Dos que no impiden guardar: dos lugares
  * que se tapan a la vista y lugares que se salen por la orilla de la foto. Se
- * miden con la caja real de cada lugar en pantalla (su tamaño, su proporción y
- * su giro): los botones `[data-zone]` que hay dentro de `rootRef`. Y uno que
- * sí: dos lugares encimados (centros a menos de MIN_ZONE_GAP). Sale de los
- * lugares mismos, así que se va en cuanto se separan, se haga como se haga
- * (arrastrar, flechas, imán, alinear, deshacer). A la vista lo muestra la
- * línea de lo que impide guardar (`imageEditorProblem`); aquí solo se dice en
- * voz alta cuando aparece o cambia de pareja, no en cada cambio.
+ * miden con la caja de cada lugar (su tamaño, su proporción y su giro) con la
+ * foto al 100 % (`fit`), no como se ve con el zoom: así no aparecen ni se van
+ * al acercar o alejar (un ícono al mínimo legible cambia de tamaño relativo).
+ * Las etiquetas se miden en sus botones `[data-zone]` dentro de `rootRef`
+ * (`elementSizeAt`). Y uno que sí: dos lugares encimados (centros a menos de
+ * MIN_ZONE_GAP). Sale de los lugares mismos, así que se va en cuanto se
+ * separan, se haga como se haga (arrastrar, flechas, imán, alinear,
+ * deshacer). A la vista lo muestra la línea de lo que impide guardar
+ * (`imageEditorProblem`); aquí solo se dice en voz alta cuando aparece o
+ * cambia de pareja, no en cada cambio.
  */
+
+/** Tocar la orilla justo no es salirse (redondeo de las cajas). */
+const EDGE_EPS = 1e-6;
 
 /** Aviso de lugares que se salen por la orilla, según lo que haya en ellos. */
 function edgeWarning(numbers: number[], kinds: Set<string | undefined>): string {
@@ -36,7 +43,7 @@ function edgeWarning(numbers: number[], kinds: Set<string | undefined>): string 
 
 export function useZoneWarnings({
   rootRef,
-  boardNode,
+  fit,
   boardWidth,
   zones,
   ordered,
@@ -47,7 +54,9 @@ export function useZoneWarnings({
   announce,
 }: {
   rootRef: RefObject<HTMLElement | null>;
-  boardNode: HTMLElement | null;
+  /** Ancho de la foto al 100 % (px): con él se mide. */
+  fit: number;
+  /** Ancho de la foto como se ve (px): así están dibujadas las etiquetas que se miden. */
   boardWidth: number;
   zones: ImageZone[];
   /** Índices de los lugares en orden de lectura. */
@@ -80,17 +89,14 @@ export function useZoneWarnings({
 
   useLayoutEffect(() => {
     const root = rootRef.current;
-    const boardRect = boardNode?.getBoundingClientRect();
-    if (!root || !boardRect || boardWidth === 0) return;
+    if (!root || fit <= 0 || boardWidth <= 0) return;
     const boxes = new Map<number, Box>();
-    root.querySelectorAll<HTMLElement>("[data-zone]").forEach((el) => {
-      const i = Number(el.dataset.zone);
-      const element = byId.get(zones[i]?.elementId ?? "");
+    zones.forEach((z, i) => {
+      const element = byId.get(z.elementId);
       if (!element) return;
-      // El botón mide la ficha sin girar (el giro va dentro) y girar no mueve su centro
-      const r = el.getBoundingClientRect();
-      const center = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-      boxes.set(i, elementBox(center, { w: r.width, h: r.height }, elementView(element).rotation, 1));
+      // El botón mide la ficha sin girar (el giro va dentro)
+      const rel = elementSizeAt(element, fit, root.querySelector<HTMLElement>(`[data-zone="${i}"]`), boardWidth);
+      if (rel) boxes.set(i, elementBox(z, rel, elementView(element).rotation, aspect));
     });
 
     // Dos lugares que se tapan a la vista
@@ -114,12 +120,12 @@ export function useZoneWarnings({
       const box = boxes.get(i);
       if (!box) return false;
       const r = boxBounds(box);
-      return r.left < boardRect.left || r.right > boardRect.right || r.top < boardRect.top || r.bottom > boardRect.bottom;
+      return r.left < -EDGE_EPS || r.right > 1 + EDGE_EPS || r.top < -EDGE_EPS || r.bottom > 1 + EDGE_EPS;
     });
     setEdgeClipped((prev) =>
       prev.length === clipped.length && prev.every((v, idx) => v === clipped[idx]) ? prev : clipped
     );
-  }, [rootRef, zones, ordered, byId, dense, boardWidth, boardNode, aspect]);
+  }, [rootRef, zones, ordered, byId, dense, fit, boardWidth, aspect]);
 
   const coveredText =
     covered && numbers[covered[0]] && numbers[covered[1]]

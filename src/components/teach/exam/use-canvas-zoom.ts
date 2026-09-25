@@ -14,10 +14,12 @@ import { isTypingTarget } from "./use-editor-history";
  * y las guías conservan su grosor en pantalla. Lo guardado es relativo a la
  * foto: el zoom no lo cambia.
  *
- * Cambiar el zoom deja quieto un punto: el del cursor con Ctrl+rueda (o con
- * el pellizco del trackpad, que llega igual), el centro del lienzo con los
- * botones. Espacio sostenido con el puntero sobre el lienzo pone la mano:
- * arrastrar desplaza.
+ * El contenedor tiene el alto fijo del lienzo al 100 % (con 70 vh de tope):
+ * al acercar no crece ni empuja lo de abajo, y siempre hay desplazamiento
+ * para que cambiar el zoom deje quieto un punto: el del cursor con Ctrl+rueda
+ * (o con el pellizco del trackpad, que llega igual), el centro del lienzo con
+ * los botones. Por debajo del 100 % la foto va centrada. Espacio sostenido con
+ * el puntero sobre el lienzo pone la mano: arrastrar desplaza.
  */
 
 /** Margen alrededor de la foto dentro del lienzo: ahí caben los tiradores y el número de lo que está en la orilla. */
@@ -31,25 +33,73 @@ export const RULER_PX = 18;
 /** Punto que se deja quieto al cambiar el zoom: en la foto (fracciones) y en la pantalla. */
 type Anchor = { fx: number; fy: number; x: number; y: number };
 
+/**
+ * La parte de la foto que se ve en el lienzo, en px de la ventana: dentro del
+ * contenedor que se desplaza y sin lo que tapan las reglas (`data-rulers`).
+ * Puede quedar vacía (left > right) si la foto está fuera de la vista.
+ */
+export function visibleArea(board: HTMLElement): { left: number; top: number; right: number; bottom: number } {
+  const r = board.getBoundingClientRect();
+  const vp = board.closest<HTMLElement>("[data-canvas-viewport]");
+  if (!vp) return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+  const v = vp.getBoundingClientRect();
+  const ruler = vp.dataset.rulers !== undefined ? RULER_PX : 0;
+  const [left, top] = [v.left + vp.clientLeft, v.top + vp.clientTop];
+  return {
+    left: Math.max(r.left, left + ruler),
+    top: Math.max(r.top, top + ruler),
+    right: Math.min(r.right, left + vp.clientWidth),
+    bottom: Math.min(r.bottom, top + vp.clientHeight),
+  };
+}
+
+/**
+ * Lleva a la vista lo que se movió con el teclado si con el zoom quedó fuera
+ * del lienzo (o bajo las reglas: lo evita el `scroll-padding` del lienzo). Lo
+ * justo y al instante, en el cuadro siguiente: ya dibujado donde quedó.
+ */
+export function revealSoon(root: ParentNode | null | undefined, selector: string) {
+  requestAnimationFrame(() => root?.querySelector(selector)?.scrollIntoView({ block: "nearest", inline: "nearest" }));
+}
+
+/** Las teclas de la mira (`useCrosshair`, en `board`): si las flechas la sacan de la vista, se lleva a ella. */
+export function crosshairKeys(
+  e: React.KeyboardEvent<HTMLElement>,
+  onKeyDown: (e: React.KeyboardEvent<HTMLElement>) => void,
+  board: HTMLElement | null
+) {
+  onKeyDown(e);
+  if (e.defaultPrevented && e.key.startsWith("Arrow")) revealSoon(board, "[data-board-cursor]");
+}
+
 export type CanvasZoom = ReturnType<typeof useCanvasZoom>;
 
 export function useCanvasZoom({ rulers }: { rulers: boolean }) {
   const [zoom, setZoom] = useState(1);
-  /** Ancho útil del lienzo (sin su barra de desplazamiento). */
+  /** Ancho útil del lienzo (sin su barra de desplazamiento) y el grosor de esa barra. */
   const [room, setRoom] = useState(0);
+  const [bar, setBar] = useState(0);
   const [viewport, setViewport] = useState<HTMLDivElement | null>(null);
   const board = useRef<HTMLElement | null>(null);
   /** El zoom pedido: va delante del estado si llegan varios pasos de la rueda antes de dibujar. */
   const current = useRef(1);
+  /** El zoom que se ve (el del último dibujo). */
+  const shown = useRef(1);
   const anchor = useRef<Anchor | null>(null);
+  /** Cuadro pedido para dibujar el zoom: el pellizco manda muchos pasos por cuadro y se dibuja uno. */
+  const frame = useRef(0);
+  useEffect(() => () => cancelAnimationFrame(frame.current), []);
 
   // La primera medida antes de pintar; después, al cambiar de tamaño
   useLayoutEffect(() => {
-    if (viewport) setRoom(viewport.clientWidth);
-  }, [viewport]);
-  useEffect(() => {
     if (!viewport) return;
-    const observer = new ResizeObserver(() => setRoom(viewport.clientWidth));
+    const measure = () => {
+      setRoom(viewport.clientWidth);
+      // El hueco de la barra vertical siempre está reservado: su grosor es el de la horizontal
+      setBar(Math.max(0, viewport.offsetWidth - viewport.clientWidth - 2 * viewport.clientLeft));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
     observer.observe(viewport);
     return () => observer.disconnect();
   }, [viewport]);
@@ -64,28 +114,43 @@ export function useCanvasZoom({ rulers }: { rulers: boolean }) {
     board.current = node;
   }, []);
 
-  /** Cambia el zoom dejando quieto el punto (x, y) de la pantalla (sin él, el centro del lienzo). El zoom nuevo, o null si no cambió. */
+  /**
+   * Cambia el zoom dejando quieto el punto (x, y) de la pantalla (sin él, el
+   * centro del lienzo). Se dibuja en el cuadro siguiente, una vez aunque
+   * lleguen varios pasos. El zoom nuevo, o null si no cambió.
+   */
   const zoomTo = useCallback(
     (next: number, at?: { x: number; y: number }): number | null => {
       const z = clampZoom(next);
       if (Math.abs(z - current.current) < 1e-4) return null;
+      current.current = z;
       const r = board.current?.getBoundingClientRect();
-      if (viewport && r && r.width > 0 && r.height > 0) {
+      if (Math.abs(z - shown.current) < 1e-4) {
+        // De vuelta al zoom que se ve (+ y − antes de dibujar): no queda nada que corregir
+        anchor.current = null;
+      } else if (viewport && r && r.width > 0 && r.height > 0) {
+        // Medido en la foto tal como se ve (los pasos pedidos aún no se dibujan)
         const v = viewport.getBoundingClientRect();
         const x = at?.x ?? v.left + viewport.clientLeft + viewport.clientWidth / 2;
         const y = at?.y ?? v.top + viewport.clientTop + viewport.clientHeight / 2;
         anchor.current = { fx: (x - r.left) / r.width, fy: (y - r.top) / r.height, x, y };
       }
-      current.current = z;
-      setZoom(z);
+      if (!frame.current) {
+        frame.current = requestAnimationFrame(() => {
+          frame.current = 0;
+          setZoom(current.current);
+        });
+      }
       return z;
     },
     [viewport]
   );
 
-  // Con el tablero ya a su tamaño nuevo, el punto ancla vuelve a quedar donde estaba
-  // (si la foto cabe entera, el desplazamiento se queda en cero y no hay nada que corregir)
+  // Con el tablero ya a su tamaño nuevo, el punto ancla vuelve a quedar donde estaba. Con el
+  // alto fijo del contenedor, al acercar siempre hay desplazamiento para lograrlo; por debajo
+  // del 100 % la foto va centrada y el desplazamiento queda en cero
   useLayoutEffect(() => {
+    shown.current = zoom;
     const a = anchor.current;
     const r = board.current?.getBoundingClientRect();
     if (!a || !viewport || !r) return;
@@ -102,6 +167,8 @@ export function useCanvasZoom({ rulers }: { rulers: boolean }) {
     fit,
     /** Ancho de la foto en pantalla, ya con el zoom. */
     boardWidth,
+    /** Grosor de las barras de desplazamiento del lienzo (px). */
+    bar,
     viewport,
     viewportRef: setViewport,
     boardRef,
@@ -141,6 +208,28 @@ export function useCanvasGestures(zoom: CanvasZoom) {
   const over = useRef(false);
   const fresh = useRef(false);
   const buttons = useRef(0);
+  /** Un gesto empezó en el lienzo y el botón sigue abajo. */
+  const pressed = useRef(false);
+
+  // Ctrl+rueda a medio gesto fuera del lienzo (sobre el fantasma de lo que se arrastra, que va al
+  // cuerpo del documento, o con el puntero ya fuera): tampoco el zoom del navegador
+  useEffect(() => {
+    const onWheel = (e: WheelEvent) => {
+      const ghost = e.target instanceof Element && e.target.closest("[data-canvas-ghost]");
+      if (e.ctrlKey && e.buttons !== 0 && (pressed.current || ghost)) e.preventDefault();
+    };
+    const up = () => {
+      pressed.current = false;
+    };
+    window.addEventListener("wheel", onWheel, { capture: true, passive: false });
+    window.addEventListener("pointerup", up, true);
+    window.addEventListener("pointercancel", up, true);
+    return () => {
+      window.removeEventListener("wheel", onWheel, { capture: true });
+      window.removeEventListener("pointerup", up, true);
+      window.removeEventListener("pointercancel", up, true);
+    };
+  }, []);
 
   // Nativo y no pasivo: el `onWheel` de React es pasivo y no puede evitar el zoom del navegador
   useEffect(() => {
@@ -148,6 +237,8 @@ export function useCanvasGestures(zoom: CanvasZoom) {
     const onWheel = (e: WheelEvent) => {
       if (e.ctrlKey) {
         e.preventDefault();
+        // A medio gesto (arrastrar, estirar, girar) el zoom lo descuadraría: se espera a soltar
+        if (e.buttons !== 0) return;
         zoomTo(wheelZoom(current.current, e.deltaY, e.deltaMode), { x: e.clientX, y: e.clientY });
       } else if (held.current && viewport) {
         // Con la mano puesta la rueda cae en su capa (que no está dentro del lienzo): el lienzo se desplaza igual
@@ -217,6 +308,10 @@ export function useCanvasGestures(zoom: CanvasZoom) {
       ref: setWrapper,
       onPointerMove: track,
       onPointerDown: track,
+      // En captura: los tiradores y los lugares pueden no dejar pasar el pointerdown
+      onPointerDownCapture: () => {
+        pressed.current = true;
+      },
       onPointerUp: track,
       onPointerLeave: () => {
         over.current = false;

@@ -10,6 +10,7 @@ import {
   iconBoxPx,
   snapMove,
   snapScale,
+  textPx,
   unionBounds,
   type AlignMode,
   type Bounds,
@@ -26,7 +27,10 @@ import type { HistoryOptions } from "./use-editor-history";
  * Cajas: un ícono mide lo que dice su tamaño (`iconBoxPx`); una etiqueta se
  * mide en pantalla sin su giro (`offsetWidth` no incluye la transformación).
  * Las dos, en fracciones del ancho de la foto, pasan por `elementBox` y
- * `boxBounds`: la caja envolvente de lo que se ve, ya girado.
+ * `boxBounds`: la caja envolvente de lo que se ve, ya girado. Los gestos (el
+ * imán) miden con la foto como se ve; alinear y repartir, con la foto al
+ * 100 % (`fit`): lo que queda no depende del zoom (con zoom, un ícono puede
+ * dejar de verse al mínimo legible y cambiar de tamaño relativo).
  *
  * Imán: a menos de SNAP_PX de pantalla, el borde o el centro de lo que se
  * mueve (o el borde de lo que se estira) se pega a los de los lugares que no
@@ -44,6 +48,29 @@ export const SNAP_PX = 6;
 /** Tiempo que se ven las distancias tras repartir. */
 const DISTANCES_MS = 1500;
 const NONE: Guide[] = [];
+
+/**
+ * Tamaño sin girar de un elemento, en fracciones del ANCHO de la foto, con la
+ * foto a `W` px. Un ícono, por su geometría (`iconBoxPx`); una etiqueta, por
+ * lo que mide en pantalla (`label`, con la foto a `shown` px) llevado a `W`
+ * con su letra: su relleno va en `em` y crece con ella.
+ */
+export function elementSizeAt(
+  element: ImageElement,
+  W: number,
+  label: HTMLElement | null | undefined,
+  shown: number
+): { w: number; h: number } | null {
+  if (W <= 0) return null;
+  const view = elementView(element);
+  if (view.kind === "icon") {
+    const { w, h } = iconBoxPx(view.size, view.ratio, W);
+    return { w: w / W, h: h / W };
+  }
+  if (!label || label.offsetWidth <= 0 || shown <= 0) return null;
+  const k = textPx(view.size, W) / textPx(view.size, shown);
+  return { w: (label.offsetWidth * k) / W, h: (label.offsetHeight * k) / W };
+}
 
 const sameGuides = (a: Guide[], b: Guide[]) =>
   a.length === b.length && a.every((g, k) => g.axis === b[k].axis && g.at === b[k].at);
@@ -76,6 +103,7 @@ function distanceMarks(boxes: Bounds[], axis: "x" | "y", common?: number): Dista
 export function useCanvasTools({
   boardNode,
   boardWidth,
+  fit,
   aspect,
   zones,
   byId,
@@ -87,6 +115,8 @@ export function useCanvasTools({
 }: {
   boardNode: HTMLElement | null;
   boardWidth: number;
+  /** Ancho de la foto al 100 % (px): con él se alinea y reparte. */
+  fit: number;
   aspect: number;
   zones: ImageZone[];
   byId: ReadonlyMap<string, ImageElement>;
@@ -148,18 +178,11 @@ export function useCanvasTools({
 
   const width = () => (boardWidth > 0 ? boardWidth : (boardNode?.getBoundingClientRect().width ?? 0));
 
-  /** Tamaño sin girar de lo que hay en el lugar `i`, en fracciones del ANCHO de la foto (w y h). */
-  function sizeOf(i: number): { w: number; h: number } | null {
-    const W = width();
+  /** Tamaño sin girar de lo que hay en el lugar `i`, en fracciones del ANCHO de la foto, con la foto a `W` px (sin él, como se ve). */
+  function sizeOf(i: number, W = width()): { w: number; h: number } | null {
     const element = byId.get(zones[i]?.elementId ?? "");
-    if (!element || W <= 0) return null;
-    const view = elementView(element);
-    if (view.kind === "icon") {
-      const { w, h } = iconBoxPx(view.size, view.ratio, W);
-      return { w: w / W, h: h / W };
-    }
-    const el = boardNode?.querySelector<HTMLElement>(`[data-zone="${i}"]`);
-    return el && el.offsetWidth > 0 ? { w: el.offsetWidth / W, h: el.offsetHeight / W } : null;
+    if (!element) return null;
+    return elementSizeAt(element, W, boardNode?.querySelector<HTMLElement>(`[data-zone="${i}"]`), width());
   }
 
   /** Caja envolvente (con giro) del lugar `i` con su centro en `at`; `rel`: otro tamaño (al estirar). */
@@ -295,9 +318,10 @@ export function useCanvasTools({
     return changed ? next.zones : null;
   }
 
-  /** Las cajas de `list`; null si alguna no se pudo medir. */
+  /** Las cajas de `list` con la foto al 100 % (no dependen del zoom); null si alguna no se pudo medir. */
   function boxesOf(list: number[], at: (i: number) => Point | undefined = (i) => zones[i]): Bounds[] | null {
-    const boxes = list.map((i) => boundsOf(i, at(i)));
+    const W = fit > 0 ? fit : width();
+    const boxes = list.map((i) => boundsOf(i, at(i), sizeOf(i, W)));
     return boxes.every((b): b is Bounds => b !== null) ? boxes : null;
   }
 

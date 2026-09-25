@@ -27,7 +27,7 @@ import { ElementList } from "./image-element-row";
 import { DragGhost, PlacedZone } from "./image-placed-zone";
 import { useTransformTool } from "./image-transform-box";
 import { useCanvasTools } from "./use-canvas-tools";
-import { useCanvasZoom } from "./use-canvas-zoom";
+import { crosshairKeys, useCanvasZoom } from "./use-canvas-zoom";
 import { useDragSelection } from "./use-drag-selection";
 import { useEditorDrag } from "./use-editor-drag";
 import { isTypingTarget, type HistoryOptions } from "./use-editor-history";
@@ -132,7 +132,7 @@ export function DragEditor({
   const nameOf = (id: string) => names.get(id) ?? "Elemento";
   const warnings = useZoneWarnings({
     rootRef,
-    boardNode,
+    fit: zoom.fit,
     boardWidth,
     zones,
     ordered,
@@ -145,6 +145,7 @@ export function DragEditor({
   const tools = useCanvasTools({
     boardNode,
     boardWidth,
+    fit: zoom.fit,
     aspect,
     zones,
     byId,
@@ -386,7 +387,7 @@ export function DragEditor({
             onKeyDown={(e) => {
               // Con lugares seleccionados, las flechas los mueven; si no, mueven la mira
               if (!chosen) selection.onKeyDown(e);
-              if (!e.defaultPrevented) crosshair.onKeyDown(e);
+              if (!e.defaultPrevented) crosshairKeys(e, crosshair.onKeyDown, boardNode);
             }}
             {...boardDrop.dropProps}
             className={cn(
@@ -410,6 +411,7 @@ export function DragEditor({
                   label={`Lugar ${numbers[i]}: ${nameOf(z.elementId)}`}
                   number={numbers[i]}
                   boardWidth={boardWidth}
+                  aspect={aspect}
                   dense={dense}
                   selected={selected.has(i)}
                   removable={selected.size === 1 && selected.has(i) && !active}
@@ -442,7 +444,7 @@ export function DragEditor({
               name={panelElement ? nameOf(panelElement.id) : ""}
               several={several}
               aspect={aspect}
-              boardWidth={boardWidth}
+              fitWidth={zoom.fit}
               onChange={onPanelChange}
               onBegin={gesture.begin}
               onCommit={gesture.commit}

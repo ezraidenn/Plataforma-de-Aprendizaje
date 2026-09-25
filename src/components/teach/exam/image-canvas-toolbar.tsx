@@ -282,7 +282,8 @@ function ZoomButtons({ zoom, announce }: { zoom: CanvasZoom; announce: (text: st
       >
         <Minus aria-hidden />
       </Button>
-      <output aria-label="Zoom" className="w-11 text-center text-xs font-bold tabular-nums">
+      {/* Sin región viva: cada cambio ya se dice con `announce` (y el pellizco daría muchos) */}
+      <output aria-label="Zoom" aria-live="off" className="w-11 text-center text-xs font-bold tabular-nums">
         {zoomSaid(zoom.zoom)}
       </output>
       <Button
