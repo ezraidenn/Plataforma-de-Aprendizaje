@@ -18,7 +18,7 @@ import * as examsSvc from "../src/server/services/exams";
 import * as answers from "../src/server/services/exam-answers";
 import { buildReview, imageAnswerSummary } from "../src/server/services/exam-review";
 import { questionsAnsweredInProgress } from "../src/server/services/exam-results";
-import { exportExamCsv, countImageQuestions } from "../src/server/services/exam-csv";
+import { exportExamCsv, countNotInCsv } from "../src/server/services/exam-csv";
 import { importQuestionInputs } from "../src/server/services/exam-import";
 import { parseCsv } from "../src/server/services/csv-core";
 import { deleteFile, saveStream } from "../src/server/services/storage";
@@ -1017,7 +1017,7 @@ async function endToEnd() {
     check("Copiar a otro curso también comparte la foto", copiedQs2.length === 3 && copiedQs2.every((q) => q.imageFileId === photo), copiedQs2.map((q) => q.imageFileId));
 
     // ─── CSV: las preguntas sobre imagen no caben — se omiten y se cuentan ────
-    check("countImageQuestions cuenta las 3 preguntas sobre imagen", countImageQuestions(exam.id) === 3, countImageQuestions(exam.id));
+    check("countNotInCsv cuenta las 3 preguntas sobre imagen", countNotInCsv(exam.id) === 3, countNotInCsv(exam.id));
     const csvExport = exportExamCsv(exam.id);
     check("exportExamCsv las omite (CSV sin filas)", parseCsv(csvExport, { maxRows: 10 }).rows.length === 0, csvExport);
 

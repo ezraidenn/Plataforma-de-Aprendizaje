@@ -1,17 +1,18 @@
 import "server-only";
 import { db } from "@/server/db";
-import { isNotInCsvType, questionProblem } from "@/lib/question-validation";
+import { questionProblem } from "@/lib/question-validation";
+import { csvRepresentable } from "@/lib/csv-fit";
 import { createQuestion, deleteQuestion, listQuestions, reorderQuestions, type QuestionInput } from "./exams";
 import { audit } from "./audit";
 
 /**
  * Importa preguntas ya interpretadas (del CSV o de la IA). Todo ocurre en una
  * transacción: si algo falla al crearlas, el examen queda como estaba (ni
- * siquiera «reemplazar» borra nada). Las preguntas sobre imagen no se pueden
- * expresar en CSV ni las crea la IA, así que «reemplazar» las conserva tal
- * cual en vez de borrarlas (`kept`; por ahora también clasificar y completar,
- * ver NOT_IN_CSV_TYPES) — y, para que el examen no quede
- * desordenado, cada una vuelve a su lugar original: las nuevas llenan los
+ * siquiera «reemplazar» borra nada). Las preguntas que no caben en el CSV
+ * (`csvRepresentable`: sobre imagen, o clasificar con alguna tarjeta de ícono)
+ * no las puede traer el archivo ni las crea la IA, así que «reemplazar» las
+ * conserva tal cual en vez de borrarlas (`kept`) — y, para que el examen no
+ * quede desordenado, cada una vuelve a su lugar original: las nuevas llenan los
  * huecos que dejaron las que sí se borraron, en su mismo orden, y las que
  * sobran (si hay más nuevas que huecos) van al final. La auditoría guarda
  * conteos, nunca el contenido.
@@ -33,20 +34,21 @@ export function importQuestionInputs(opts: {
   db.transaction(() => {
     if (opts.mode === "replace") {
       // Orden ANTES de tocar nada: el índice en este arreglo es el lugar al
-      // que cada pregunta sobre imagen debe volver
+      // que cada pregunta conservada debe volver
       const original = listQuestions(opts.examItemId);
+      const keep = new Set(original.filter((q) => !csvRepresentable(q)).map((q) => q.id));
       for (const q of original) {
-        if (!isNotInCsvType(q.type)) deleteQuestion(opts.examItemId, q.id);
+        if (!keep.has(q.id)) deleteQuestion(opts.examItemId, q.id);
       }
       const newIds = valid.map((input) => createQuestion(opts.examItemId, input));
-      kept = original.filter((q) => isNotInCsvType(q.type)).length;
+      kept = keep.size;
 
-      // Un solo recorrido: cada imagen vuelve a su índice original, las
+      // Un solo recorrido: cada conservada vuelve a su índice original, las
       // nuevas llenan los huecos (en su orden) y las que sobran van al final
       let newCursor = 0;
       const finalOrder: string[] = [];
       for (const q of original) {
-        if (isNotInCsvType(q.type)) {
+        if (keep.has(q.id)) {
           finalOrder.push(q.id);
         } else if (newCursor < newIds.length) {
           finalOrder.push(newIds[newCursor]);

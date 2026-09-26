@@ -134,11 +134,21 @@ export function clozeProblem(config: unknown): string | null {
   return null;
 }
 
+/**
+ * Saltos de línea de Windows («\r\n») o sueltos («\r») → «\n». El `<textarea>`
+ * del editor solo usa «\n»: con otros, las posiciones de su selección no
+ * coincidirían con las del texto y «Hacer hueco» caería en otro lugar. Pasa por
+ * aquí todo texto de completar que entra (editor, CSV/Excel, IA).
+ */
+export function lfOnly(text: string): string {
+  return text.replace(/\r\n?/g, "\n");
+}
+
 /** Config que llega del navegador → solo los campos conocidos, con su tipo. */
 export function sanitizeCloze(raw: unknown): unknown {
   const c = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
   const out: Record<string, unknown> = {};
-  if (typeof c.text === "string") out.text = c.text;
+  if (typeof c.text === "string") out.text = lfOnly(c.text);
   if (typeof c.mode === "string" && CLOZE_MODES.includes(c.mode as ClozeMode)) out.mode = c.mode;
   if (Array.isArray(c.distractors)) {
     out.distractors = c.distractors

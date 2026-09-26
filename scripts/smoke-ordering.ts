@@ -105,7 +105,7 @@ function endToEnd() {
   const legacy = validateExamCsv("tipo,pregunta,puntos,opcion_1,opcion_2,correctas\r\nopcion_unica,¿2+2?,1,4,5,1");
   check("Un CSV viejo sin columna «pasos» sigue funcionando", legacy.ok === 1);
   const template = validateExamCsv(EXAM_CSV_TEMPLATE);
-  check("La plantilla trae los 7 tipos y todas sus filas son válidas", template.ok === 7 && template.invalid === 0, { ok: template.ok, invalid: template.invalid });
+  check("La plantilla trae los 9 tipos y todas sus filas son válidas", template.ok === 9 && template.invalid === 0, { ok: template.ok, invalid: template.invalid });
 
   cleanupSmokeNotifications([course.id]);
   if (!failures) removeDemoCourses([PREFIX], teacher.id);

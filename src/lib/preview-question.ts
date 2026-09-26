@@ -1,6 +1,6 @@
 import type { QuestionKind, RunnerQuestion } from "@/components/student/types";
 import type { AnswerBoard } from "./answer-boards";
-import type { QuestionDraft } from "./question-draft";
+import { draftToInput, type QuestionDraft } from "./question-draft";
 import { shuffledOrder } from "./ordering";
 import { clickReviewBoard, dragReviewBoard, type ReviewBoard } from "./image-boards";
 import { elementView } from "./image-layout";
@@ -38,6 +38,10 @@ const INCOMPLETE = "La pregunta está incompleta: complétala en el editor.";
 
 /** Borrador → pregunta de vista previa, revuelta como la ve el alumno. */
 export function draftToPreview(d: QuestionDraft): PreviewQuestion {
+  // Clasificar y completar: su config es la misma que se guardaría
+  if (d.type === "categorize" || d.type === "cloze") {
+    return boardPreview({ id: d.key, type: d.type, promptMd: d.prompt, points: d.points, config: draftToInput(d).config });
+  }
   const withOptions = d.type === "single_choice" || d.type === "multiple_choice" || d.type === "true_false";
   const correct = d.options.filter((o) => o.correct).map((o) => o.text);
   const answerText =
@@ -68,7 +72,7 @@ export function draftToPreview(d: QuestionDraft): PreviewQuestion {
       d.type === "ordering"
         ? { steps: shuffledOrder(d.steps.length).map((i) => ({ token: `${d.key}-s${i}`, text: d.steps[i] })) }
         : null,
-    // Los borradores nunca son preguntas sobre imagen (ni, por ahora, de clasificar o completar)
+    // Los borradores nunca son preguntas sobre imagen (y clasificar y completar ya salieron arriba)
     image: null,
     imageDrag: null,
     imageClick: null,
@@ -232,6 +236,11 @@ function questionToDraft(q: {
     accepted: Array.isArray(config.accepted) ? config.accepted : [],
     pairs: Array.isArray(config.pairs) ? config.pairs : [],
     steps: Array.isArray(config.steps) ? config.steps : [],
+    // Clasificar y completar no pasan por aquí (van por `boardPreview`)
+    groups: [],
+    clozeText: "",
+    clozeMode: "write",
+    distractors: [],
     issues: [],
   };
 }

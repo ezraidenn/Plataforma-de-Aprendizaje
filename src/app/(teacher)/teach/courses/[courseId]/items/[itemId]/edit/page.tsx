@@ -8,7 +8,7 @@ import { getItem } from "@/server/services/tree";
 import { getExam, listQuestions } from "@/server/services/exams";
 import { questionsAnsweredInProgress, studentsWithAttempts } from "@/server/services/exam-results";
 import { isImageQuestionType } from "@/lib/image-questions";
-import { isNotInCsvType } from "@/lib/question-validation";
+import { csvRepresentable } from "@/lib/csv-fit";
 import { ExamSettingsCard } from "@/components/teach/exam/exam-settings-card";
 import { QuestionList } from "@/components/teach/exam/question-list";
 import type { QuestionData } from "@/components/teach/exam/question-editor";
@@ -58,9 +58,9 @@ export default async function ExamEditPage({
       config: isImageQuestionType(q.type) || q.type === "categorize" || q.type === "cloze" ? q.config : null,
     };
   });
-  // La IA nunca crea preguntas sobre imagen (ni, por ahora, de clasificar o
-  // completar: ver NOT_IN_CSV_TYPES); "reemplazar" solo borra las demás
-  const imageQuestionCount = rawQuestions.filter((q) => isNotInCsvType(q.type)).length;
+  // Las que no caben en el CSV (sobre imagen, o clasificar con íconos) no las
+  // trae el archivo ni las crea la IA: exportar las omite y "reemplazar" las conserva
+  const notInCsvCount = rawQuestions.filter((q) => !csvRepresentable(q)).length;
   // Alumnos con un intento enviado: la publicación de resultados y el editor de fotos (cambiar una foto cambia sus revisiones)
   const attempted = studentsWithAttempts(itemId);
   // Y las preguntas sobre imagen o de completar que alguien ya respondió en un intento en curso (su foto
@@ -102,11 +102,11 @@ export default async function ExamEditPage({
             <AiImportDialog
               courseId={courseId}
               itemId={itemId}
-              currentCount={questions.length - imageQuestionCount}
-              imageCount={imageQuestionCount}
+              currentCount={questions.length - notInCsvCount}
+              notInCsvCount={notInCsvCount}
             />
           )}
-          <ExamCsvActions itemId={itemId} questionCount={questions.length} imageCount={imageQuestionCount} />
+          <ExamCsvActions itemId={itemId} questionCount={questions.length} notInCsvCount={notInCsvCount} />
         </div>
       </div>
 

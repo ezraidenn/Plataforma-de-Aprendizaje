@@ -41,26 +41,29 @@ type Preview = {
   okCount: number;
   invalid: number;
   currentCount: number;
-  currentImageCount: number;
+  currentNotInCsvCount: number;
 };
 
-/** "1 pregunta sobre imagen no cabe..." / "N preguntas sobre imagen no caben...", con la concordancia correcta. */
-function imageOmittedText(n: number): string {
+/** Por qué una pregunta no cabe en el CSV, para los avisos. */
+const WHY_NOT_IN_CSV = "las preguntas sobre imagen y las de clasificar con tarjetas de ícono se editan solo en el editor";
+
+/** "1 pregunta no cabe..." / "N preguntas no caben...", con la concordancia correcta. */
+function notInCsvOmittedText(n: number): string {
   return plural(
     n,
-    "1 pregunta sobre imagen no cabe en el CSV; en el examen se queda como está.",
-    `${n} preguntas sobre imagen no caben en el CSV; en el examen se quedan como están.`
+    "1 pregunta no cabe en el CSV; en el examen se queda como está.",
+    `${n} preguntas no caben en el CSV; en el examen se quedan como están.`
   );
 }
 
-/** Por qué no se puede exportar: sin preguntas, o solo preguntas sobre imagen (no caben en el CSV). */
-function exportBlockedText(questionCount: number, imageCount: number): string {
+/** Por qué no se puede exportar: sin preguntas, o solo preguntas que no caben en el CSV. */
+function exportBlockedText(questionCount: number, notInCsvCount: number): string {
   if (questionCount === 0) return "Aún no hay preguntas que exportar.";
-  return plural(
-    imageCount,
-    "Este examen solo tiene 1 pregunta sobre imagen, que no cabe en el CSV.",
-    `Este examen solo tiene ${imageCount} preguntas sobre imagen, que no caben en el CSV.`
-  );
+  return `${plural(
+    notInCsvCount,
+    "Este examen solo tiene 1 pregunta, que no cabe en el CSV",
+    `Este examen solo tiene ${notInCsvCount} preguntas, que no caben en el CSV`
+  )}: ${WHY_NOT_IN_CSV}.`;
 }
 
 /**
@@ -70,26 +73,26 @@ function exportBlockedText(questionCount: number, imageCount: number): string {
 export function ExamCsvActions({
   itemId,
   questionCount,
-  imageCount,
+  notInCsvCount,
 }: {
   itemId: string;
   questionCount: number;
-  /** Preguntas sobre imagen: no caben en el CSV, así que no cuentan para exportar. */
-  imageCount: number;
+  /** Preguntas que no caben en el CSV (`csvRepresentable`): no cuentan para exportar. */
+  notInCsvCount: number;
 }) {
   const [exporting, startExport] = useTransition();
-  const exportable = questionCount - imageCount;
+  const exportable = questionCount - notInCsvCount;
   const blocked = exportable === 0;
-  // Solo cuando el motivo es «puras preguntas sobre imagen» hay un texto corto
+  // Solo cuando el motivo es «puras preguntas que no caben» hay un texto corto
   // visible junto a los botones (enlazado por aria-describedby); sin preguntas
   // no hace falta: el botón ya se explica solo.
   const noteId = "exam-csv-export-note";
-  const showNote = blocked && questionCount > 0 && imageCount > 0;
+  const showNote = blocked && questionCount > 0 && notInCsvCount > 0;
 
   function exportCsv() {
     if (exporting) return;
     if (blocked) {
-      toast.info(exportBlockedText(questionCount, imageCount));
+      toast.info(exportBlockedText(questionCount, notInCsvCount));
       return;
     }
     startExport(async () => {
@@ -100,7 +103,7 @@ export function ExamCsvActions({
       }
       downloadTextFile(result.filename, result.csv);
       toast.success("Examen exportado. Edítalo en Excel y vuelve a subirlo.");
-      if (result.omitted > 0) toast.info(imageOmittedText(result.omitted));
+      if (result.omitted > 0) toast.info(notInCsvOmittedText(result.omitted));
     });
   }
 
@@ -123,7 +126,7 @@ export function ExamCsvActions({
       <ExamCsvDialog itemId={itemId} />
       {showNote && (
         <p id={noteId} className="w-full text-xs text-muted-foreground">
-          Este examen solo tiene preguntas sobre imagen, que no caben en el CSV.
+          Este examen solo tiene preguntas que no caben en el CSV: {WHY_NOT_IN_CSV}.
         </p>
       )}
     </div>
@@ -174,7 +177,7 @@ export function ExamCsvDialog({ itemId }: { itemId: string }) {
         okCount: result.okCount,
         invalid: result.invalid,
         currentCount: result.currentCount,
-        currentImageCount: result.currentImageCount,
+        currentNotInCsvCount: result.currentNotInCsvCount,
       });
       setStep(2);
     });
@@ -241,7 +244,7 @@ export function ExamCsvDialog({ itemId }: { itemId: string }) {
             />
             <p className="text-xs text-muted-foreground">
               Edita en Excel y vuelve a subir. Tipos: opción única, múltiple, V/F, respuesta
-              corta, relacionar, abierta.
+              corta, relacionar, ordenar, clasificar, completar y abierta.
             </p>
             <div>
               <Button
@@ -342,8 +345,8 @@ export function ExamCsvDialog({ itemId }: { itemId: string }) {
                   <span>
                     <span className="font-medium">Reemplazar preguntas actuales</span>
                     <span className="block text-xs text-muted-foreground">
-                      {preview.currentImageCount > 0
-                        ? `El examen queda con las preguntas del archivo y ${plural(preview.currentImageCount, "la pregunta sobre imagen que ya tiene", `las ${preview.currentImageCount} preguntas sobre imagen que ya tiene`)}.`
+                      {preview.currentNotInCsvCount > 0
+                        ? `El examen queda con las preguntas del archivo y ${plural(preview.currentNotInCsvCount, "la que ya tiene que no cabe en el CSV", `las ${preview.currentNotInCsvCount} que ya tiene que no caben en el CSV`)}.`
                         : "El examen queda solo con las preguntas del archivo."}
                     </span>
                   </span>
@@ -358,11 +361,11 @@ export function ExamCsvDialog({ itemId }: { itemId: string }) {
                   </span>
                 </label>
               </RadioGroup>
-              {mode === "replace" && (preview.currentCount > 0 || preview.currentImageCount > 0) && (
+              {mode === "replace" && (preview.currentCount > 0 || preview.currentNotInCsvCount > 0) && (
                 <p className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm">
                   <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
                   <span>
-                    {replaceWarning(preview.currentCount, preview.currentImageCount)}
+                    {replaceWarning(preview.currentCount, preview.currentNotInCsvCount)}
                     {preview.currentCount > 0 && " Los intentos ya enviados conservan sus preguntas."}
                   </span>
                 </p>
@@ -419,7 +422,7 @@ export function ExamCsvDialog({ itemId }: { itemId: string }) {
                   ? "El examen quedó con las preguntas del archivo"
                   : "Se agregaron al final del examen",
                 mode === "replace" && outcome.kept > 0
-                  ? plural(outcome.kept, "se conservó 1 pregunta sobre imagen", `se conservaron ${outcome.kept} preguntas sobre imagen`)
+                  ? plural(outcome.kept, "se conservó 1 pregunta que no cabe en el CSV", `se conservaron ${outcome.kept} preguntas que no caben en el CSV`)
                   : null,
                 outcome.skipped > 0 ? plural(outcome.skipped, "1 fila omitida", `${outcome.skipped} filas omitidas`) : null,
               ]

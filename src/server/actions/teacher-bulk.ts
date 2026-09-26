@@ -8,7 +8,7 @@ import { getExam, listQuestions } from "@/server/services/exams";
 import {
   EXAM_CSV_TEMPLATE,
   exportExamCsv,
-  countImageQuestions,
+  countNotInCsv,
   validateExamCsv,
   importExamCsv,
 } from "@/server/services/exam-csv";
@@ -85,7 +85,7 @@ export async function examCsvTemplateAction(): Promise<CsvTemplateResult> {
 }
 
 export type ExamCsvExportResult =
-  | { csv: string; filename: string; /** Preguntas sobre imagen que no salieron en el CSV */ omitted: number }
+  | { csv: string; filename: string; /** Preguntas que no caben en el CSV y no salieron en él */ omitted: number }
   | { error: string };
 
 export async function exportExamCsvAction(itemId: string): Promise<ExamCsvExportResult> {
@@ -96,7 +96,7 @@ export async function exportExamCsvAction(itemId: string): Promise<ExamCsvExport
     return {
       csv: exportExamCsv(itemId),
       filename: `examen-${slugifyFilename(guard.examTitle)}.csv`,
-      omitted: countImageQuestions(itemId),
+      omitted: countNotInCsv(itemId),
     };
   } catch (err) {
     return { error: errorMessage(err, "No se pudo exportar el examen. Intenta de nuevo.") };
@@ -111,8 +111,8 @@ export type ValidateExamCsvResult =
       invalid: number;
       /** Preguntas que hay HOY en el examen y que "reemplazar" SÍ borra. */
       currentCount: number;
-      /** Preguntas sobre imagen que ya tiene el examen: "reemplazar" las conserva. */
-      currentImageCount: number;
+      /** Preguntas que ya tiene el examen y no caben en el CSV: "reemplazar" las conserva. */
+      currentNotInCsvCount: number;
     }
   | { error: string };
 
@@ -126,7 +126,7 @@ export async function validateExamCsvAction(
 
   try {
     const { rows, ok, invalid } = validateExamCsv(csvText);
-    const currentImageCount = countImageQuestions(itemId);
+    const currentNotInCsvCount = countNotInCsv(itemId);
     return {
       ok: true,
       // Solo lo que la vista previa necesita (sin el input interno de cada fila)
@@ -139,8 +139,8 @@ export async function validateExamCsvAction(
       })),
       okCount: ok,
       invalid,
-      currentCount: listQuestions(itemId).length - currentImageCount,
-      currentImageCount,
+      currentCount: listQuestions(itemId).length - currentNotInCsvCount,
+      currentNotInCsvCount,
     };
   } catch (err) {
     return { error: errorMessage(err, "No se pudo leer el archivo. Revisa el formato.") };

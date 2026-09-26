@@ -1,4 +1,4 @@
-import { IMAGE_QUESTION_TYPES, imageClickProblem, imageDragProblem } from "./image-questions";
+import { imageClickProblem, imageDragProblem } from "./image-questions";
 import { categorizeProblem } from "./categorize";
 import { clozeProblem } from "./cloze";
 
@@ -66,17 +66,4 @@ export function questionProblem(input: QuestionShape): string | null {
   if (input.type === "categorize") return categorizeProblem(input.config);
   if (input.type === "cloze") return clozeProblem(input.config);
   return null;
-}
-
-/**
- * Tipos que el CSV/Excel no puede escribir ni leer: exportar los omite (y los
- * cuenta) y «reemplazar» los conserva en su lugar.
- * TEMPORAL: «Clasificar en grupos» y «Completar el texto» están aquí solo hasta
- * que el CSV tenga sus columnas (tarea 6 del plan); entonces el criterio pasa a
- * ser por pregunta («cabe en el CSV»: clasificar solo si no tiene íconos).
- */
-export const NOT_IN_CSV_TYPES = [...IMAGE_QUESTION_TYPES, "categorize", "cloze"] as const;
-export type NotInCsvType = (typeof NOT_IN_CSV_TYPES)[number];
-export function isNotInCsvType(t: string): t is NotInCsvType {
-  return (NOT_IN_CSV_TYPES as readonly string[]).includes(t);
 }

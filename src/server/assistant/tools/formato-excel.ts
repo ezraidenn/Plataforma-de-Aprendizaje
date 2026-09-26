@@ -5,7 +5,7 @@ import { getExam } from "@/server/services/exams";
 import { CSV_TEMPLATE } from "@/server/services/csv-import";
 import { exportRosterCsv } from "@/server/services/bulk-roster";
 import { exportLessonsCsv } from "@/server/services/bulk-lessons";
-import { EXAM_CSV_TEMPLATE, exportExamCsv, countImageQuestions } from "@/server/services/exam-csv";
+import { EXAM_CSV_TEMPLATE, exportExamCsv, countNotInCsv } from "@/server/services/exam-csv";
 import { BOM, csvLine, parseCsv } from "@/server/services/csv-core";
 import { buildXlsx, type Cell, type SheetSpec } from "@/server/services/xlsx";
 import type { AssistantBlock } from "@/lib/assistant-blocks";
@@ -56,6 +56,10 @@ const WIDTHS: Record<string, number> = {
   respuestas_aceptadas: 9,
   pares: 11,
   pasos: 12,
+  grupos: 14,
+  texto: 16,
+  modo: 4,
+  distractores: 8,
 };
 
 type Plantilla = {
@@ -71,7 +75,7 @@ type Plantilla = {
   notas: string[];
   /** Qué tiene que hacer el usuario con el archivo */
   pista: string;
-  /** Preguntas sobre imagen del examen que no caben aquí (solo tipo «examen»). */
+  /** Preguntas del examen que no caben en el Excel (solo tipo «examen»). */
   omitidas?: number;
 };
 
@@ -150,14 +154,19 @@ const NOTAS_LECCIONES = [
 ];
 
 const NOTAS_EXAMEN = [
-  "tipo: opcion_unica, opcion_multiple, verdadero_falso, respuesta_corta, relacionar, ordenar o abierta.",
+  "tipo: opcion_unica, opcion_multiple, verdadero_falso, respuesta_corta, relacionar, ordenar, clasificar, completar o abierta.",
   "pregunta: el enunciado. puntos: cuánto vale (1 si lo dejas vacío).",
   "opcion_1 a opcion_6: las opciones de opcion_unica y opcion_multiple (mínimo dos; deja vacías las que sobren).",
   "correctas: el NÚMERO de la opción correcta; varias separadas por | (por ejemplo 1|3). En verdadero_falso escribe V o F.",
   "respuestas_aceptadas: solo en respuesta_corta, las variantes que se dan por buenas separadas por | (911|9 1 1).",
   "pares: solo en relacionar, con el formato izquierda=derecha | izquierda2=derecha2 (mínimo dos).",
   "pasos: solo en ordenar, los pasos en el orden correcto separados por | (mínimo tres).",
+  "grupos: solo en clasificar, cada grupo con sus tarjetas: Grupo: tarjeta; tarjeta | Grupo2: tarjeta (de 2 a 6 grupos, cada uno con al menos una tarjeta).",
+  "texto: solo en completar, el texto con cada hueco entre [[ ]]: [[respuesta]], con variantes que también se aceptan [[respuesta|variante]] y, para el modo lista, opciones incorrectas con ! [[respuesta|!incorrecta]].",
+  "modo: solo en completar, escribir (el alumno escribe), banco (elige palabras de un banco) o lista (elige de una lista en cada hueco). Vacío = escribir.",
+  "distractores: solo en completar con modo banco, las palabras de más del banco separadas por | (manguera | etiqueta).",
   "abierta no lleva opciones: la califica el maestro a mano.",
+  "Las preguntas sobre imagen y las de clasificar con tarjetas de ícono no caben en este Excel: se hacen en el editor del examen.",
 ];
 
 /** Matrícula del curso tal como está hoy; sin alumnos, una fila de ejemplo. */
@@ -196,13 +205,13 @@ function plantillaExamen(examen: { id: string; title: string } | null): Plantill
   const conPreguntas = !!actual && parseCsv(actual, { maxRows: MAX_ROWS }).rows.length > 0;
   // No caben en el Excel: el examen las conserva, pero hay que decirlo (nota
   // aparte, nunca mezclada con notas[0]: el número exacto llega tal cual)
-  const imagenes = examen ? countImageQuestions(examen.id) : 0;
-  const notaImagenes =
-    imagenes > 0
+  const noCaben = examen ? countNotInCsv(examen.id) : 0;
+  const notaNoCaben =
+    noCaben > 0
       ? plural(
-          imagenes,
-          "1 pregunta sobre imagen no cabe en este Excel; al reemplazar se conserva tal como está.",
-          `${imagenes} preguntas sobre imagen no caben en este Excel; al reemplazar se conservan tal como están.`
+          noCaben,
+          "1 pregunta no cabe en este Excel; al reemplazar se conserva tal como está.",
+          `${noCaben} preguntas no caben en este Excel; al reemplazar se conservan tal como están.`
         )
       : "";
   if (!conPreguntas) {
@@ -212,15 +221,15 @@ function plantillaExamen(examen: { id: string; title: string } | null): Plantill
       ejemplo: true,
       notas: [
         examen
-          ? imagenes > 0
+          ? noCaben > 0
             ? "Ese examen todavía no tiene preguntas que quepan en este Excel: las filas grises son un ejemplo de cada tipo."
             : "Ese examen todavía no tiene preguntas: las filas grises son un ejemplo de cada tipo."
           : "Las filas grises son un ejemplo de cada tipo: bórralas o escribe encima.",
-        ...(notaImagenes ? [notaImagenes] : []),
+        ...(notaNoCaben ? [notaNoCaben] : []),
         ...NOTAS_EXAMEN,
       ],
       pista: "Escribe tus preguntas y suéltalo aquí otra vez, diciéndome a qué examen van: te pregunto si reemplazo las que tenga o las agrego al final.",
-      omitidas: imagenes,
+      omitidas: noCaben,
     };
   }
   return {
@@ -228,11 +237,11 @@ function plantillaExamen(examen: { id: string; title: string } | null): Plantill
     csv: actual,
     notas: [
       "Al devolverme este archivo te pregunto qué hacer: REEMPLAZAR las preguntas que tiene el examen por las de aquí, o AGREGARLAS al final. Si solo corriges estas, lo tuyo es reemplazar: agregarlas las dejaría duplicadas.",
-      ...(notaImagenes ? [notaImagenes] : []),
+      ...(notaNoCaben ? [notaNoCaben] : []),
       ...NOTAS_EXAMEN,
     ],
     pista: `Edita o agrega preguntas de ${examen!.title} y suéltalo aquí otra vez: te pregunto si reemplazo las que tiene o las agrego al final.`,
-    omitidas: imagenes,
+    omitidas: noCaben,
   };
 }
 
@@ -304,11 +313,11 @@ export const formatoExcel: AssistantTool = {
     const blocks: AssistantBlock[] = [];
     // El número exacto viene de `plantilla.omitidas`; al modelo se le pide
     // que se lo diga al usuario, no solo que lo sepa
-    const avisoImagenes = plantilla.omitidas
+    const avisoNoCaben = plantilla.omitidas
       ? plural(
           plantilla.omitidas,
-          "1 pregunta sobre imagen no cabe en el Excel; en el examen se queda como está.",
-          `${plantilla.omitidas} preguntas sobre imagen no caben en el Excel; en el examen se quedan como están.`
+          "1 pregunta no cabe en el Excel (es sobre imagen o de clasificar con íconos); en el examen se queda como está.",
+          `${plantilla.omitidas} preguntas no caben en el Excel (son sobre imagen o de clasificar con íconos); en el examen se quedan como están.`
         )
       : "";
 
@@ -323,7 +332,7 @@ export const formatoExcel: AssistantTool = {
       });
       blocks.push({ type: "text", text: plantilla.pista });
       return {
-        forModel: `Le dejé el formato de ${FORMAT_LABELS[tipo]}${de} (${cuantas}) para descargar, con sus notas.${avisoImagenes ? ` ${avisoImagenes} Coméntaselo al usuario.` : ""} Descarga: ${exportId}.`,
+        forModel: `Le dejé el formato de ${FORMAT_LABELS[tipo]}${de} (${cuantas}) para descargar, con sus notas.${avisoNoCaben ? ` ${avisoNoCaben} Coméntaselo al usuario.` : ""} Descarga: ${exportId}.`,
         blocks,
       };
     } catch {
@@ -335,9 +344,9 @@ export const formatoExcel: AssistantTool = {
         href: `/api/assistant/export/${exportId}`,
         detail: `${cuantas} · caduca en 24 horas`,
       });
-      blocks.push({ type: "text", text: `${plantilla.pista} ${plantilla.notas[0]}${avisoImagenes ? ` ${avisoImagenes}` : ""}` });
+      blocks.push({ type: "text", text: `${plantilla.pista} ${plantilla.notas[0]}${avisoNoCaben ? ` ${avisoNoCaben}` : ""}` });
       return {
-        forModel: `No se pudo generar el Excel, así que le dejé el mismo formato en CSV (${cuantas}).${avisoImagenes ? ` ${avisoImagenes} Coméntaselo al usuario.` : ""} Descarga: ${exportId}.`,
+        forModel: `No se pudo generar el Excel, así que le dejé el mismo formato en CSV (${cuantas}).${avisoNoCaben ? ` ${avisoNoCaben} Coméntaselo al usuario.` : ""} Descarga: ${exportId}.`,
         blocks,
       };
     }

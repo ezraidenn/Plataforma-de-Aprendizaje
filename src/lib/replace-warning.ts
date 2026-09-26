@@ -2,28 +2,29 @@ import { plural } from "./plural";
 
 /**
  * Aviso de «reemplazar» preguntas de examen: qué se borra y qué se conserva
- * (las preguntas sobre imagen nunca se borran), con concordancia. Lo usan el
- * diálogo de importar CSV y el de importar con IA — mismo texto en los dos.
+ * (las que no caben en el CSV nunca se borran: ver `csvRepresentable`), con
+ * concordancia. Lo usan el diálogo de importar CSV y el de importar con IA —
+ * mismo texto en los dos.
  */
-export function replaceWarning(nonImageCount: number, imageCount: number): string {
+export function replaceWarning(replacedCount: number, keptCount: number): string {
   const partes: string[] = [];
-  if (nonImageCount > 0) {
+  if (replacedCount > 0) {
     partes.push(
-      imageCount > 0
+      keptCount > 0
         ? plural(
-            nonImageCount,
-            "se borrará la pregunta que no es sobre imagen",
-            `se borrarán las ${nonImageCount} preguntas que no son sobre imagen`
+            replacedCount,
+            "se borrará la pregunta que sí cabe en el CSV",
+            `se borrarán las ${replacedCount} preguntas que sí caben en el CSV`
           )
-        : plural(nonImageCount, "se borrará la pregunta actual", `se borrarán las ${nonImageCount} preguntas actuales`)
+        : plural(replacedCount, "se borrará la pregunta actual", `se borrarán las ${replacedCount} preguntas actuales`)
     );
   }
-  if (imageCount > 0) {
+  if (keptCount > 0) {
     partes.push(
       plural(
-        imageCount,
-        "la pregunta sobre imagen se conserva tal como está",
-        `las ${imageCount} preguntas sobre imagen se conservan tal como están`
+        keptCount,
+        "la pregunta que no cabe en el CSV se conserva tal como está",
+        `las ${keptCount} preguntas que no caben en el CSV se conservan tal como están`
       )
     );
   }

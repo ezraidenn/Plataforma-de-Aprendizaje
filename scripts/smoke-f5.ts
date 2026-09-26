@@ -43,21 +43,21 @@ async function main() {
   const examen = tree.createItem({ courseId: course.id, parentId: null, kind: "exam", title: "Examen CSV" });
 
   const validated = examCsv.validateExamCsv(examCsv.EXAM_CSV_TEMPLATE);
-  check("Plantilla: 7 filas válidas (todos los tipos)", validated.ok === 7 && validated.invalid === 0,
+  check("Plantilla: 9 filas válidas (todos los tipos)", validated.ok === 9 && validated.invalid === 0,
     JSON.stringify({ ok: validated.ok, inv: validated.invalid }));
 
   const imported = examCsv.importExamCsv({ actorId: teacher.id, examItemId: examen.id, csvText: examCsv.EXAM_CSV_TEMPLATE, mode: "replace" });
-  check("Importadas 7 preguntas", imported.imported === 7);
+  check("Importadas 9 preguntas", imported.imported === 9);
   const qs = examsSvc.listQuestions(examen.id);
   check("Tipos correctos tras import",
     JSON.stringify(qs.map((q) => q.type)) ===
-      JSON.stringify(["single_choice", "multiple_choice", "true_false", "short_text", "matching", "ordering", "open_text"]));
+      JSON.stringify(["single_choice", "multiple_choice", "true_false", "short_text", "matching", "ordering", "categorize", "cloze", "open_text"]));
   const mc = qs[1];
   check("Múltiple con 3 correctas de 4", mc.options.length === 4 && mc.options.filter((o) => o.isCorrect).length === 3);
 
   const exported = examCsv.exportExamCsv(examen.id);
   const revalidated = examCsv.validateExamCsv(exported);
-  check("Round-trip: el export re-valida completo", revalidated.ok === 7 && revalidated.invalid === 0);
+  check("Round-trip: el export re-valida completo", revalidated.ok === 9 && revalidated.invalid === 0);
 
   const badCsv = "tipo,pregunta,puntos,correctas\nopcion_unica,Sin opciones,2,1\ninvento,Qué,1,";
   const badVal = examCsv.validateExamCsv(badCsv);

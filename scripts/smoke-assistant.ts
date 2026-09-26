@@ -934,8 +934,9 @@ async function formatoExcelChecks() {
   const hojasE = await hojasDeDescarga(examen.blocks);
   const filasE = hojasE[0]?.rows ?? [];
   check("Examen sin id: la plantilla en blanco", (filasE[0]?.cells ?? []).slice(0, 3).join("|") === "tipo|pregunta|puntos", filasE[0]?.cells);
-  check("Examen: un ejemplo de cada tipo", filasE.length === 8, filasE.length);
+  check("Examen: un ejemplo de cada tipo", filasE.length === 10 && ["clasificar", "completar"].every((t) => filasE.some((r) => r.cells[0] === t)), filasE.map((r) => r.cells[0]));
   check("Examen: las notas explican los tipos y los pares", (hojasE[1]?.rows ?? []).some((r) => r.cells[0].includes("verdadero_falso")) && (hojasE[1]?.rows ?? []).some((r) => r.cells[0].includes("izquierda=derecha")), hojasE[1]?.rows.map((r) => r.cells[0]));
+  check("Examen: y los grupos, el texto con huecos, el modo y los distractores", ["grupos:", "texto:", "modo:", "distractores:"].every((n) => (hojasE[1]?.rows ?? []).some((r) => r.cells[0].startsWith(n))), hojasE[1]?.rows.map((r) => r.cells[0]));
 
   const conPreguntas = await pedir("examen", "", fmt.examen);
   check("Examen vacío por id: sigue siendo la plantilla y lo dice en las notas", (await hojasDeDescarga(conPreguntas.blocks))[1]?.rows[0]?.cells[0]?.includes("todavía no tiene preguntas") === true, conPreguntas.forModel);
@@ -1056,6 +1057,38 @@ async function aplicarExcelChecks() {
     [antesDeReemplazar, quedan.map((q) => q.promptMd)]
   );
   check("Reemplazar: el resultado dice a cuántas sustituyó", "text" in aplR && aplR.text.includes("1 del archivo reemplazó a la que tenía"), aplR);
+
+  // ── Clasificar y completar: entran por el Excel y vuelven a salir en el formato ──
+  const cabN = ["tipo", "pregunta", "puntos", "grupos", "texto", "modo", "distractores"];
+  const filasN = [
+    ["clasificar", `${P} Clasifica los materiales`, "3", "Clase A: Madera; Papel | Clase B: Gasolina", "", "", ""],
+    ["completar", `${P} Completa la técnica`, "2", "", "Jala el [[seguro]] y apunta a la [[base]].", "banco", "manguera | etiqueta"],
+  ];
+  const adjN = await adjuntar(conv.id, await xlsxDeFilas("Preguntas", cabN, filasN), `${P}-examen-3.xlsx`);
+  const ctxN = { ...base, attachments: [adjN] };
+  const propN = await tool.run({ curso_id: "", item_id: fmt.examen, formato: "", modo: "agregar" }, ctxN);
+  const pN = getProposal(propN.proposalId!)!;
+  check("Clasificar y completar: la tabla los reconoce y no los bloquea", pN.rows.map((r) => `${r.cells.tipo}:${r.blocked ? "no" : "sí"}`).join() === "Clasificar en grupos:sí,Completar el texto:sí", pN.rows.map((r) => r.cells));
+  await applyProposal(propN.proposalId!, pN.rows, ctxN, "");
+  const nuevas = listQuestions(fmt.examen).slice(-2);
+  check(
+    "Clasificar y completar: se crean con su config",
+    nuevas.map((q) => q.type).join() === "categorize,cloze" && (nuevas[1].config as { mode?: string; distractors?: string[] }).distractors?.join() === "manguera,etiqueta",
+    nuevas.map((q) => [q.type, q.config])
+  );
+  const deVuelta = await toolByName("formato_excel")!.run({ tipo: "examen", curso_id: "", item_id: fmt.examen }, base);
+  const hojaV = (await hojasDeDescarga(deVuelta.blocks))[0];
+  const cabV = hojaV?.rows[0]?.cells ?? [];
+  const filaDe = (tipo: string) => hojaV?.rows.find((r) => r.cells[0] === tipo)?.cells ?? [];
+  check(
+    "…y el formato del examen los trae de vuelta con sus columnas",
+    filaDe("clasificar")[cabV.indexOf("grupos")] === "Clase A: Madera; Papel | Clase B: Gasolina" &&
+      filaDe("completar")[cabV.indexOf("texto")] === "Jala el [[seguro]] y apunta a la [[base]]." &&
+      filaDe("completar")[cabV.indexOf("modo")] === "banco" &&
+      filaDe("completar")[cabV.indexOf("distractores")] === "manguera | etiqueta",
+    hojaV?.rows.map((r) => r.cells)
+  );
+  check("…y como todas caben, no avisa de ninguna que falte", !deVuelta.forModel.includes("no cabe"), deVuelta.forModel);
 
   // ── Lo que no es de nadie y lo que ya tiene herramienta ──
   const adjRaro = await adjuntar(conv.id, await xlsxDeFilas("Hoja", ["cosa", "otra"], [["1", "2"]]), `${P}-raro.xlsx`);

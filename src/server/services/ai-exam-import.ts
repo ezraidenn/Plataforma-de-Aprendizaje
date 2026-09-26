@@ -2,6 +2,7 @@ import "server-only";
 import { nanoid } from "nanoid";
 import { obj, requestStructured, visionMessage, withRetry, type AiOpts, type VisionPart } from "./ai-client";
 import type { DraftType, QuestionDraft } from "@/lib/question-draft";
+import { CLOZE_MODES, lfOnly, type ClozeMode } from "@/lib/cloze";
 
 /**
  * Interpretación con OpenAI: el texto del archivo se manda por tramos (sin
@@ -68,6 +69,8 @@ const TYPES: DraftType[] = [
   "short_text",
   "matching",
   "ordering",
+  "categorize",
+  "cloze",
   "open_text",
 ];
 
@@ -82,6 +85,10 @@ export const AI_SCHEMA = obj({
       accepted: { type: "array", items: { type: "string" } },
       pairs: { type: "array", items: obj({ left: { type: "string" }, right: { type: "string" } }) },
       steps: { type: "array", items: { type: "string" } },
+      groups: { type: "array", items: obj({ name: { type: "string" }, cards: { type: "array", items: { type: "string" } } }) },
+      clozeText: { type: "string" },
+      clozeMode: { type: "string", enum: [...CLOZE_MODES] },
+      distractors: { type: "array", items: { type: "string" } },
       issues: { type: "array", items: { type: "string" } },
     }),
   },
@@ -96,6 +103,8 @@ export const SYSTEM_PROMPT = [
   "- short_text: respuesta corta; en `accepted` van las respuestas que se aceptan.",
   "- matching: relacionar columnas; en `pairs` va cada par izquierda → derecha.",
   "- ordering: ordenar pasos; en `steps` van los pasos en el ORDEN CORRECTO.",
+  "- categorize: clasificar en grupos; en `groups` va cada grupo con su nombre y sus tarjetas (texto).",
+  '- cloze: completar el texto; en `clozeText` va el texto con cada hueco como [[respuesta]] (variantes con |, opciones incorrectas con |!); en `clozeMode` "write" si se escribe la respuesta, "bank" si hay un banco de palabras (sus palabras de más van en `distractors`), "select" si cada hueco tiene opciones.',
   "- open_text: respuesta abierta que calificará el instructor.",
   "Reglas:",
   "- La respuesta correcta se reconoce por las marcas del documento: asteriscos, «(x)», «correcta», «Respuesta: b», una clave de respuestas al final, una columna «correcta» en tablas, etc.",
@@ -106,7 +115,7 @@ export const SYSTEM_PROMPT = [
   "- Si la última pregunta del texto quedó cortada, omítela.",
   "- Si recibes imágenes o páginas, léelas todas en orden: una pregunta puede empezar en una y continuar en la siguiente.",
   "- Ignora sellos, logotipos, encabezados, números de página y marcas que no sean parte de las preguntas.",
-  "- Los campos que no aplican a un tipo van como listas vacías.",
+  '- Los campos que no aplican a un tipo van vacíos: las listas sin elementos, `clozeText` como "" y `clozeMode` como "write".',
 ].join("\n");
 
 type AiQuestion = {
@@ -117,6 +126,10 @@ type AiQuestion = {
   accepted: string[];
   pairs: { left: string; right: string }[];
   steps: string[];
+  groups: { name: string; cards: string[] }[];
+  clozeText: string;
+  clozeMode: ClozeMode;
+  distractors: string[];
   issues: string[];
 };
 
@@ -161,6 +174,14 @@ export function toDrafts(parsed: unknown): QuestionDraft[] {
           .filter((p) => p && typeof p.left === "string" && typeof p.right === "string" && p.left.trim() && p.right.trim())
           .map((p) => ({ left: p.left.trim(), right: p.right.trim() })),
         steps: asStrings(q.steps),
+        // Solo texto: la IA no crea tarjetas de ícono. Un grupo sin nombre ni tarjetas no dice nada
+        groups: (Array.isArray(q.groups) ? q.groups : [])
+          .filter((g) => !!g && typeof g === "object")
+          .map((g) => ({ name: typeof g.name === "string" ? g.name.trim() : "", cards: asStrings(g.cards) }))
+          .filter((g) => g.name || g.cards.length > 0),
+        clozeText: typeof q.clozeText === "string" ? lfOnly(q.clozeText.trim()) : "",
+        clozeMode: CLOZE_MODES.includes(q.clozeMode) ? q.clozeMode : "write",
+        distractors: asStrings(q.distractors),
         issues: asStrings(q.issues),
       };
       return draft;

@@ -9,7 +9,7 @@ import { audit } from "@/server/services/audit";
 import { BOM, csvLine } from "@/server/services/csv-core";
 import { validateRosterCsv, importRosterCsv } from "@/server/services/bulk-roster";
 import { validateLessonsCsv, importLessonsCsv } from "@/server/services/bulk-lessons";
-import { validateExamCsv, countImageQuestions } from "@/server/services/exam-csv";
+import { validateExamCsv, countNotInCsv } from "@/server/services/exam-csv";
 import { importQuestionInputs } from "@/server/services/exam-import";
 import { attachmentBytes, attachmentsOf, type StoredAttachment } from "@/server/services/attachment-intake";
 import { readSheetRows, type SheetData } from "@/server/services/sheet-colors";
@@ -198,7 +198,7 @@ function lessonRows(courseId: string, csv: string): { rows: ProposalRow[]; resum
   return { rows: proposalRows, resumen: partes.join(", ") };
 }
 
-function examRows(csv: string, modo: Modo, imagenesConservadas: number): { rows: ProposalRow[]; resumen: string } {
+function examRows(csv: string, modo: Modo, conservadas: number): { rows: ProposalRow[]; resumen: string } {
   const { rows, ok, invalid } = validateExamCsv(csv);
   const reemplaza = modo === "reemplazar";
   const proposalRows = rows.map((r): ProposalRow => {
@@ -211,9 +211,9 @@ function examRows(csv: string, modo: Modo, imagenesConservadas: number): { rows:
     return r.status === "ok" ? { id: rowId(r.line), cells } : { id: rowId(r.line), cells, warning: r.message, blocked: true };
   });
   const partes = [reemplaza ? `${ok} que reemplazan a las actuales` : `${ok} por agregar`];
-  // El Excel no puede traer preguntas sobre imagen: "reemplazar" las conserva, no las borra
-  if (reemplaza && imagenesConservadas > 0) {
-    partes.push(plural(imagenesConservadas, "1 sobre imagen se conserva", `${imagenesConservadas} sobre imagen se conservan`));
+  // Lo que no cabe en el Excel no lo puede traer: "reemplazar" lo conserva, no lo borra
+  if (reemplaza && conservadas > 0) {
+    partes.push(plural(conservadas, "1 que no cabe en el Excel se conserva", `${conservadas} que no caben en el Excel se conservan`));
   }
   if (invalid > 0) partes.push(`${invalid} con problema`);
   return { rows: proposalRows, resumen: partes.join(", ") };
@@ -221,25 +221,25 @@ function examRows(csv: string, modo: Modo, imagenesConservadas: number): { rows:
 
 /**
  * Texto del resultado al aplicar «reemplazar»: qué llegó, a cuántas
- * reemplazó y cuántas sobre imagen se conservaron, con concordancia y sin
- * frases como «reemplazaron a las 0 que tenía» cuando no había ninguna que
- * reemplazar (todo el examen era de imagen).
+ * reemplazó y cuántas que no caben en el Excel se conservaron, con
+ * concordancia y sin frases como «reemplazaron a las 0 que tenía» cuando no
+ * había ninguna que reemplazar (nada del examen cabía en el Excel).
  */
 function reemplazoTexto(examTitle: string, imported: number, kept: number, antes: number, skipped: number): string {
   const total = imported + kept;
   const reemplazadas = antes - kept;
-  // Con preguntas sobre imagen conservadas, «la que tenía» es ambiguo (¿cuál,
-  // si algunas se conservaron?): se aclara que son las que no son de imagen
+  // Con preguntas conservadas, «la que tenía» es ambiguo (¿cuál, si algunas
+  // se conservaron?): se aclara que son las que sí cabían en el Excel
   const objetivo =
     kept > 0
-      ? plural(reemplazadas, "la que no era sobre imagen", `las ${reemplazadas} que no eran sobre imagen`)
+      ? plural(reemplazadas, "la que sí cabía en el Excel", `las ${reemplazadas} que sí cabían en el Excel`)
       : plural(reemplazadas, "la que tenía", `las ${reemplazadas} que tenía`);
   const partes = [
     reemplazadas > 0
       ? `${plural(imported, "1 del archivo reemplazó a", `${imported} del archivo reemplazaron a`)} ${objetivo}`
       : plural(imported, "se agregó 1 del archivo (no había ninguna que reemplazar)", `se agregaron ${imported} del archivo (no había ninguna que reemplazar)`),
   ];
-  if (kept > 0) partes.push(plural(kept, "se conservó 1 sobre imagen", `se conservaron ${kept} sobre imagen`));
+  if (kept > 0) partes.push(plural(kept, "se conservó 1 que no cabe en el Excel", `se conservaron ${kept} que no caben en el Excel`));
   if (skipped > 0) partes.push(plural(skipped, "1 omitida", `${skipped} omitidas`));
   return `${plural(total, `${examTitle} quedó con 1 pregunta`, `${examTitle} quedó con ${total} preguntas`)}: ${partes.join("; ")}.`;
 }
@@ -279,7 +279,7 @@ export const aplicarExcel: AssistantTool = {
       [...FORMATOS]
     ),
     modo: strEnum(
-      'SOLO para preguntas de examen: «reemplazar» borra las preguntas que tiene el examen (las que son sobre imagen se conservan: el Excel no las puede traer) y deja las del archivo; «agregar» las suma al final. Déjalo en «» la primera vez: el servidor te dirá que se lo preguntes al usuario',
+      'SOLO para preguntas de examen: «reemplazar» borra las preguntas que tiene el examen (las que no caben en el Excel —sobre imagen o de clasificar con íconos— se conservan) y deja las del archivo; «agregar» las suma al final. Déjalo en «» la primera vez: el servidor te dirá que se lo preguntes al usuario',
       [...MODOS]
     ),
   }),
@@ -370,19 +370,19 @@ export const aplicarExcel: AssistantTool = {
         // desde aquí. Lo decide el usuario, no la IA.
         if (!modo) {
           const actuales = listQuestions(examen.id).length;
-          const imagenes = countImageQuestions(examen.id);
-          // Con preguntas sobre imagen de por medio, "reemplazar" no cambia
-          // TODAS las preguntas (esas se quedan), así que no se dice «todas»
-          const etiquetaReemplazar = imagenes > 0 ? "«reemplazar las preguntas del examen»" : "«reemplazar todas las preguntas del examen»";
-          const notaImagenes = imagenes > 0
-            ? ` (${plural(imagenes, "se conserva 1 sobre imagen", `se conservan ${imagenes} sobre imagen`)}: el Excel no ${plural(imagenes, "la", "las")} puede traer)`
+          const noCaben = countNotInCsv(examen.id);
+          // Con preguntas que no caben en el Excel de por medio, "reemplazar"
+          // no cambia TODAS las preguntas (esas se quedan), así que no se dice «todas»
+          const etiquetaReemplazar = noCaben > 0 ? "«reemplazar las preguntas del examen»" : "«reemplazar todas las preguntas del examen»";
+          const notaNoCaben = noCaben > 0
+            ? ` (${plural(noCaben, "se conserva 1 que no cabe en el Excel", `se conservan ${noCaben} que no caben en el Excel`)})`
             : "";
           return {
-            forModel: `Ese archivo trae ${plural(hoja.rows.length, "1 pregunta", `${hoja.rows.length} preguntas`)} para ${examen.title}, que ahora tiene ${actuales}. No propuse nada todavía: pregúntale al usuario, con estas dos opciones, qué hacer — ${etiquetaReemplazar}${notaImagenes} (modo "reemplazar") o «agregarlas a las que ya hay» (modo "agregar"). Si el archivo salió de ese mismo examen, lo normal es reemplazar: agregar las dejaría duplicadas. Vuelve a llamar a aplicar_excel con el modo que elija.${discrepa}`,
+            forModel: `Ese archivo trae ${plural(hoja.rows.length, "1 pregunta", `${hoja.rows.length} preguntas`)} para ${examen.title}, que ahora tiene ${actuales}. No propuse nada todavía: pregúntale al usuario, con estas dos opciones, qué hacer — ${etiquetaReemplazar}${notaNoCaben} (modo "reemplazar") o «agregarlas a las que ya hay» (modo "agregar"). Si el archivo salió de ese mismo examen, lo normal es reemplazar: agregar las dejaría duplicadas. Vuelve a llamar a aplicar_excel con el modo que elija.${discrepa}`,
           };
         }
         title = modo === "reemplazar" ? `Reemplazar las preguntas de ${examen.title}` : `Agregar preguntas a ${examen.title}`;
-        ({ rows, resumen } = examRows(csv, modo, countImageQuestions(examen.id)));
+        ({ rows, resumen } = examRows(csv, modo, countNotInCsv(examen.id)));
         payload.itemId = examen.id;
         payload.modo = modo;
       } else {
@@ -466,7 +466,7 @@ export const aplicarExcel: AssistantTool = {
           examItemId: examen.id,
           inputs,
           // «replace» borra las anteriores dentro de la misma transacción: ese
-          // borrado no se reescribe aquí (conserva las preguntas sobre imagen)
+          // borrado no se reescribe aquí (conserva las que no caben en el Excel)
           mode: reemplaza ? "replace" : "append",
           source: "csv",
           alreadySkipped: revisadas.length - inputs.length,

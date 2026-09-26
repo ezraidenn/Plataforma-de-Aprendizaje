@@ -20,13 +20,15 @@ import { decryptSecret, encryptSecret, getAiKey, getAiSettings, maskKey, testAiC
 import { ScannedPdfError, extractText, pdfPageCount } from "../src/server/services/text-extract";
 import {
   AI_SCHEMA,
+  SYSTEM_PROMPT,
   interpretChunk,
   interpretVision,
   interpretVisionWithRetry,
   splitIntoChunks,
   toDrafts,
 } from "../src/server/services/ai-exam-import";
-import { draftProblem, draftToInput, type QuestionDraft } from "../src/lib/question-draft";
+import { draftProblem, draftToInput, formatGroupLines, parseGroupLines, type QuestionDraft } from "../src/lib/question-draft";
+import { draftToPreview } from "../src/lib/preview-question";
 import { importQuestionInputs } from "../src/server/services/exam-import";
 import { inputsToCsv, validateExamCsv } from "../src/server/services/exam-csv";
 import { eq, like } from "drizzle-orm";
@@ -269,6 +271,15 @@ const SEVEN = {
   ],
 };
 
+/** Clasificar y completar, con sus campos (SEVEN, sin ellos, es la respuesta de antes y debe seguir leyéndose). */
+const NONE = { options: [], accepted: [], pairs: [], steps: [], groups: [], clozeText: "", clozeMode: "write", distractors: [], issues: [] };
+const TWO = {
+  questions: [
+    { ...NONE, type: "categorize", prompt: "Clasifica los materiales", points: 3, groups: [{ name: "Clase A", cards: ["Madera", " Papel ", ""] }, { name: "Clase B", cards: ["Gasolina"] }, { name: " ", cards: [] }] },
+    { ...NONE, type: "cloze", prompt: "Completa la técnica", points: null, clozeText: "Jala el [[seguro]] y apunta a la [[base]].", clozeMode: "bank", distractors: ["manguera"] },
+  ],
+};
+
 async function chunkAndConvertChecks() {
   console.log("\n— Tramos y conversión");
   const questions = Array.from({ length: 40 }, (_, i) => `${i + 1}. Pregunta número ${i + 1} sobre extintores ${"con bastante texto de relleno ".repeat(22)}\na) Uno\nb) Dos\nc) Tres`);
@@ -291,6 +302,41 @@ async function chunkAndConvertChecks() {
   const missing = toDrafts({ questions: [{ ...SEVEN.questions[0], options: [{ text: "Agua", correct: false }, { text: "CO2", correct: false }], issues: ["No se indica la respuesta correcta"] }] })[0];
   check("Conserva el aviso de la IA", missing.issues.includes("No se indica la respuesta correcta"));
   check("…y se calcula el problema que impide importarla", draftProblem(missing) === "Marca exactamente una opción correcta");
+
+  const two = toDrafts(TWO);
+  check("Clasificar y completar se convierten, válidos", two.map((d) => d.type).join() === "categorize,cloze" && two.every((d) => draftProblem(d) === null), two.map((d) => [d.type, draftProblem(d)]));
+  check(
+    "Clasificar: grupos limpios y su config con claves g1…, c1…, solo texto",
+    JSON.stringify(draftToInput(two[0]).config) ===
+      JSON.stringify({
+        groups: [{ id: "g1", name: "Clase A" }, { id: "g2", name: "Clase B" }],
+        cards: [
+          { id: "c1", kind: "text", text: "Madera", groupId: "g1" },
+          { id: "c2", kind: "text", text: "Papel", groupId: "g1" },
+          { id: "c3", kind: "text", text: "Gasolina", groupId: "g2" },
+        ],
+      }),
+    draftToInput(two[0]).config
+  );
+  check("Completar: texto, modo y distractores del banco", JSON.stringify(draftToInput(two[1]).config) === JSON.stringify({ text: "Jala el [[seguro]] y apunta a la [[base]].", mode: "bank", distractors: ["manguera"] }), draftToInput(two[1]).config);
+  const odd = toDrafts({ questions: [{ ...TWO.questions[1], clozeMode: "dictado" }] })[0];
+  check("Completar: un modo desconocido queda en escribir, sin distractores", odd.clozeMode === "write" && JSON.stringify(draftToInput(odd).config) === JSON.stringify({ text: "Jala el [[seguro]] y apunta a la [[base]].", mode: "write" }));
+  check("La respuesta de antes (sin los campos nuevos) sigue leyéndose", drafts[0].groups.length === 0 && drafts[0].clozeText === "" && drafts[0].clozeMode === "write" && drafts[0].distractors.length === 0);
+  check(
+    "Revisión: los grupos como líneas «Grupo: a; b», y de vuelta",
+    formatGroupLines(two[0].groups) === "Clase A: Madera; Papel\nClase B: Gasolina" &&
+      JSON.stringify(parseGroupLines("Clase A: Madera; Papel\n\n Clase B : Gasolina ;\nSin tarjetas")) ===
+        JSON.stringify([{ name: "Clase A", cards: ["Madera", "Papel"] }, { name: "Clase B", cards: ["Gasolina"] }, { name: "Sin tarjetas", cards: [] }])
+  );
+  check("Revisión: un grupo sin tarjetas lo dice", draftProblem({ ...two[0], groups: parseGroupLines("A: x; y\nB") }) === "El grupo «B» no tiene tarjetas");
+  const shown = two.map(draftToPreview);
+  check("Ver como alumno: las tarjetas y el banco (dos respuestas y un distractor)", shown[0].categorize?.cards.length === 3 && shown[1].cloze?.mode === "bank" && shown[1].cloze?.words?.length === 3, shown);
+  check(
+    "El esquema y la instrucción los piden",
+    ["groups", "clozeText", "clozeMode", "distractors"].every((k) => JSON.stringify(AI_SCHEMA).includes(`"${k}"`)) &&
+      SYSTEM_PROMPT.includes("- categorize: clasificar en grupos; en `groups`") &&
+      SYSTEM_PROMPT.includes("- cloze: completar el texto; en `clozeText`")
+  );
 
   const ok = await interpretChunk("1. ¿Hola?", { key: "sk-test", model: "gpt-x", fetchImpl: fakeResponse(SEVEN) });
   check("interpretChunk: devuelve los borradores", ok.length === 7);
@@ -395,9 +441,9 @@ function importChecks() {
   }
   check("Reemplazar sin válidas: error y no se borra nada", noneError.includes("No hay preguntas válidas") && examsSvc.listQuestions(exam.id).length === 2, noneError);
 
-  const csv = inputsToCsv(drafts.map(draftToInput));
+  const csv = inputsToCsv([...drafts, ...toDrafts(TWO)].map(draftToInput));
   const back = validateExamCsv(csv);
-  check("CSV desde borradores: las 7 filas son válidas", back.ok === 7 && back.invalid === 0, { ok: back.ok, invalid: back.invalid });
+  check("CSV desde borradores: las 9 filas son válidas", back.ok === 9 && back.invalid === 0, { ok: back.ok, invalid: back.invalid, rows: back.rows.filter((r) => r.status !== "ok") });
 
   const logged = db.select().from(auditLog).where(eq(auditLog.entityId, exam.id)).all();
   const first = logged.find((r) => (r.detail as { mode?: string } | null)?.mode === "append");
@@ -406,6 +452,10 @@ function importChecks() {
     logged.length === 2 && logged.every((r) => r.action === "ai_import_exam") && JSON.stringify(first?.detail) === JSON.stringify({ mode: "append", imported: 3, skipped: 1, kept: 0 }),
     logged.map((r) => [r.action, r.detail])
   );
+
+  const twoImported = importQuestionInputs({ actorId: teacher.id, examItemId: exam.id, inputs: toDrafts(TWO).map(draftToInput), mode: "append", source: "ai" });
+  const types = examsSvc.listQuestions(exam.id).map((q) => q.type);
+  check("Clasificar y completar de la IA se importan", twoImported.imported === 2 && types.slice(-2).join() === "categorize,cloze", types);
 
   // Sin rastro en la bitácora del admin: solo los registros de este examen de prueba
   db.delete(auditLog).where(eq(auditLog.entityId, exam.id)).run();

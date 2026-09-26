@@ -18,6 +18,10 @@ import { buildRunnerQuestions } from "../src/components/student/lesson-data";
 import { questionsToPreview } from "../src/lib/preview-question";
 import { questionProblem } from "../src/lib/question-validation";
 import { cleanupSmokeNotifications } from "./lib/smoke-cleanup";
+import { exportExamCsv, inputsToCsv, validateExamCsv } from "../src/server/services/exam-csv";
+import { parseCsv } from "../src/server/services/csv-core";
+import { toDrafts } from "../src/server/services/ai-exam-import";
+import { draftToInput } from "../src/lib/question-draft";
 import {
   MAX_BLANKS,
   MAX_WRONG_OPTIONS,
@@ -38,6 +42,7 @@ import {
   type ClozeConfig,
   clozeBlankSpans,
   formatBlank,
+  lfOnly,
 } from "../src/lib/cloze";
 import {
   blankPartProblem,
@@ -187,6 +192,36 @@ function pureChecks() {
     JSON.stringify(clozeConfigOf(opened)) === '{"text":"[[a]]","mode":"bank","distractors":["b"]}' &&
       JSON.stringify(clozeConfigOf({ ...opened, mode: "write" })) === '{"text":"[[a]]","mode":"write","matchCase":true}' &&
       JSON.stringify(clozeConfigOf({ ...opened, mode: "select" })) === '{"text":"[[a]]","mode":"select"}');
+
+  console.log("\n— Saltos de línea: solo «\\n» (si no, «Hacer hueco» se descuadra en el editor)");
+  check("lfOnly: \\r\\n y \\r sueltos → \\n", lfOnly("uno\r\ndos\rtres\n[[cuatro]]") === "uno\ndos\ntres\n[[cuatro]]");
+  check("Saneo: el texto sale con \\n", (sanitizeCloze({ text: "Uno\r\n[[dos]]\rtres", mode: "write" }) as ClozeConfig).text === "Uno\n[[dos]]\ntres");
+  const [fromAi] = toDrafts({ questions: [{ type: "cloze", prompt: "Completa", points: null, clozeText: "Uno\r\n[[dos]]", clozeMode: "write" }] });
+  check("IA: el texto llega con \\n", fromAi?.clozeText === "Uno\n[[dos]]" && (draftToInput(fromAi).config as ClozeConfig).text === "Uno\n[[dos]]", fromAi);
+  const fromCsv = validateExamCsv('tipo,pregunta,puntos,texto\r\ncompletar,Completa,1,"Uno\r[[dos]]"').rows[0];
+  check("CSV: el texto llega con \\n", (fromCsv?.input?.config as ClozeConfig | undefined)?.text === "Uno\n[[dos]]", fromCsv);
+
+  console.log("\n— CSV/Excel");
+  const csv = inputsToCsv([WRITE, BANK, SELECT].map((config, i) => ({ type: "cloze" as const, promptMd: `Pregunta ${i + 1}`, points: i + 1, config })));
+  const sheet = parseCsv(csv, { maxRows: 10 });
+  const cells = (name: string) => sheet.rows.map((r) => r.cells[sheet.headers.indexOf(name)]);
+  check("Exportar: tipo «completar», el texto con sus huecos y el modo en español",
+    cells("tipo").join() === "completar,completar,completar" && cells("texto").join("\n") === [WRITE, BANK, SELECT].map((c) => c.text).join("\n") &&
+      cells("modo").join() === "escribir,banco,lista", sheet.rows);
+  check("Exportar: los distractores solo en el banco, con «|»", cells("distractores").join() === ",cinco | zclzSeis,", cells("distractores"));
+  const back = validateExamCsv(csv);
+  check("Ida y vuelta: las tres vuelven iguales",
+    back.ok === 3 && JSON.stringify(back.rows.map((r) => r.input?.config)) === JSON.stringify([WRITE, BANK, SELECT]) && back.rows.every((r) => r.typeLabel === "Completar el texto"),
+    back.rows);
+  const row = (texto: string, modo = "", distractores = "") =>
+    validateExamCsv(`tipo,pregunta,puntos,texto,modo,distractores\r\ncompletar,Completa,1,"${texto}",${modo},"${distractores}"`).rows[0];
+  check("Fila sin texto: lo dice", row("").status === "invalid" && row("").message.includes('"texto"'), row("").message);
+  check("Modo vacío: escribir; en mayúsculas también vale", (row("[[a]]").input?.config as ClozeConfig).mode === "write" && (row("[[a]]", "LISTA").message.includes("hueco 1")), [row("[[a]]"), row("[[a]]", "LISTA").message]);
+  check("Modo desconocido: lo dice", row("[[a]]", "dictado").message.includes('"modo"'), row("[[a]]", "dictado").message);
+  check("Distractores fuera del banco: lo dice", row("[[a]]", "escribir", "b").message.includes("modo banco"), row("[[a]]", "escribir", "b").message);
+  check("Sin huecos: el mensaje del editor", row("Sin huecos").message === "Marca al menos un hueco con [[ ]]", row("Sin huecos").message);
+  check("Lista sin incorrectas: el mensaje del editor", row("[[a]]", "lista").message === "Al hueco 1 le falta al menos una opción incorrecta (!opción)", row("[[a]]", "lista").message);
+  check("Distractor igual a una respuesta: el mensaje del editor", row("[[a]]", "banco", "A | b").message === "Un distractor es igual a la respuesta de un hueco", row("[[a]]", "banco", "A | b").message);
 }
 
 // ─── Recorrido contra la base ────────────────────────────────────────────────
@@ -245,6 +280,9 @@ async function endToEnd() {
       invalid = (e as Error).message;
     }
     check("Guardar una incompleta se niega con el mensaje del editor", invalid === "Al hueco 1 le falta al menos una opción incorrecta (!opción)", invalid);
+    const exported = validateExamCsv(exportExamCsv(exam.id));
+    check("CSV del examen: las tres salen y vuelven iguales",
+      exported.ok === 3 && JSON.stringify(exported.rows.map((r) => r.input?.config)) === JSON.stringify([WRITE, BANK, SELECT]), exported.rows);
 
     // «Ver como alumno» del maestro: fichas locales, la solución en texto y como tablero
     const preview = questionsToPreview(examsSvc.listQuestions(exam.id));
