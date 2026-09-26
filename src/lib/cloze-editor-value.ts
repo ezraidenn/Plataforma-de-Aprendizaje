@@ -28,16 +28,46 @@ export type ClozeEditorValue = {
   matchAccents: boolean;
 };
 
-/** Lo guardado → valor del editor. Sin nada guardado: texto vacío y «Escribir». */
+/**
+ * Lo guardado → valor del editor. Sin nada guardado: texto vacío y «Escribir».
+ * Los saltos de línea de Windows (de un Excel o de la IA) quedan en «\n», como
+ * los da el campo de texto: si no, las posiciones de la selección no cuadrarían
+ * con las del texto al hacer un hueco.
+ */
 export function initialClozeValue(raw: unknown): ClozeEditorValue {
   const c = sanitizeCloze(raw) as Partial<ClozeConfig>;
   return {
-    text: c.text ?? "",
+    text: (c.text ?? "").replace(/\r\n?/g, "\n"),
     mode: c.mode ?? "write",
     distractors: c.distractors ?? [],
     matchCase: c.matchCase ?? false,
     matchAccents: c.matchAccents ?? false,
   };
+}
+
+/**
+ * Lo que dice el servidor al cambiar la forma de contestar de una pregunta con
+ * respuestas guardadas (`updateQuestion`). Vive aquí para que el editor lo diga
+ * antes, con las mismas palabras.
+ */
+export const CLOZE_MODE_LOCKED =
+  "Ya hay respuestas guardadas: no se puede cambiar la forma de contestar. Duplica la pregunta y cámbiala en la copia.";
+
+/**
+ * Por qué no se puede guardar con la forma `mode` una pregunta guardada con
+ * `savedMode` (null: sí se puede). `answered`: «in_progress», esta pregunta
+ * tiene respuestas en un intento en curso; «attempts», el examen ya tiene
+ * intentos enviados (casi siempre con respuestas de esta pregunta).
+ */
+export function clozeModeLock(
+  answered: "attempts" | "in_progress" | null,
+  savedMode: ClozeMode | null,
+  mode: ClozeMode
+): string | null {
+  if (answered === null || savedMode === null || mode === savedMode) return null;
+  return answered === "in_progress"
+    ? CLOZE_MODE_LOCKED
+    : "El examen ya tiene intentos: no se puede cambiar la forma de contestar. Duplica la pregunta y cámbiala en la copia.";
 }
 
 /** Lo que se guarda (y se valida y se previsualiza): solo lo de la forma elegida. */
@@ -89,15 +119,27 @@ const MARKER_CHARS = /[[\]|]/;
 /**
  * Por qué no se puede agregar `value` a un hueco como variante o como opción
  * incorrecta (null: se puede). Las mismas reglas que al guardar, más lo que el
- * marcador no puede escribir.
+ * marcador no puede escribir. Una variante que ya cuenta sin agregarla (solo
+ * cambian mayúsculas o acentos y, según `opts`, no se distinguen) tampoco.
  */
-export function blankPartProblem(value: string, blank: ClozeBlank, kind: "variant" | "wrong"): string | null {
+export function blankPartProblem(
+  value: string,
+  blank: ClozeBlank,
+  kind: "variant" | "wrong",
+  opts: { matchCase?: boolean; matchAccents?: boolean } = {}
+): string | null {
   const v = value.trim();
   if (!v) return null;
   if (MARKER_CHARS.test(v)) return "Sin «[», «]» ni «|»: marcan los huecos";
   if (v.startsWith("!")) return "No empieces con «!»";
   if (v.length > MAX_BLANK_TEXT) return `Como máximo ${MAX_BLANK_TEXT} caracteres`;
-  if (kind === "variant") return blank.answers.includes(v) ? "Ya está en el hueco" : null;
+  if (kind === "variant") {
+    if (blank.answers.includes(v)) return "Ya está en el hueco";
+    const n = normalizeAnswer(v, opts);
+    if (!blank.answers.some((a) => normalizeAnswer(a, opts) === n)) return null;
+    const loose = [!opts.matchCase && "mayúsculas", !opts.matchAccents && "acentos"].filter(Boolean);
+    return `Ya se acepta: no se distinguen ${loose.join(" ni ")}`;
+  }
   const n = normalizeAnswer(v, {});
   if (blank.answers[0] !== undefined && normalizeAnswer(blank.answers[0], {}) === n) return "Es la respuesta correcta";
   return blank.wrong.some((w) => normalizeAnswer(w, {}) === n) ? "Ya está en la lista" : null;

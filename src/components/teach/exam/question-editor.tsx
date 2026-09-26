@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useState, useTransition, type SetStateAction } from "react";
-import { ArrowDown, ArrowUp, Loader2, Plus, TriangleAlert, X } from "lucide-react";
+import { useCallback, useId, useState, useTransition, type SetStateAction } from "react";
+import { Loader2, TriangleAlert, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,10 +15,11 @@ import { initialImageValue, type ImageQuestionValue } from "@/lib/image-editor-v
 import { categorizeProblem, type CategorizeConfig } from "@/lib/categorize";
 import { initialCategorizeValue } from "@/lib/categorize-editor-value";
 import { clozeProblem } from "@/lib/cloze";
-import { clozeConfigOf, initialClozeValue, type ClozeEditorValue } from "@/lib/cloze-editor-value";
+import { clozeConfigOf, clozeModeLock, initialClozeValue, type ClozeEditorValue } from "@/lib/cloze-editor-value";
 import { boardPreview } from "@/lib/preview-question";
 import { CategorizeEditor } from "./categorize-editor";
 import { ChoiceOptionsEditor } from "./choice-options-editor";
+import { MatchingPairsEditor, OrderingStepsEditor } from "./matching-ordering-editors";
 import { ClozeEditor } from "./cloze-editor";
 import type { Answered } from "./image-photo-tools";
 import { ImagePreviewButton, ImageQuestionEditor } from "./image-question-editor";
@@ -126,14 +127,6 @@ export function QuestionEditor({
   const [steps, setSteps] = useState<string[]>(
     initial && initial.steps.length > 0 ? [...initial.steps] : ["", "", ""]
   );
-  const moveStep = (from: number, to: number) =>
-    setSteps((prev) => {
-      if (to < 0 || to >= prev.length) return prev;
-      const next = [...prev];
-      const [item] = next.splice(from, 1);
-      next.splice(to, 0, item);
-      return next;
-    });
   // Preguntas sobre imagen: la foto y su config (los demás tipos no lo usan)
   const [image, setImage] = useState<ImageQuestionValue>(() =>
     initialImageValue(type, initial?.imageFileId ?? null, initial?.config)
@@ -142,6 +135,9 @@ export function QuestionEditor({
   const [categorize, setCategorize] = useState(() => initialCategorizeValue(type === "categorize" ? initial?.config : null));
   const [cloze, setCloze] = useState(() => initialClozeValue(type === "cloze" ? initial?.config : null));
   const [uploading, setUploading] = useState(false);
+  /** Lo escrito en una ficha o tarjeta sin agregar (clasificar y completar): no se guarda hasta agregarlo o cerrarlo. */
+  const [pending, setPending] = useState<string | null>(null);
+  const pendingId = useId();
   const [error, setError] = useState<string | null>(null);
   const [saving, startSaving] = useTransition();
   // Al tocar la foto, los lugares o los puntos, el error del último intento de
@@ -161,6 +157,9 @@ export function QuestionEditor({
   const parsedPoints = Number(points);
   // Clasificar y completar: lo que se guarda (en completar, solo lo de su forma de contestar)
   const boardConfig = type === "categorize" ? categorize : type === "cloze" ? clozeConfigOf(cloze) : null;
+  // Completar con respuestas guardadas: otra forma de contestar no se guarda (el editor dice por qué)
+  const savedClozeMode = type === "cloze" && initial ? initialClozeValue(initial.config).mode : null;
+  const clozeLock = type === "cloze" ? clozeModeLock(answered, savedClozeMode, cloze.mode) : null;
 
   function addVariant() {
     const value = newVariant.trim();
@@ -335,123 +334,9 @@ export function QuestionEditor({
         </div>
       )}
 
-      {type === "matching" && (
-        <div className="grid gap-2">
-          <Label>Pares para relacionar (mínimo 2)</Label>
-          {pairs.map((pair, i) => (
-            <div key={i} className="flex items-center gap-2">
-              <Input
-                value={pair.left}
-                onChange={(e) =>
-                  setPairs((prev) =>
-                    prev.map((p, j) => (j === i ? { ...p, left: e.target.value } : p))
-                  )
-                }
-                placeholder={`Izquierda ${i + 1}`}
-                aria-label={`Lado izquierdo del par ${i + 1}`}
-              />
-              <span className="text-muted-foreground" aria-hidden>
-                →
-              </span>
-              <Input
-                value={pair.right}
-                onChange={(e) =>
-                  setPairs((prev) =>
-                    prev.map((p, j) => (j === i ? { ...p, right: e.target.value } : p))
-                  )
-                }
-                placeholder={`Derecha ${i + 1}`}
-                aria-label={`Lado derecho del par ${i + 1}`}
-              />
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                aria-label={`Quitar par ${i + 1}`}
-                onClick={() => setPairs((prev) => prev.filter((_, j) => j !== i))}
-              >
-                <X aria-hidden />
-              </Button>
-            </div>
-          ))}
-          <Button
-            size="sm"
-            variant="outline"
-            className="justify-self-start"
-            onClick={() => setPairs((prev) => [...prev, { left: "", right: "" }])}
-          >
-            <Plus aria-hidden />
-            Agregar par
-          </Button>
-          <p className="text-xs text-muted-foreground">
-            El estudiante verá la columna derecha en desorden y deberá emparejarla.
-          </p>
-        </div>
-      )}
+      {type === "matching" && <MatchingPairsEditor pairs={pairs} setPairs={setPairs} />}
 
-      {type === "ordering" && (
-        <div className="grid gap-2">
-          <div className="flex items-center gap-1.5">
-            <Label>Pasos en el orden correcto (3 a 10)</Label>
-            <HelpTip topic="exam.ordering" />
-          </div>
-          <ol className="grid gap-2">
-            {steps.map((step, i) => (
-              <li key={i} className="flex items-center gap-2">
-                <span className="w-5 shrink-0 text-center text-sm font-semibold tabular-nums text-muted-foreground">
-                  {i + 1}
-                </span>
-                <Input
-                  value={step}
-                  onChange={(e) =>
-                    setSteps((prev) => prev.map((s, j) => (j === i ? e.target.value : s)))
-                  }
-                  placeholder={`Paso ${i + 1}`}
-                  aria-label={`Paso ${i + 1}`}
-                />
-                <Button
-                  size="icon-sm"
-                  variant="ghost"
-                  aria-label={`Subir paso ${i + 1}`}
-                  disabled={i === 0}
-                  onClick={() => moveStep(i, i - 1)}
-                >
-                  <ArrowUp aria-hidden />
-                </Button>
-                <Button
-                  size="icon-sm"
-                  variant="ghost"
-                  aria-label={`Bajar paso ${i + 1}`}
-                  disabled={i === steps.length - 1}
-                  onClick={() => moveStep(i, i + 1)}
-                >
-                  <ArrowDown aria-hidden />
-                </Button>
-                <Button
-                  size="icon-sm"
-                  variant="ghost"
-                  aria-label={`Quitar paso ${i + 1}`}
-                  onClick={() => setSteps((prev) => prev.filter((_, j) => j !== i))}
-                >
-                  <X aria-hidden />
-                </Button>
-              </li>
-            ))}
-          </ol>
-          <Button
-            size="sm"
-            variant="outline"
-            className="justify-self-start"
-            disabled={steps.length >= 10}
-            onClick={() => setSteps((prev) => [...prev, ""])}
-          >
-            <Plus aria-hidden />
-            Agregar paso
-          </Button>
-          <p className="text-xs text-muted-foreground">
-            Escríbelos en el orden correcto: el estudiante los verá revueltos y deberá acomodarlos.
-          </p>
-        </div>
-      )}
+      {type === "ordering" && <OrderingStepsEditor steps={steps} setSteps={setSteps} />}
 
       {isImageQuestionType(type) && (
         <ImageQuestionEditor
@@ -463,14 +348,11 @@ export function QuestionEditor({
         />
       )}
 
-      {type === "categorize" && <CategorizeEditor value={categorize} onChange={changeCategorize} onBusyChange={setUploading} />}
+      {type === "categorize" && (
+        <CategorizeEditor value={categorize} onChange={changeCategorize} onBusyChange={setUploading} onPendingChange={setPending} />
+      )}
       {type === "cloze" && (
-        <ClozeEditor
-          value={cloze}
-          onChange={changeCloze}
-          savedMode={initial ? initialClozeValue(initial.config).mode : null}
-          answered={answered}
-        />
+        <ClozeEditor value={cloze} onChange={changeCloze} savedMode={savedClozeMode} answered={answered} onPendingChange={setPending} />
       )}
 
       {error && (
@@ -480,15 +362,29 @@ export function QuestionEditor({
         </p>
       )}
 
+      {pending !== null && (
+        <p id={pendingId} className="flex items-center justify-end gap-1 text-sm text-amber-700 dark:text-warning">
+          <TriangleAlert className="size-4 shrink-0" aria-hidden />
+          Tienes «{pending}» sin agregar: pulsa Enter o ciérralo.
+        </p>
+      )}
+
       <div className="flex justify-end gap-2">
         <Button variant="ghost" onClick={onCancel} disabled={saving}>
           Cancelar
         </Button>
         <Button
           onClick={save}
-          // Mientras sube una imagen no se guarda: se perdería
-          disabled={saving || uploading}
-          title={uploading ? "Espera a que termine de subir la imagen" : undefined}
+          // Mientras sube una imagen no se guarda (se perdería), ni con algo escrito sin agregar o una forma de contestar que no se puede guardar
+          disabled={saving || uploading || pending !== null || clozeLock !== null}
+          title={
+            uploading
+              ? "Espera a que termine de subir la imagen"
+              : pending !== null
+                ? `Tienes «${pending}» sin agregar: pulsa Enter o ciérralo`
+                : (clozeLock ?? undefined)
+          }
+          aria-describedby={pending !== null ? pendingId : undefined}
           className="h-11 bg-cta px-6 text-cta-foreground hover:bg-cta/90"
         >
           {saving && <Loader2 className="animate-spin" aria-hidden />}

@@ -32,6 +32,7 @@ import { GroupColumn, cardDragId, groupDropId } from "./categorize-group";
 import { HistoryButtons } from "./image-canvas-toolbar";
 import { isTypingTarget, isUndoKey, useEditorHistory } from "./use-editor-history";
 import { EMPTY_ICON, useIconUploads } from "./use-editor-icons";
+import { usePendingDrafts } from "./use-pending-drafts";
 
 /**
  * Editor de «Clasificar en grupos»: los grupos como columnas (de 2 a 6; el
@@ -46,17 +47,23 @@ import { EMPTY_ICON, useIconUploads } from "./use-editor-icons";
 const DUPLICATE_TEXT = "Ya hay una tarjeta con ese texto: el alumno no las distinguiría";
 const DUPLICATE_ICON = "Ya hay una tarjeta con ese ícono: el alumno no las distinguiría.";
 
+/** Selector de un atributo `data-…` con su valor escapado (las claves vienen de lo guardado). */
+const byData = (name: string, value: string) => `[data-${name}="${CSS.escape(value)}"]`;
+
 const sameText = (a: string | undefined, b: string) => (a ?? "").trim().toLocaleLowerCase("es") === b.trim().toLocaleLowerCase("es");
 
 export function CategorizeEditor({
   value,
   onChange,
   onBusyChange,
+  onPendingChange,
 }: {
   value: CategorizeConfig;
   onChange: (value: CategorizeConfig) => void;
   /** Hay una subida en curso: mientras tanto no se guarda. */
   onBusyChange?: (busy: boolean) => void;
+  /** Lo escrito en «+ Texto» sin agregar (null: nada): mientras tanto no se guarda. */
+  onPendingChange?: (text: string | null) => void;
 }) {
   const history = useEditorHistory(value, onChange);
   const { set } = history;
@@ -73,6 +80,7 @@ export function CategorizeEditor({
   const [hot, setHot] = useState<string | null>(null);
   const { live, announce } = useAnnouncer();
   const icons = useIconUploads();
+  const report = usePendingDrafts(onPendingChange);
   const rootRef = useRef<HTMLDivElement>(null);
   /** Qué enfocar tras el próximo render (lo que tenía el foco pudo desaparecer). */
   const focusNext = useRef<string | null>(null);
@@ -113,7 +121,7 @@ export function CategorizeEditor({
     if (groups.length >= MAX_GROUPS) return;
     const id = newCategorizeId("g", groups);
     set((v) => (v.groups.length >= MAX_GROUPS ? v : { ...v, groups: [...v.groups, { id, name: "" }] }));
-    focusNext.current = `[data-group-name="${id}"]`;
+    focusNext.current = byData("group-name", id);
     announce(`Grupo ${groups.length + 1} agregado: escribe su nombre`);
   }
 
@@ -122,7 +130,7 @@ export function CategorizeEditor({
     const neighbor = groups[i - 1] ?? groups[i + 1];
     set((v) => ({ groups: v.groups.filter((x) => x.id !== g.id), cards: v.cards.filter((k) => k.groupId !== g.id) }));
     announce(`Grupo ${labelOf(g, i)} quitado`);
-    focusNext.current = neighbor ? `[data-group-name="${neighbor.id}"]` : "[data-add-group]";
+    focusNext.current = neighbor ? byData("group-name", neighbor.id) : "[data-add-group]";
   }
 
   function addText(groupId: string, text: string) {
@@ -171,7 +179,7 @@ export function CategorizeEditor({
       return k ? { ...v, cards: [...v.cards.filter((x) => x.id !== cardId), { ...k, groupId }] } : v;
     });
     announce(`${nameOf(card)} pasó a ${labelById(groupId)}`);
-    if (keyboard) focusNext.current = `[data-card-menu="${cardId}"]`;
+    if (keyboard) focusNext.current = byData("card-menu", cardId);
   }
 
   function removeCard(cardId: string) {
@@ -182,7 +190,7 @@ export function CategorizeEditor({
     const neighbor = inGroup[j + 1] ?? inGroup[j - 1];
     set((v) => ({ ...v, cards: v.cards.filter((k) => k.id !== cardId) }));
     announce(`${nameOf(card)} quitada`);
-    focusNext.current = neighbor ? `[data-card-remove="${neighbor.id}"]` : `[data-add-text="${card.groupId}"]`;
+    focusNext.current = neighbor ? byData("card-remove", neighbor.id) : byData("add-text", card.groupId);
   }
 
   function editText(cardId: string, text: string) {
@@ -235,6 +243,7 @@ export function CategorizeEditor({
         />
         <span className="ms-auto text-xs tabular-nums text-muted-foreground">
           {groups.length} {plural(groups.length, "grupo", "grupos")} · {cards.length} de {MAX_CARDS} tarjetas
+          {full && " (máximo)"}
         </span>
       </div>
       <p className="-mt-1 text-xs text-muted-foreground">
@@ -277,7 +286,8 @@ export function CategorizeEditor({
                 dragging={dragging && ghost ? ghost.id : null}
                 uploading={uploading === g.id}
                 busy={uploading !== null}
-                full={full}
+                left={MAX_CARDS - cards.length}
+                report={report}
                 textProblem={textProblem}
                 onRename={(name) => set((v) => ({ ...v, groups: v.groups.map((x) => (x.id === g.id ? { ...x, name } : x)) }), { coalesce: `name:${g.id}` })}
                 onRenameDone={history.commit}
@@ -287,6 +297,7 @@ export function CategorizeEditor({
                 onMove={(cardId, groupId) => moveCard(cardId, groupId, true)}
                 onRemoveCard={removeCard}
                 onEditText={editText}
+                onEditRejected={warn}
               />
             );
           })}

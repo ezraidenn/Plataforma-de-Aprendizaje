@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { ArrowRightLeft, ChevronDown, Loader2, Pencil, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -18,13 +18,15 @@ import { ChipFace, chipLook } from "@/components/student/place-kit";
 import { MAX_CARD_TEXT, MAX_GROUP_NAME, type CategorizeCard, type CategorizeGroup } from "@/lib/categorize";
 import { EDITOR_IMAGE_ACCEPT } from "@/lib/upload-client";
 import { cn } from "@/lib/utils";
+import { useReportDraft, type ReportDraft } from "./use-pending-drafts";
 
 /**
  * Una columna del editor de «Clasificar en grupos»: el nombre del grupo (se
  * escribe ahí mismo), sus tarjetas y los botones para agregarle un texto o un
  * ícono (también se puede soltar el archivo sobre la columna). Cada tarjeta se
  * arrastra a otro grupo tomándola por su texto o dibujo, o se mueve con su menú
- * (▾), que además cambia el texto; la × la quita.
+ * (▾), que además cambia el texto; la × la quita. Lo escrito en «+ Texto» sin
+ * agregar se avisa al editor (`report`): así «Guardar» no lo pierde en silencio.
  */
 
 /** Ids del arrastre: las tarjetas y los grupos no se confunden aunque compartan clave. */
@@ -48,7 +50,8 @@ export function GroupColumn({
   dragging,
   uploading,
   busy,
-  full,
+  left,
+  report,
   textProblem,
   onRename,
   onRenameDone,
@@ -58,6 +61,7 @@ export function GroupColumn({
   onMove,
   onRemoveCard,
   onEditText,
+  onEditRejected,
 }: {
   group: CategorizeGroup;
   index: number;
@@ -76,8 +80,10 @@ export function GroupColumn({
   uploading: boolean;
   /** Hay una subida en curso (en cualquier grupo): no se empieza otra. */
   busy: boolean;
-  /** Ya no caben más tarjetas. */
-  full: boolean;
+  /** Cuántas tarjetas caben aún en la pregunta. */
+  left: number;
+  /** A quién avisar lo escrito sin agregar. */
+  report?: ReportDraft;
   /** Por qué no puede ir este texto en una tarjeta (sin contar la tarjeta `except`); null: puede. */
   textProblem: (text: string, except?: string) => string | null;
   onRename: (name: string) => void;
@@ -88,7 +94,10 @@ export function GroupColumn({
   onMove: (cardId: string, groupId: string) => void;
   onRemoveCard: (cardId: string) => void;
   onEditText: (cardId: string, text: string) => void;
+  /** Un texto nuevo que no se pudo poner al salir del campo (vacío o repetido): se avisa, no se pierde en silencio. */
+  onEditRejected: (message: string) => void;
 }) {
+  const full = left <= 0;
   const { setNodeRef } = useDroppable({ id: groupDropId(group.id) });
   const { over, dropProps } = useFileDrop(onIconFile, !busy && !full);
   const [editing, setEditing] = useState<string | null>(null);
@@ -96,6 +105,7 @@ export function GroupColumn({
   return (
     <div
       ref={setNodeRef}
+      data-group-col=""
       {...dropProps}
       className={cn(
         "relative flex min-w-0 flex-col gap-2 rounded-xl border bg-card p-2 transition-[background-color,border-color,box-shadow] duration-150 motion-reduce:transition-none",
@@ -141,6 +151,7 @@ export function GroupColumn({
                 setEditing(null);
                 if (text !== null) onEditText(card.id, text);
               }}
+              onRejected={onEditRejected}
               cardId={card.id}
             />
           ) : (
@@ -163,7 +174,8 @@ export function GroupColumn({
         label={label}
         uploading={uploading}
         busy={busy}
-        full={full}
+        left={left}
+        report={report}
         problemOf={(text) => textProblem(text)}
         onAddText={onAddText}
         onIconFile={onIconFile}
@@ -191,7 +203,6 @@ function EditorCard({
   onEdit: () => void;
 }) {
   const { setNodeRef, listeners } = useDraggable({ id: cardDragId(card.id) });
-  const triggerRef = useRef<HTMLButtonElement>(null);
   /** Se eligió algo del menú: el foco lo decide esa acción, no el menú al cerrarse. */
   const acted = useRef(false);
   const hasMenu = others.length > 0 || card.kind === "text";
@@ -211,7 +222,7 @@ function EditorCard({
       {hasMenu && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <button ref={triggerRef} type="button" data-card-menu={card.id} aria-label={`${name}: mover a otro grupo o cambiar`} className={SMALL_BUTTON}>
+            <button type="button" data-card-menu={card.id} aria-label={`${name}: mover a otro grupo o cambiar`} className={SMALL_BUTTON}>
               <ChevronDown className="size-3.5" aria-hidden />
             </button>
           </DropdownMenuTrigger>
@@ -256,28 +267,44 @@ function EditorCard({
   );
 }
 
-/** Cambiar el texto de una tarjeta ahí mismo: Enter o salir guarda; Esc deja el de antes. */
+/**
+ * Cambiar el texto de una tarjeta ahí mismo: Enter o salir guarda; Esc deja el
+ * de antes. Si al salir el texto no sirve (vacío o repetido), la tarjeta se
+ * queda como estaba y se avisa (`onRejected`).
+ */
 function CardTextEdit({
   cardId,
   initial,
   problemOf,
   onDone,
+  onRejected,
 }: {
   cardId: string;
   initial: string;
   problemOf: (text: string) => string | null;
   /** El texto nuevo, o null si no cambia. */
   onDone: (text: string | null) => void;
+  onRejected: (message: string) => void;
 }) {
   const [text, setText] = useState(initial);
   const done = useRef(false);
-  const problem = text.trim() ? problemOf(text) : "Escribe el texto de la tarjeta";
-  function finish(save: boolean) {
+  const problemId = useId();
+  const empty = !text.trim();
+  const problem = empty ? "Escribe el texto de la tarjeta" : problemOf(text);
+  function finish(how: "enter" | "escape" | "blur") {
     if (done.current) return;
     done.current = true;
-    onDone(save && !problem && text.trim() !== initial.trim() ? text.trim() : null);
-    // El foco vuelve al menú de la tarjeta, que aparece en el siguiente cuadro
-    requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-card-menu="${CSS.escape(cardId)}"]`)?.focus());
+    const changed = text.trim() !== initial.trim();
+    onDone(how !== "escape" && !problem && changed ? text.trim() : null);
+    if (how === "blur" && problem && changed) {
+      onRejected(`No se cambió «${initial.trim()}»: ${empty ? "el texto quedó vacío" : "ya hay otra tarjeta con ese texto"}`);
+    }
+    // Con Enter o Esc el foco vuelve al menú de la tarjeta (aparece en el siguiente
+    // cuadro); al salir con un clic se queda donde se hizo clic, salvo que no haya caído en nada
+    requestAnimationFrame(() => {
+      if (how === "blur" && document.activeElement && document.activeElement !== document.body) return;
+      document.querySelector<HTMLElement>(`[data-card-menu="${CSS.escape(cardId)}"]`)?.focus();
+    });
   }
   return (
     <span className="grid w-full gap-1">
@@ -289,30 +316,39 @@ function CardTextEdit({
         onKeyDown={(e) => {
           if (e.key === "Enter") {
             e.preventDefault();
-            if (!problem) finish(true);
+            if (!problem) finish("enter");
           } else if (e.key === "Escape") {
             e.preventDefault();
             e.stopPropagation();
-            finish(false);
+            finish("escape");
           }
         }}
-        onBlur={() => finish(true)}
+        onBlur={() => finish("blur")}
         aria-label="Texto de la tarjeta"
         aria-invalid={problem ? true : undefined}
+        aria-describedby={problem ? problemId : undefined}
         className="h-8 text-sm"
       />
-      {problem && <span className="text-xs text-amber-700 dark:text-warning">{problem}</span>}
+      {problem && (
+        <span id={problemId} role="status" className="text-xs text-amber-700 dark:text-warning">
+          {problem}
+        </span>
+      )}
     </span>
   );
 }
 
-/** Bajo las tarjetas de un grupo: «+ Texto» (un campo en línea) y «+ Ícono» (el selector de archivos). */
+/**
+ * Bajo las tarjetas de un grupo: «+ Texto» (un campo en línea) y «+ Ícono» (el
+ * selector de archivos). Con la última tarjeta que cabe, el campo se cierra.
+ */
 function CardAdder({
   groupId,
   label,
   uploading,
   busy,
-  full,
+  left,
+  report,
   problemOf,
   onAddText,
   onIconFile,
@@ -321,18 +357,23 @@ function CardAdder({
   label: string;
   uploading: boolean;
   busy: boolean;
-  full: boolean;
+  left: number;
+  report?: ReportDraft;
   problemOf: (text: string) => string | null;
   onAddText: (text: string) => void;
   onIconFile: (file: File) => void;
 }) {
+  const rootRef = useRef<HTMLDivElement>(null);
   const iconInput = useRef<HTMLInputElement>(null);
   const textButton = useRef<HTMLButtonElement>(null);
   /** Texto nuevo que se escribe; null = cerrado. */
   const [draft, setDraft] = useState<string | null>(null);
   /** Al cerrar el campo, el foco vuelve a «Texto». */
   const refocus = useRef(false);
+  const problemId = useId();
+  const full = left <= 0;
   const problem = draft?.trim() ? problemOf(draft) : null;
+  useReportDraft(report, `text:${groupId}`, draft);
 
   useEffect(() => {
     if (draft !== null || !refocus.current) return;
@@ -344,7 +385,16 @@ function CardAdder({
     const text = (draft ?? "").trim();
     if (!text || problem || full) return;
     onAddText(text);
-    setDraft("");
+    if (left > 1) {
+      setDraft("");
+      return;
+    }
+    // Era la última que cabía: el campo se cierra y el foco va a la tarjeta nueva
+    setDraft(null);
+    requestAnimationFrame(() => {
+      const removes = rootRef.current?.closest("[data-group-col]")?.querySelectorAll<HTMLElement>("[data-card-remove]");
+      removes?.[removes.length - 1]?.focus();
+    });
   }
 
   function close() {
@@ -354,7 +404,7 @@ function CardAdder({
 
   return (
     // Al pie de la columna: los botones quedan a la misma altura en todos los grupos
-    <div className="mt-auto">
+    <div ref={rootRef} className="mt-auto">
       <input
         ref={iconInput}
         type="file"
@@ -387,13 +437,18 @@ function CardAdder({
               placeholder="Texto y Enter"
               aria-label={`Texto de la tarjeta nueva de ${label}`}
               aria-invalid={problem ? true : undefined}
+              aria-describedby={problem ? problemId : undefined}
               className="h-8 text-sm"
             />
             <Button type="button" size="icon-sm" variant="ghost" className="size-8 shrink-0" aria-label="Cerrar sin agregar" onClick={close}>
               <X aria-hidden />
             </Button>
           </div>
-          {problem && <p className="text-xs text-amber-700 dark:text-warning">{problem}</p>}
+          {problem && (
+            <p id={problemId} role="status" className="text-xs text-amber-700 dark:text-warning">
+              {problem}
+            </p>
+          )}
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-1">

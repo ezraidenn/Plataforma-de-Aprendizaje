@@ -42,6 +42,8 @@ import {
 import {
   blankPartProblem,
   clozeConfigOf,
+  clozeModeLock,
+  CLOZE_MODE_LOCKED,
   distractorProblem,
   initialClozeValue,
   makeBlank,
@@ -166,9 +168,19 @@ function pureChecks() {
   check("Reescribir un hueco: solo su marcador cambia", rewritten === "Francia: [[París|Paris|!Londres]]. Italia: [[Roma|Rome|!Milán]].", rewritten);
   check("Reescribir un hueco que no existe: nada", replaceBlank(T, 5, { answers: ["x"], wrong: [] }) === T);
   const b0 = parseCloze(T).blanks[0];
-  check("Variante: sin marcas ni repetida", blankPartProblem("a|b", b0, "variant") !== null && blankPartProblem("Paris", b0, "variant") !== null && blankPartProblem("!x", b0, "variant") !== null && blankPartProblem("PARIS", b0, "variant") === null);
+  check("Variante: sin marcas ni repetida", blankPartProblem("a|b", b0, "variant") !== null && blankPartProblem("Paris", b0, "variant") !== null && blankPartProblem("!x", b0, "variant") !== null);
+  check("Variante que ya se acepta (solo cambian mayúsculas o acentos y no se distinguen): lo dice",
+    blankPartProblem("PARIS", b0, "variant") === "Ya se acepta: no se distinguen mayúsculas ni acentos" &&
+      blankPartProblem("PARIS", b0, "variant", { matchAccents: true }) === "Ya se acepta: no se distinguen mayúsculas" &&
+      blankPartProblem("PARIS", b0, "variant", { matchCase: true }) === null,
+    blankPartProblem("PARIS", b0, "variant"));
   check("Incorrecta: ni la respuesta ni repetida", blankPartProblem("paris", b0, "wrong") === "Es la respuesta correcta" && blankPartProblem("londres", b0, "wrong") === "Ya está en la lista" && blankPartProblem("Berlín", b0, "wrong") === null);
   check("Distractor: ni repetido ni una respuesta, sin «|»", distractorProblem("madrid", ["Madrid"], ["Roma"]) !== null && distractorProblem("roma", [], ["Roma"]) !== null && distractorProblem("a|b", [], []) !== null && distractorProblem("Lisboa", ["Madrid"], ["Roma"]) === null);
+  check("Abrir: los saltos de línea de Windows quedan en «\\n»", initialClozeValue({ text: "a\r\n[[b]]\rc", mode: "write" }).text === "a\n[[b]]\nc");
+  check("Forma de contestar: bloqueada con respuestas, libre sin ellas o sin cambiarla",
+    clozeModeLock("in_progress", "write", "bank") === CLOZE_MODE_LOCKED && clozeModeLock("attempts", "write", "bank")?.includes("Duplica la pregunta") === true &&
+      clozeModeLock(null, "write", "bank") === null && clozeModeLock("in_progress", "write", "write") === null && clozeModeLock("attempts", null, "bank") === null);
+  check("El servidor usa el mismo mensaje", examsSvc.CLOZE_MODE_LOCKED === CLOZE_MODE_LOCKED);
   const opened = initialClozeValue({ text: "[[a]]", mode: "bank", distractors: ["b"], matchCase: true });
   check("Abrir: todo lo guardado; sin nada, escribir", opened.mode === "bank" && opened.distractors[0] === "b" && opened.matchCase && initialClozeValue(null).mode === "write" && initialClozeValue(null).text === "");
   check("Guardar: solo lo de su forma de contestar",

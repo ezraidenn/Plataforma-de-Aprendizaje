@@ -1,16 +1,19 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Plus, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { useReportDraft, type ReportDraft } from "./use-pending-drafts";
 
 /**
  * Fichas editables del editor de «Completar el texto»: las variantes o las
  * opciones incorrectas de un hueco, y los distractores del banco. Cada ficha
  * se quita con su ×; «+ …» abre un campo en línea: Enter agrega y lo deja
  * listo para otra, Esc lo cierra. Lo que no se puede agregar (repetido, con
- * «|», …) se dice bajo el campo mientras se escribe.
+ * «|», …) se dice bajo el campo mientras se escribe, y lo escrito sin agregar
+ * se avisa al editor (`report`): así «Guardar» no lo pierde en silencio. Al
+ * llegar al máximo, el campo se cierra.
  */
 export function ChipField({
   items,
@@ -21,6 +24,7 @@ export function ChipField({
   problemOf,
   onAdd,
   onRemove,
+  report,
 }: {
   items: string[];
   /** «ok»: verde (variantes aceptadas); «bad»: rojo (incorrectas, distractores). */
@@ -34,14 +38,18 @@ export function ChipField({
   problemOf: (value: string) => string | null;
   onAdd: (value: string) => void;
   onRemove: (index: number) => void;
+  /** A quién avisar lo escrito sin agregar. */
+  report?: ReportDraft;
 }) {
   /** Lo que se escribe; null = cerrado. */
   const [draft, setDraft] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
-  /** A dónde va el foco tras quitar una ficha o cerrar el campo. */
+  /** A dónde va el foco tras quitar o agregar una ficha, o cerrar el campo: la × de esa ficha o «+ …». */
   const refocus = useRef<number | "add" | null>(null);
+  const problemId = useId();
   const full = max !== undefined && items.length >= max;
   const problem = draft?.trim() ? problemOf(draft) : null;
+  useReportDraft(report, `${noun} ${context}`, draft);
 
   useEffect(() => {
     const target = refocus.current;
@@ -57,7 +65,13 @@ export function ChipField({
     const value = (draft ?? "").trim();
     if (!value || problem || full) return;
     onAdd(value);
-    setDraft("");
+    if (max !== undefined && items.length + 1 >= max) {
+      // Ya no cabe otra: el campo se cierra y el foco queda en la ficha nueva
+      refocus.current = items.length;
+      setDraft(null);
+    } else {
+      setDraft("");
+    }
   }
 
   function close() {
@@ -65,8 +79,7 @@ export function ChipField({
     setDraft(null);
   }
 
-  const chip =
-    tone === "ok" ? "bg-success/12 ring-success/40" : "bg-destructive/10 ring-destructive/30";
+  const chip = tone === "ok" ? "bg-success/12 ring-success/40" : "bg-destructive/10 ring-destructive/30";
 
   return (
     <div ref={rootRef} className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-1.5">
@@ -90,7 +103,9 @@ export function ChipField({
           </button>
         </span>
       ))}
-      {draft !== null ? (
+      {full ? (
+        <span className="text-xs text-muted-foreground">Máximo {max}</span>
+      ) : draft !== null ? (
         <span className="inline-flex flex-wrap items-center gap-1">
           <Input
             autoFocus
@@ -107,11 +122,12 @@ export function ChipField({
               }
             }}
             onBlur={() => {
-              // Vacío y sin foco: se cierra solo; con algo escrito se queda para no perderlo
+              // Vacío y sin foco: se cierra solo; con algo escrito se queda (y «Guardar» avisa que falta agregarlo)
               if (!draft.trim()) setDraft(null);
             }}
             aria-label={`Nueva ${noun === "distractor" ? "palabra de más" : noun} ${context}`}
             aria-invalid={problem ? true : undefined}
+            aria-describedby={problem ? problemId : undefined}
             placeholder={noun === "distractor" ? "Palabra y Enter" : `${noun[0].toUpperCase()}${noun.slice(1)} y Enter`}
             className="h-7 w-40 text-xs"
           />
@@ -124,13 +140,11 @@ export function ChipField({
             <X className="size-3.5" aria-hidden />
           </button>
           {problem && (
-            <span role="status" className="w-full text-xs text-amber-700 dark:text-warning">
+            <span id={problemId} role="status" className="w-full text-xs text-amber-700 dark:text-warning">
               {problem}
             </span>
           )}
         </span>
-      ) : full ? (
-        <span className="text-xs text-muted-foreground">(máximo {max})</span>
       ) : (
         <button
           type="button"

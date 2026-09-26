@@ -30,6 +30,7 @@ import {
 } from "@/lib/image-questions";
 import { categorizeFileIds, categorizeScore, readCategorize } from "@/lib/categorize";
 import { clozeScore, readCloze } from "@/lib/cloze";
+import { CLOZE_MODE_LOCKED } from "@/lib/cloze-editor-value";
 
 export { listAttempts, computeFinalScorePercent };
 
@@ -196,9 +197,8 @@ export function createQuestion(examItemId: string, input: QuestionInput): string
   return id;
 }
 
-/** Al cambiar la forma de contestar de «Completar el texto» que ya tiene respuestas guardadas. */
-export const CLOZE_MODE_LOCKED =
-  "Ya hay respuestas guardadas: no se puede cambiar la forma de contestar. Duplica la pregunta y cámbiala en la copia.";
+// Al cambiar la forma de contestar de «Completar el texto» que ya tiene respuestas guardadas (el editor lo avisa igual)
+export { CLOZE_MODE_LOCKED };
 
 /**
  * «Completar el texto» con respuestas guardadas (en cualquier intento) no
