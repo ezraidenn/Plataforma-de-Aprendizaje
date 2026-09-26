@@ -2,8 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { uploadFile } from "@/lib/upload-client";
-import { MAX_ELEMENTS, fileUrl, type ImageDragConfig, type ImageElement } from "@/lib/image-questions";
-import { DEFAULT_ICON_SIZE } from "@/lib/image-layout";
+import { DEFAULT_ICON_SIZE, MAX_ELEMENTS, fileUrl, type ImageDragConfig, type ImageElement } from "@/lib/image-questions";
 import { prepareIcon, type PreparedIcon } from "@/lib/image-processing";
 import type { HistoryOptions } from "./use-editor-history";
 import { rememberInspection, useIconInspection } from "./use-icon-inspection";

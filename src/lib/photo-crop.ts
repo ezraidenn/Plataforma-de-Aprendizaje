@@ -15,15 +15,16 @@
  * siempre dentro de ese diez a uno (`validAspect`).
  */
 import type { CropRect } from "./image-layout";
+import { MAX_ASPECT, clamp } from "./image-questions";
 
 export type { CropRect };
 
 /** Lo más chico que se deja recortar: esta fracción de cada lado de la foto. */
 export const MIN_CROP = 0.05;
-/** Lo más alargado que se deja el recorte (alto / ancho, o al revés): un poco adentro del 10 que se acepta. */
-export const MAX_CROP_RATIO = 9.99;
+/** Lo más alargado que se deja el recorte (alto / ancho, o al revés): un poco adentro de lo que se acepta (MAX_ASPECT). */
+export const MAX_CROP_RATIO = MAX_ASPECT - 0.01;
 /** Lo que se acepta de verdad (`validAspect`), ya en píxeles enteros. */
-const MAX_RATIO = 10;
+const MAX_RATIO = MAX_ASPECT;
 /** La foto entera: el recorte con el que se empieza. */
 export const FULL_CROP: CropRect = { x: 0, y: 0, w: 1, h: 1 };
 
@@ -47,7 +48,6 @@ export function cropRatio(choice: CropChoice, aspect: number): number | null {
   }
 }
 
-const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n));
 const r9 = (n: number) => Math.round(n * 1e9) / 1e9;
 const tidy = (r: CropRect): CropRect => ({ x: r9(r.x), y: r9(r.y), w: r9(r.w), h: r9(r.h) });
 

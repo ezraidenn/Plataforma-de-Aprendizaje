@@ -2,12 +2,12 @@
 
 import { Suspense, useEffect, useId, useRef, useState, type ComponentType } from "react";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
+import { useMediaQuery } from "@/hooks/use-media-query";
 import { cn } from "@/lib/utils";
 import { Caption } from "./caption";
 import { SCENES } from "./registry";
 import { SceneFrame, SceneSkeleton } from "./scene-frame";
 import { HELP_TOPICS, type HelpTopicId, type HelpValues } from "./topics";
-import { useMediaQuery } from "./use-media-query";
 
 const OPEN_DELAY_MS = 150;
 const CLOSE_DELAY_MS = 200;

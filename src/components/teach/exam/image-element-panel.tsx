@@ -3,16 +3,8 @@
 import { memo, useId, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  MIN_ICON_PX,
-  MIN_TEXT_PX,
-  TEXT_SIZE_RANGE,
-  elementView,
-  iconSizeRange,
-  normalizeRotation,
-  shownAtMinimum,
-} from "@/lib/image-layout";
-import { round4, type ImageElement } from "@/lib/image-questions";
+import { MIN_ICON_PX, MIN_TEXT_PX, elementView, iconSizeRange, shownAtMinimum } from "@/lib/image-layout";
+import { TEXT_SIZE_RANGE, clamp, normalizeRotation, round4, type ImageElement } from "@/lib/image-questions";
 import { cn } from "@/lib/utils";
 
 /**
@@ -35,7 +27,6 @@ const toStep = (size: number, [min, max]: Range) => Math.round((Math.log(size / 
 const fromStep = (step: number, [min, max]: Range) => round4(min * (max / min) ** (step / SIZE_STEPS));
 /** Fracción del ancho → porcentaje con un decimal (0.0571 → 5.7). */
 const toPercent = (size: number) => Math.round(size * 1000) / 10;
-const clamp = (n: number, [min, max]: Range) => Math.min(max, Math.max(min, n));
 
 export const ElementPanel = memo(function ElementPanel({
   element,
@@ -98,14 +89,14 @@ export const ElementPanel = memo(function ElementPanel({
           value={view ? toPercent(view.size) : null}
           step={0.5}
           fieldRange={pct}
-          fix={(n) => clamp(n, pct)}
-          onValue={(n) => onChange({ size: round4(clamp(n, pct) / 100) })}
+          fix={(n) => clamp(n, ...pct)}
+          onValue={(n) => onChange({ size: round4(clamp(n, ...pct) / 100) })}
           onBegin={onBegin}
           onCommit={onCommit}
           slider={{
             min: 0,
             max: SIZE_STEPS,
-            value: view ? clamp(toStep(view.size, range), [0, SIZE_STEPS]) : 0,
+            value: view ? clamp(toStep(view.size, range), 0, SIZE_STEPS) : 0,
             onChange: (step) => onChange({ size: fromStep(step, range) }),
             valueText: view
               ? `${icon ? "Lado mayor: " : ""}${toPercent(view.size)} % del ancho de la foto`

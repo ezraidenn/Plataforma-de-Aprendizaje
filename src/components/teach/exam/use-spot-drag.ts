@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { relToRect } from "@/components/exam/image-board";
 import { useStableHandler } from "@/components/exam/image-dnd";
 import { snapSpot, type Guide } from "@/lib/image-layout";
-import { clamp01, round4, type Point } from "@/lib/image-questions";
+import { clamp, clamp01, round4, type Point } from "@/lib/image-questions";
 import { SNAP_PX } from "./use-canvas-tools";
 import { visibleArea } from "./use-canvas-zoom";
 
@@ -43,8 +43,6 @@ type Held = {
   /** El último puntero visto: con él se recalcula si el lienzo se desplaza. */
   last: PointerLike;
 };
-
-const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
 
 export function useSpotDrag({
   spots,

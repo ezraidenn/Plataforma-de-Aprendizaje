@@ -3,17 +3,8 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useStableHandler } from "@/components/exam/image-dnd";
 import { TOUCH_AREA } from "@/components/exam/image-pieces";
-import {
-  MIN_ICON_PX,
-  TEXT_SIZE_RANGE,
-  elementView,
-  iconBoxPx,
-  iconSizeRange,
-  normalizeRotation,
-  textPx,
-  type Guide,
-} from "@/lib/image-layout";
-import { round4, type ImageElement } from "@/lib/image-questions";
+import { MIN_ICON_PX, elementView, iconBoxPx, iconSizeRange, textPx, type Guide } from "@/lib/image-layout";
+import { TEXT_SIZE_RANGE, clamp, normalizeRotation, round4, type ImageElement } from "@/lib/image-questions";
 import { cn } from "@/lib/utils";
 import { OUTSIDE, placement, type Placement } from "./transform-box-placement";
 import { isTypingTarget } from "./use-editor-history";
@@ -81,7 +72,6 @@ const HANDLE = cn(
   TOUCH_AREA
 );
 
-const clampTo = (n: number, [min, max]: readonly [number, number]) => Math.min(max, Math.max(min, n));
 /** Fracción del ancho → porcentaje con un decimal (como el panel). */
 const toPercent = (size: number) => Math.round(size * 1000) / 10;
 /** El giro guardado (el panel deja −180 tal cual). */
@@ -368,7 +358,7 @@ export function useTransformTool({
   const stretch = useStableHandler((factor: number, altKey: boolean) => {
     const g = open.current;
     if (!g || g.kind !== "stretch") return;
-    let size = clampTo(g.shown * factor, g.range);
+    let size = clamp(g.shown * factor, ...g.range);
     // La caja al tamaño nuevo: la del ícono sale de su tamaño; la de la etiqueta crece con su letra
     const relAt = (s: number) => {
       if (g.icon) {
@@ -381,7 +371,7 @@ export function useTransformTool({
     const snapped = snap.snapStretch(g.index, relAt(size), altKey);
     let guides: Guide[] = [];
     if (snapped) {
-      const pulled = clampTo(size * snapped.scale, g.range);
+      const pulled = clamp(size * snapped.scale, ...g.range);
       // Si el tope no deja llegar a la guía, no se dibuja
       if (Math.abs(pulled - size * snapped.scale) < 1e-9) guides = snapped.guides;
       size = pulled;
@@ -465,7 +455,7 @@ export function useTransformTool({
     const view = elementView(subject);
     if (sizeKey) {
       const grow = e.key !== "-";
-      const size = round4(clampTo(grow ? view.size * SIZE_STEP : view.size / SIZE_STEP, rangeOf(view.kind === "icon")));
+      const size = round4(clamp(grow ? view.size * SIZE_STEP : view.size / SIZE_STEP, ...rangeOf(view.kind === "icon")));
       if (size === view.size) {
         announce(`${nameOf(subject.id)}: ya está en el tamaño ${grow ? "máximo" : "mínimo"}`);
         return true;

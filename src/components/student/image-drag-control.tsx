@@ -10,6 +10,7 @@ import { LiveRegion, useAnnouncer } from "@/components/exam/live-region";
 import { DraggableChip, ImageBank, groupBank, groupKey } from "@/components/student/image-drag-bank";
 import type { RunnerQuestion } from "@/components/student/types";
 import {
+  SNAP_RADIUS,
   fileUrl,
   iconNumbers,
   imageItemName,
@@ -168,10 +169,16 @@ export function ImageDragControl({
     place(selected, zone, e.detail === 0);
   }
 
+  /** Radio de encaje de una ficha: un ícono grande, la mitad de su lado mayor; una etiqueta (su tamaño es la letra), el general. */
+  function snapRadiusOf(token: string): number {
+    const it = items.get(token);
+    return it?.kind === "icon" ? snapRadiusFor(it.size) : SNAP_RADIUS;
+  }
+
   /** Toque en la foto con una ficha elegida: al lugar más cercano, si hay uno a la mano. */
   function onBoardTap(p: Point) {
     if (!selected) return;
-    const i = nearestZone(zones, p, config.aspect, snapRadiusFor(items.get(selected)?.size ?? 0));
+    const i = nearestZone(zones, p, config.aspect, snapRadiusOf(selected));
     if (i !== null) place(selected, zones[i].token, false);
     else announce("Toca uno de los lugares marcados en la foto");
   }
@@ -185,8 +192,7 @@ export function ImageDragControl({
       rect.top + rect.height / 2,
       board.node.getBoundingClientRect()
     );
-    const radius = snapRadiusFor(items.get(String(e.active.id))?.size ?? 0);
-    const i = nearestZone(zones, center, config.aspect, radius);
+    const i = nearestZone(zones, center, config.aspect, snapRadiusOf(String(e.active.id)));
     return i === null ? null : zones[i].token;
   }
 

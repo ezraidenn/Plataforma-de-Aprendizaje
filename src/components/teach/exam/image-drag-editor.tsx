@@ -5,7 +5,7 @@ import { DndContext, PointerSensor, useSensor, useSensors } from "@dnd-kit/core"
 import { TriangleAlert } from "lucide-react";
 import { BoardCursor, useCrosshair } from "@/components/exam/image-board";
 import { DropVeil, QUIET_ANNOUNCEMENTS, useFileDrop, useStableHandler } from "@/components/exam/image-dnd";
-import { useMediaQuery } from "@/components/help/use-media-query";
+import { useMediaQuery } from "@/hooks/use-media-query";
 import { gridStepFor } from "@/lib/image-layout";
 import {
   MAX_ELEMENTS,

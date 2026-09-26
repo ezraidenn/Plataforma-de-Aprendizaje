@@ -13,6 +13,7 @@ import {
   ICON_SIZE_RANGE,
   SNAP_RADIUS,
   TEXT_SIZE_RANGE,
+  clamp,
   clamp01,
   normalizeRotation,
   round4,
@@ -24,8 +25,6 @@ import {
   type ImageItemView,
   type Point,
 } from "./image-questions";
-
-export { DEFAULT_ICON_SIZE, DEFAULT_TEXT_SIZE, ICON_SIZE_RANGE, TEXT_SIZE_RANGE, normalizeRotation };
 
 /** Ancho de referencia con el que se pensaron los tamaños viejos (sm/md/lg en px). */
 export const REF_WIDTH = 700;
@@ -102,7 +101,6 @@ export type CropRect = { x: number; y: number; w: number; h: number };
 type AnyConfig = ImageDragConfig | ImageClickConfig;
 
 const inside = (p: Point) => p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1;
-const clampTo = (n: number, [min, max]: readonly [number, number]) => Math.min(max, Math.max(min, n));
 
 /**
  * El tamaño de un elemento (el suyo o, si es de antes, el de `iconSize`)
@@ -112,7 +110,7 @@ const clampTo = (n: number, [min, max]: readonly [number, number]) => Math.min(m
 function rescaled(e: ImageElement, iconSize: IconSize | undefined, scale: number, aspect: number): { size: number; bound: "max" | "min" | null } {
   const range = e.kind === "icon" ? iconSizeRange(aspect) : TEXT_SIZE_RANGE;
   const raw = elementSize(e, iconSize) * scale;
-  return { size: round4(clampTo(raw, range)), bound: raw > range[1] ? "max" : raw < range[0] ? "min" : null };
+  return { size: round4(clamp(raw, ...range)), bound: raw > range[1] ? "max" : raw < range[0] ? "min" : null };
 }
 
 /** Los elementos con su tamaño ya escrito y escalado (`rescaled`). Su proporción y su giro no cambian. */
@@ -175,7 +173,7 @@ export function rotateConfig(type: "image_drag" | "image_click", config: AnyConf
   return { ...rest, aspect, elements: scaledElements(c, 1 / c.aspect, aspect), zones: c.zones.map((z) => ({ ...z, ...turn(z) })) };
 }
 
-/** Radio de encaje de un elemento: el general o, si es grande, la mitad de su tamaño (en un ícono, de su lado mayor). */
+/** Radio de encaje de un ícono: el general o, si es grande, la mitad de su lado mayor (`size`). Una etiqueta usa el general (SNAP_RADIUS). */
 export function snapRadiusFor(size: number): number {
   return Math.max(SNAP_RADIUS, size / 2);
 }

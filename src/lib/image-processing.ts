@@ -5,14 +5,12 @@
  * (límites del dibujo, recolocar lugares) vive en image-layout.
  */
 import { alphaBounds, type CropRect } from "./image-layout";
-import { round4 } from "./image-questions";
+import { MAX_ASPECT, MIN_ASPECT, clamp, round4 } from "./image-questions";
 import { pixelRect, scaledSize } from "./photo-crop";
 import { EDITOR_IMAGE_MAX_BYTES } from "./upload-types";
 
 /** Lado mayor máximo de un ícono guardado. */
 export const MAX_ICON_SIDE = 800;
-/** Máximo que acepta la subida (una imagen del editor). */
-export const MAX_UPLOAD_BYTES = EDITOR_IMAGE_MAX_BYTES;
 /** Lo más grande que sale una foto recortada o girada: más, se reduce (memoria; Safari en iPhone no pasa de ~16 MP). */
 export const MAX_PHOTO_PIXELS = 16_000_000;
 /** Cada cuántos píxeles (en cada eje) se mira si la foto tiene transparencia. */
@@ -31,10 +29,13 @@ export type IconInspection = { ratio: number; margin: boolean };
 
 type Rect = { x: number; y: number; w: number; h: number };
 
-/** Proporción (alto / ancho) dentro de lo que se acepta: de 0.1 a 10. */
-const clampRatio = (r: number) => Math.min(10, Math.max(0.1, r));
+/** Proporción (alto / ancho) dentro de lo que se acepta: de MIN_ASPECT a MAX_ASPECT. */
+const clampRatio = (r: number) => clamp(r, MIN_ASPECT, MAX_ASPECT);
 /** Lienzo de w×h con la proporción dentro de lo aceptado (se completa con margen transparente). */
-const paddedSize = (w: number, h: number) => ({ w: Math.max(w, Math.ceil(h / 10)), h: Math.max(h, Math.ceil(w / 10)) });
+const paddedSize = (w: number, h: number) => ({
+  w: Math.max(w, Math.ceil(h / MAX_ASPECT)),
+  h: Math.max(h, Math.ceil(w / MAX_ASPECT)),
+});
 /** Suelta la memoria de los lienzos sin esperar al recolector. */
 function release(...canvases: HTMLCanvasElement[]) {
   for (const c of canvases) {
@@ -62,9 +63,18 @@ function encode(canvas: HTMLCanvasElement, type: "image/png" | "image/jpeg", qua
   );
 }
 
-/** Decodifica con la orientación de la foto; si es enorme, ya reducida. */
+/** Decodifica con la orientación de la foto; si el navegador no acepta esa opción, sin ella (`transformPhoto` revisa después que la proporción cuadre). */
+async function decodeOriented(blob: Blob): Promise<ImageBitmap> {
+  try {
+    return await createImageBitmap(blob, { imageOrientation: "from-image" });
+  } catch {
+    return createImageBitmap(blob);
+  }
+}
+
+/** Decodifica con la orientación de la foto (`decodeOriented`); si es enorme, ya reducida. */
 async function decode(blob: Blob): Promise<ImageBitmap> {
-  const bitmap = await createImageBitmap(blob, { imageOrientation: "from-image" });
+  const bitmap = await decodeOriented(blob);
   const pixels = bitmap.width * bitmap.height;
   if (pixels <= MAX_READ_PIXELS) return bitmap;
   const k = Math.sqrt(MAX_READ_PIXELS / pixels);
@@ -153,7 +163,7 @@ export async function prepareIcon(file: File): Promise<PreparedIcon | null> {
  * Error si el navegador no lo puede leer.
  */
 export async function inspectIcon(blob: Blob): Promise<IconInspection> {
-  const bitmap = await createImageBitmap(blob, { imageOrientation: "from-image" });
+  const bitmap = await decodeOriented(blob);
   const canvas = document.createElement("canvas");
   try {
     const ratio = round4(clampRatio(bitmap.height / bitmap.width));
@@ -199,21 +209,12 @@ function hasTransparency(ctx: CanvasRenderingContext2D, width: number, height: n
 /** Un problema con un mensaje para el maestro (no uno técnico del navegador): se muestra tal cual. */
 export class PhotoError extends Error {}
 
-/** Decodifica con la orientación de la foto; si el navegador no acepta esa opción, sin ella (la proporción se revisa después). */
-async function decodeOriented(blob: Blob): Promise<ImageBitmap> {
-  try {
-    return await createImageBitmap(blob, { imageOrientation: "from-image" });
-  } catch {
-    return createImageBitmap(blob);
-  }
-}
-
 /**
  * Recorta o gira 90° la foto, a su resolución (hasta MAX_PHOTO_PIXELS: si el
  * trozo pasa de ahí, sale reducido). El recorte se redondea a píxeles como
  * `pixelRect` (sin pasar de diez a uno). Formato: un PNG sigue en PNG si cabe
  * (un plano o un diagrama no se ensucia); si no, JPEG 0.9, salvo que tenga
- * transparencia (PNG). Si pasa de MAX_UPLOAD_BYTES: JPEG 0.8 (sin
+ * transparencia (PNG). Si pasa de EDITOR_IMAGE_MAX_BYTES: JPEG 0.8 (sin
  * transparencia) y luego cada vez al 85 % hasta que quepa, el alto calculado
  * desde el ancho (`scaledSize`). El nombre es el de la foto con «-recorte» o
  * «-girada». `aspect`: la proporción con la que se ve en el editor; si la
@@ -260,16 +261,16 @@ export async function transformPhoto(
     let quality = 0.9;
     let blob = await encode(canvas, type, quality);
     // Un PNG que no cabe: sin transparencia, pasa a JPEG
-    if (blob.size > MAX_UPLOAD_BYTES && type === "image/png" && src.type === "image/png" && !clear()) {
+    if (blob.size > EDITOR_IMAGE_MAX_BYTES && type === "image/png" && src.type === "image/png" && !clear()) {
       type = "image/jpeg";
       blob = await encode(canvas, type, quality);
     }
-    if (blob.size > MAX_UPLOAD_BYTES && type === "image/jpeg") {
+    if (blob.size > EDITOR_IMAGE_MAX_BYTES && type === "image/jpeg") {
       quality = 0.8;
       blob = await encode(canvas, type, quality);
     }
     let out = canvas;
-    for (let scale = 0.85; blob.size > MAX_UPLOAD_BYTES; scale *= 0.85) {
+    for (let scale = 0.85; blob.size > EDITOR_IMAGE_MAX_BYTES; scale *= 0.85) {
       if (scale < 0.05) throw new PhotoError("La foto quedó demasiado pesada: usa una más ligera.");
       const s = scaledSize(canvas.width, canvas.height, scale);
       smaller.width = s.w;

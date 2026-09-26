@@ -6,7 +6,8 @@ import { Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { FOCUS_RING, IconArt, ItemFace, LabelPill, TOUCH_AREA } from "@/components/exam/image-pieces";
 import type { RunnerQuestion } from "@/components/student/types";
-import { iconBoxPx, textPx } from "@/lib/image-layout";
+import { boxBounds, iconBoxPx, textPx } from "@/lib/image-layout";
+import { clamp } from "@/lib/image-questions";
 import { cn } from "@/lib/utils";
 
 /** Fichas de «arrastrar a la imagen» y el banco donde esperan. */
@@ -34,25 +35,23 @@ export function groupBank(all: DragItem[], isPlaced: (token: string) => boolean)
 const BANK_ICON_PX = [28, 56] as const;
 /** Letra de una etiqueta en el banco (px): la suya, acotada. */
 const BANK_TEXT_PX = [11, 16] as const;
-const clamp = (n: number, [min, max]: readonly [number, number]) => Math.min(max, Math.max(min, n));
 
 /** La ficha en el banco, sin giro: el ícono en una caja de paleta o la etiqueta con su letra acotada. */
 function BankFace({ item, boardWidth, dense, className }: { item: DragItem; boardWidth: number; dense: boolean; className?: string }) {
   if (item.kind === "icon") {
     // Su tamaño real, escalado para que el lado mayor quede en la caja de paleta
     const { w, h } = iconBoxPx(item.size, item.ratio, boardWidth);
-    const scale = clamp(Math.max(w, h), BANK_ICON_PX) / Math.max(w, h);
+    const scale = clamp(Math.max(w, h), ...BANK_ICON_PX) / Math.max(w, h);
     return <IconArt fileId={item.fileId} w={Math.round(w * scale)} h={Math.round(h * scale)} className={className} />;
   }
-  const fontPx = clamp(textPx(item.size, boardWidth), BANK_TEXT_PX);
+  const fontPx = clamp(textPx(item.size, boardWidth), ...BANK_TEXT_PX);
   return <LabelPill text={item.text ?? ""} fontPx={fontPx} dense={dense} className={className} />;
 }
 
-/** Caja sin giro que contiene una de w×h girada `deg` grados. */
+/** Caja sin giro que contiene una de w×h (px) girada `deg` grados: la envolvente de `boxBounds`, en píxeles (proporción 1). */
 function turnedBox(w: number, h: number, deg: number): CSSProperties {
-  const t = (deg * Math.PI) / 180;
-  const [c, s] = [Math.abs(Math.cos(t)), Math.abs(Math.sin(t))];
-  return { width: Math.round(w * c + h * s), height: Math.round(w * s + h * c) };
+  const b = boxBounds({ cx: 0, cy: 0, w, h, rotation: deg, aspect: 1 });
+  return { width: Math.round(b.right - b.left), height: Math.round(b.bottom - b.top) };
 }
 
 /** Una ficha (en el banco o colocada): se arrastra o se toca. */

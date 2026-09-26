@@ -1,12 +1,11 @@
 // Tipos serializables que viajan de server components a client components.
 
-import type { ImageItemView } from "@/lib/image-questions";
 import type { ElementView } from "@/lib/image-layout";
 import type { ReviewBoard } from "@/lib/image-boards";
 
-// Viven en src/lib (las usan también la revisión y la vista previa, sin UI);
-// se reexportan para quien ya las importa de aquí
-export type { ImageItemView, ReviewBoard };
+// Vive en src/lib (la usan también la revisión y la vista previa, sin UI);
+// se reexporta para quien ya la importa de aquí
+export type { ReviewBoard };
 
 export type StudentItemStatus = "completed" | "in_progress" | "available" | "locked";
 

@@ -1,8 +1,8 @@
 "use client";
 
 import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { useMediaQuery } from "@/hooks/use-media-query";
 import { cyclePhase, FINAL_PHASE } from "./scene-clock";
-import { useMediaQuery } from "./use-media-query";
 
 /** Preferencia del sistema «reducir movimiento» (false en el servidor). */
 export function useReducedMotion(): boolean {
