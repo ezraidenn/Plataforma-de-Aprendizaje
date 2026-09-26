@@ -1,13 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { DndContext, DragOverlay, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { BoardSpot, ImageBoard, relToRect, useElementWidth } from "@/components/exam/image-board";
 import { ItemFace, ZoneShadow } from "@/components/exam/image-pieces";
 import { QUIET_ANNOUNCEMENTS, useIsClient } from "@/components/exam/image-dnd";
 import { LiveRegion, useAnnouncer } from "@/components/exam/live-region";
-import { DraggableChip, ImageBank, groupBank, groupKey } from "@/components/student/image-drag-bank";
+import { DraggableChip, ImageBank, groupKey } from "@/components/student/image-drag-bank";
+import { byAttr, groupBy, useFocusAfter, viaKeyboard } from "@/components/student/place-kit";
 import type { RunnerQuestion } from "@/components/student/types";
 import {
   SNAP_RADIUS,
@@ -57,7 +58,6 @@ export function ImageDragControl({
   onChange: (next: Record<string, string>) => void;
 }) {
   const board = useElementWidth<HTMLDivElement>();
-  const rootRef = useRef<HTMLDivElement>(null);
   /** Ficha elegida con un toque (o con Enter). */
   const [selected, setSelected] = useState<string | null>(null);
   /** Ficha que va en la mano (arrastre). */
@@ -65,7 +65,7 @@ export function ImageDragControl({
   /** Lugar donde caería la ficha si se suelta ahora. */
   const [hot, setHot] = useState<string | null>(null);
   const { live, announce } = useAnnouncer();
-  const focusAfter = useRef<(() => HTMLElement | null) | null>(null);
+  const { rootRef, focusLater } = useFocusAfter();
   const isClient = useIsClient();
 
   // Sin sensor de teclado: con teclado se elige y se coloca con Enter, como al tocar
@@ -95,25 +95,15 @@ export function ImageDragControl({
     () => new Map(Object.entries(placement).map(([zone, item]) => [item, zone])),
     [placement]
   );
-  const bank = useMemo(() => groupBank(config.items, (token) => zoneOf.has(token)), [config.items, zoneOf]);
+  // Fichas iguales juntas; solo las que no tienen lugar
+  const bank = useMemo(() => groupBy(config.items, groupKey, (it) => !zoneOf.has(it.token)), [config.items, zoneOf]);
 
   const active = dragging ?? selected;
   const activeItem = active ? (items.get(active) ?? null) : null;
   const dense = board.width > 0 && board.width < 480;
   const zoneNumber = (token: string) => zones.findIndex((z) => z.token === token) + 1;
 
-  // Foco tras una acción con teclado: el botón nuevo aparece en el siguiente render
-  useEffect(() => {
-    const pick = focusAfter.current;
-    if (!pick) return;
-    focusAfter.current = null;
-    pick()?.focus();
-  });
-
-  const find = (selector: string) => rootRef.current?.querySelector<HTMLElement>(selector) ?? null;
-  const attr = (name: string, value: string) => `[${name}="${CSS.escape(value)}"]`;
-
-  function place(item: string, zone: string, viaKeyboard: boolean) {
+  function place(item: string, zone: string, keyboard: boolean) {
     setSelected(null);
     const from = zoneOf.get(item);
     let text = `Colocado en el lugar ${zoneNumber(zone)}`;
@@ -127,10 +117,10 @@ export function ImageDragControl({
     }
     announce(text);
     // Con teclado se sigue con la próxima ficha del banco; si ya no hay, en el lugar
-    if (viaKeyboard) focusAfter.current = () => find("[data-bank-item]") ?? find(attr("data-zone", zone));
+    if (keyboard) focusLater("[data-bank-item]", byAttr("data-zone", zone));
   }
 
-  function unplace(item: string, viaKeyboard: boolean) {
+  function unplace(item: string, keyboard: boolean) {
     setSelected(null);
     const from = zoneOf.get(item);
     const it = items.get(item);
@@ -140,11 +130,11 @@ export function ImageDragControl({
     onChange(next);
     announce("Devuelto al banco");
     // El foco sigue a la ficha, ya en el banco (en su grupo, si hay copias)
-    if (viaKeyboard) focusAfter.current = () => find(attr("data-group", groupKey(it)));
+    if (keyboard) focusLater(byAttr("data-group", groupKey(it)));
   }
 
   function onChipClick(token: string, e: React.MouseEvent) {
-    const viaKeyboard = e.detail === 0;
+    const keyboard = viaKeyboard(e);
     if (selected === token) {
       setSelected(null);
       announce("Elección cancelada");
@@ -153,12 +143,12 @@ export function ImageDragControl({
     // Con otra ficha elegida, tocar una ya colocada es tocar su lugar: la reemplaza
     const zone = zoneOf.get(token);
     if (selected && zone) {
-      place(selected, zone, viaKeyboard);
+      place(selected, zone, keyboard);
       return;
     }
     setSelected(token);
     announce(`Elegiste ${labels.get(token)}. Ahora elige su lugar`);
-    if (viaKeyboard) focusAfter.current = () => find("[data-free-zone]") ?? find("[data-zone]");
+    if (keyboard) focusLater("[data-free-zone]", "[data-zone]");
   }
 
   function onZoneClick(zone: string, e: React.MouseEvent) {
@@ -166,7 +156,7 @@ export function ImageDragControl({
       announce("Primero elige una ficha del banco");
       return;
     }
-    place(selected, zone, e.detail === 0);
+    place(selected, zone, viaKeyboard(e));
   }
 
   /** Radio de encaje de una ficha: un ícono grande, la mitad de su lado mayor; una etiqueta (su tamaño es la letra), el general. */
@@ -210,8 +200,7 @@ export function ImageDragControl({
           setSelected(null);
           announce("Elección cancelada");
           // El foco vuelve a la ficha que se había elegido
-          const token = selected;
-          focusAfter.current = () => find(attr("data-token", token));
+          focusLater(byAttr("data-token", selected));
         }
       }}
     >
@@ -311,7 +300,7 @@ export function ImageDragControl({
           dragging={dragging}
           canReturn={!!selected && zoneOf.has(selected)}
           onChipClick={onChipClick}
-          onReturn={(e) => selected && unplace(selected, e.detail === 0)}
+          onReturn={(e) => selected && unplace(selected, viaKeyboard(e))}
         />
 
         {isClient &&

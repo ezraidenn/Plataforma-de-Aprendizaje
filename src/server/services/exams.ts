@@ -196,9 +196,41 @@ export function createQuestion(examItemId: string, input: QuestionInput): string
   return id;
 }
 
+/** Al cambiar la forma de contestar de «Completar el texto» que ya tiene respuestas guardadas. */
+export const CLOZE_MODE_LOCKED =
+  "Ya hay respuestas guardadas: no se puede cambiar la forma de contestar. Duplica la pregunta y cámbiala en la copia.";
+
+/**
+ * «Completar el texto» con respuestas guardadas (en cualquier intento) no
+ * cambia de modo: lo guardado (lo escrito, una ficha de palabra o de opción)
+ * no se lee con otro. El texto y las variantes sí se pueden cambiar.
+ */
+function clozeModeProblem(questionId: string, input: QuestionInput): string | null {
+  if (input.type !== "cloze") return null;
+  const current = db
+    .select({ type: questions.type, config: questions.config })
+    .from(questions)
+    .where(eq(questions.id, questionId))
+    .get();
+  if (current?.type !== "cloze") return null;
+  const before = (current.config as { mode?: unknown } | null)?.mode;
+  const after = (input.config as { mode?: unknown } | null)?.mode;
+  if (before === after) return null;
+  const saved = db
+    .select({ id: attemptAnswers.id })
+    .from(attemptAnswers)
+    .where(eq(attemptAnswers.questionId, questionId))
+    .limit(1)
+    .get();
+  return saved ? CLOZE_MODE_LOCKED : null;
+}
+
 export function updateQuestion(questionId: string, input: QuestionInput) {
   validateQuestion(input);
   db.transaction(() => {
+    // Dentro de la transacción: una respuesta guardada entre la revisión y el cambio no se cuela
+    const locked = clozeModeProblem(questionId, input);
+    if (locked) throw new Error(locked);
     db.update(questions)
       .set({
         type: input.type,

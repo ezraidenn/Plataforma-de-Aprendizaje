@@ -307,6 +307,27 @@ async function endToEnd() {
       boardAnswerSummary(rows.find((q) => q.id === qB)!, JSON.stringify(bankAnswer), attempt.id) === "2 de 4 huecos bien" &&
         boardAnswerSummary(rows.find((q) => q.id === qW)!, "{}", attempt.id) === "Sin respuesta");
 
+    // ─── Cambiar la forma de contestar con respuestas guardadas ───────────────
+    const tryUpdate = (id: string, config: ClozeConfig) => {
+      try {
+        examsSvc.updateQuestion(id, { type: "cloze", promptMd: "Editada", points: 4, config });
+        return null;
+      } catch (e) {
+        return (e as Error).message;
+      }
+    };
+    const modeOf = (id: string) => readCloze(examsSvc.listQuestions(exam.id).find((q) => q.id === id)!)?.mode;
+    check("Con respuestas guardadas, la forma de contestar no cambia (y la pregunta queda igual)",
+      tryUpdate(qB, { ...BANK, mode: "select", text: SELECT.text }) === examsSvc.CLOZE_MODE_LOCKED && modeOf(qB) === "bank" &&
+        tryUpdate(qS, { ...SELECT, mode: "write" }) === examsSvc.CLOZE_MODE_LOCKED && modeOf(qS) === "select",
+      [modeOf(qB), modeOf(qS)]);
+    check("…el mensaje dice qué hacer", examsSvc.CLOZE_MODE_LOCKED === "Ya hay respuestas guardadas: no se puede cambiar la forma de contestar. Duplica la pregunta y cámbiala en la copia.");
+    check("…pero el texto y las variantes sí (mismo modo)",
+      tryUpdate(qW, { ...WRITE, text: WRITE.text.replace("]]", "|Lutecia]]") }) === null && modeOf(qW) === "write");
+    // Sin respuestas guardadas (su copia), el modo se cambia
+    const qCopy = examsSvc.duplicateQuestion(exam.id, qB);
+    check("Sin respuestas guardadas (la copia), el modo sí cambia", tryUpdate(qCopy, { ...BANK, mode: "write" }) === null && modeOf(qCopy) === "write", modeOf(qCopy));
+
     // ─── Config inválida: vale 0 sin tumbar el envío ──────────────────────────
     // En su propio curso: con la secuencia obligatoria, un segundo examen aquí quedaría bloqueado
     const brokenCourse = courses.createCourse({ ownerId: teacher, title: `${P} Rota` });

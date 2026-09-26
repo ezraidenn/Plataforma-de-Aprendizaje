@@ -3,17 +3,19 @@
 import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import { renderBold } from "@/components/exam/render-bold";
+import { FOCUS_OUTLINE } from "@/components/exam/image-pieces";
 import { LiveRegion, useAnnouncer } from "@/components/exam/live-region";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   BANK,
-  FOCUS_OUTLINE,
   PlaceBank,
   PlaceChip,
   PlaceDnd,
   byAttr,
+  groupBy,
   useFocusAfter,
   viaKeyboard,
+  withCopies,
 } from "@/components/student/place-kit";
 import type { RunnerQuestion } from "@/components/student/types";
 import { parseMapAnswer } from "@/lib/image-questions";
@@ -82,9 +84,10 @@ export function ClozeControl({
               autoCapitalize="off"
               autoCorrect="off"
               spellCheck={false}
-              // Crece con lo escrito; vacíos, todos del mismo ancho
+              // Crece con lo escrito; vacíos, todos del mismo ancho. El subrayado marca dónde va la
+              // respuesta: con el color entero (contraste de al menos 3:1)
               style={{ width: `${Math.max(WRITE_MIN_CH, (answer[token] ?? "").length + 2)}ch` }}
-              className="mx-0.5 inline-block h-8 max-w-full rounded-t-md border-0 border-b-2 border-muted-foreground/60 bg-muted/60 px-1.5 align-middle font-semibold text-primary outline-none transition-colors focus-visible:border-primary focus-visible:bg-primary/5 focus-visible:ring-2 focus-visible:ring-ring/50 motion-reduce:transition-none"
+              className="mx-0.5 inline-block h-8 max-w-full rounded-t-md border-0 border-b-2 border-muted-foreground bg-muted/60 px-1.5 align-middle font-semibold text-primary outline-none transition-colors focus-visible:border-primary focus-visible:bg-primary/5 focus-visible:ring-2 focus-visible:ring-ring/50 motion-reduce:transition-none"
             />
           ) : (
             <SelectBlank n={n} value={answer[token] ?? ""} options={config.options?.[token] ?? []} onChange={(v) => set(token, v)} />
@@ -125,20 +128,6 @@ function SelectBlank({
       </SelectContent>
     </Select>
   );
-}
-
-/**
- * Palabras iguales (mismo texto) van juntas en el banco: son intercambiables.
- * El orden sale de TODAS las palabras, así una no cambia de sitio al ponerla o devolverla.
- */
-function groupWords(all: Word[], isPlaced: (token: string) => boolean): [string, Word[]][] {
-  const groups = new Map<string, Word[]>();
-  for (const w of all) {
-    const group = groups.get(w.text) ?? [];
-    if (!isPlaced(w.token)) group.push(w);
-    groups.set(w.text, group);
-  }
-  return [...groups.entries()].filter(([, group]) => group.length > 0);
 }
 
 /**
@@ -185,13 +174,14 @@ function ClozeBank({
     return out;
   }, [answerText, blankNo, words]);
   const blankOf = useMemo(() => new Map(Object.entries(placement).map(([b, w]) => [w, b])), [placement]);
-  const bank = groupWords(all, (token) => blankOf.has(token));
+  // Palabras iguales (mismo texto) juntas en el banco, con «×N»: son intercambiables
+  const bank = groupBy(all, (w) => w.text, (w) => !blankOf.has(w.token));
   const textOf = (token: string) => words.get(token) ?? "";
 
   function place(word: string, blank: string, keyboard: boolean) {
     setSelected(null);
     const from = blankOf.get(word);
-    let text = `${textOf(word)} en el hueco ${blankNo.get(blank)}`;
+    let text = `Pusiste ${textOf(word)} en el hueco ${blankNo.get(blank)}`;
     if (from !== blank) {
       const next = { ...placement };
       if (from) delete next[from];
@@ -318,7 +308,7 @@ function ClozeBank({
                 key={text}
                 token={first.token}
                 face={{ kind: "text", text }}
-                label={group.length > 1 ? `${text}, ${group.length} iguales` : text}
+                label={withCopies(text, group.length)}
                 selected={selected === first.token}
                 count={left}
                 faded={left === 0}
@@ -383,10 +373,12 @@ function Slot({
           tabIndex={selected ? 0 : -1}
           onClick={onSlot}
           className={cn(
-            "h-8 w-24 rounded-full border-2 border-dashed border-muted-foreground/50 bg-muted/40 transition-[background-color,border-color,box-shadow] duration-150 motion-reduce:transition-none",
+            // El borde marca dónde va la respuesta: con el color entero (contraste de al menos 3:1)
+            "h-8 w-24 rounded-full border-2 border-dashed border-muted-foreground bg-muted/40 transition-[background-color,border-color,box-shadow] duration-150 motion-reduce:transition-none",
             FOCUS_OUTLINE,
-            dragging && "border-primary/50",
-            selected && "hover:border-solid hover:border-primary hover:bg-primary/10 focus-visible:bg-primary/10",
+            // Con una palabra en la mano o elegida (con el dedo no hay «pasar encima»), los libres se marcan
+            (dragging || selected) && "border-primary",
+            selected && "hover:border-solid hover:bg-primary/10 focus-visible:bg-primary/10",
             hot && "border-solid border-primary bg-primary/10 ring-4 ring-primary/15"
           )}
         />

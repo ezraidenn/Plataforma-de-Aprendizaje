@@ -2,9 +2,8 @@
 
 import type { CSSProperties, ReactNode } from "react";
 import { useDraggable } from "@dnd-kit/core";
-import { Undo2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { FOCUS_RING, IconArt, ItemFace, LabelPill, TOUCH_AREA } from "@/components/exam/image-pieces";
+import { FOCUS_OUTLINE, FOCUS_RING, IconArt, ItemFace, LabelPill, TOUCH_AREA } from "@/components/exam/image-pieces";
+import { CountBadge, PlaceBank, withCopies } from "@/components/student/place-kit";
 import type { RunnerQuestion } from "@/components/student/types";
 import { boxBounds, iconBoxPx, textPx } from "@/lib/image-layout";
 import { clamp } from "@/lib/image-questions";
@@ -14,22 +13,8 @@ import { cn } from "@/lib/utils";
 
 export type DragItem = NonNullable<RunnerQuestion["imageDrag"]>["items"][number];
 
-/** Fichas iguales (mismo archivo o mismo texto) van juntas en el banco. */
+/** Fichas iguales (mismo archivo o mismo texto) van juntas en el banco (con `groupBy`). */
 export const groupKey = (it: DragItem) => (it.kind === "icon" ? `i:${it.fileId}` : `t:${it.text}`);
-
-/**
- * Grupos del banco con las fichas sin lugar. El orden de los grupos sale de
- * TODAS las fichas, así un grupo no cambia de sitio al colocar o devolver una copia.
- */
-export function groupBank(all: DragItem[], isPlaced: (token: string) => boolean): [string, DragItem[]][] {
-  const groups = new Map<string, DragItem[]>();
-  for (const it of all) {
-    const group = groups.get(groupKey(it)) ?? [];
-    if (!isPlaced(it.token)) group.push(it);
-    groups.set(groupKey(it), group);
-  }
-  return [...groups.entries()].filter(([, group]) => group.length > 0);
-}
 
 /** Lado mayor de un ícono en el banco (px): el de su tamaño real, acotado. */
 const BANK_ICON_PX = [28, 56] as const;
@@ -127,7 +112,9 @@ export function DraggableChip({
           ? // Ícono del banco: sin tarjeta; se resalta solo al pasar, con el foco o elegido.
             // Al menos 32 px por lado, con el dibujo al centro: uno muy alargado se sigue pudiendo tocar
             cn(
-              "grid min-h-8 min-w-8 place-items-center rounded-[10px] p-1 outline-none hover:bg-primary/10 hover:ring-2 hover:ring-primary/30 focus-visible:bg-primary/10 focus-visible:ring-2 focus-visible:ring-primary",
+              "grid min-h-8 min-w-8 place-items-center rounded-[10px] p-1 hover:bg-primary/10 hover:ring-2 hover:ring-primary/30 focus-visible:bg-primary/10",
+              // El mismo foco que las tarjetas de clasificar y completar
+              FOCUS_OUTLINE,
               pressed && "bg-primary/10 ring-2 ring-primary"
             )
           : cn(
@@ -148,19 +135,12 @@ export function DraggableChip({
       style={style}
     >
       {face}
-      {count > 1 && (
-        <span
-          aria-hidden
-          className="absolute -right-2 -top-2 rounded-full bg-primary px-1.5 text-[11px] font-bold leading-[18px] text-primary-foreground ring-2 ring-card"
-        >
-          ×{count}
-        </span>
-      )}
+      <CountBadge count={count} />
     </button>
   );
 }
 
-/** El banco: las fichas sin lugar, agrupadas con «×N». */
+/** El banco: las fichas sin lugar, agrupadas con «×N» (el mismo banco de clasificar y completar). */
 export function ImageBank({
   groups,
   labels,
@@ -184,52 +164,35 @@ export function ImageBank({
   onReturn: (e: React.MouseEvent) => void;
 }) {
   return (
-    <div
-      className="space-y-2 rounded-xl border border-dashed bg-muted/60 p-2.5"
-      onClick={(e) => {
-        // Tocar el banco (fuera de las fichas) con una ficha colocada elegida la devuelve
-        if (canReturn && !(e.target as Element).closest("button")) onReturn(e);
-      }}
+    <PlaceBank
+      title="Arrastra a su lugar"
+      empty={groups.length === 0 ? "Todas las fichas están en la foto. Puedes moverlas o devolverlas aquí." : null}
+      // El destino de una ficha lo decide la foto (el lugar más cercano), no el banco
+      hot={false}
+      canReturn={canReturn}
+      onReturn={onReturn}
     >
-      <div className="flex min-h-7 items-center justify-between gap-2">
-        <p className="text-[11px] font-bold uppercase tracking-wider text-foreground/80">Arrastra a su lugar</p>
-        {canReturn && (
-          <Button size="sm" variant="ghost" onClick={onReturn}>
-            <Undo2 aria-hidden />
-            Devolver al banco
-          </Button>
-        )}
-      </div>
-      {groups.length > 0 ? (
-        <div className="flex flex-wrap items-center gap-2.5">
-          {groups.map(([key, group]) => {
-            const first = group[0];
-            // Al arrastrar sale una copia: el número baja y, si no quedan, se atenúa
-            const left = group.length - (dragging === first.token ? 1 : 0);
-            const label = labels.get(first.token) ?? "";
-            return (
-              <DraggableChip
-                key={key}
-                item={first}
-                label={group.length > 1 ? `${label}, ${group.length} copias` : label}
-                boardWidth={boardWidth}
-                dense={dense}
-                inBank
-                selected={selected}
-                count={left}
-                faded={left === 0}
-                data-group={key}
-                data-bank-item=""
-                onClick={(e) => onChipClick(first.token, e)}
-              />
-            );
-          })}
-        </div>
-      ) : (
-        <p className="text-sm text-muted-foreground">
-          Todas las fichas están en la foto. Puedes moverlas o devolverlas aquí.
-        </p>
-      )}
-    </div>
+      {groups.map(([key, group]) => {
+        const first = group[0];
+        // Al arrastrar sale una copia: el número baja y, si no quedan, se atenúa
+        const left = group.length - (dragging === first.token ? 1 : 0);
+        return (
+          <DraggableChip
+            key={key}
+            item={first}
+            label={withCopies(labels.get(first.token) ?? "", group.length)}
+            boardWidth={boardWidth}
+            dense={dense}
+            inBank
+            selected={selected}
+            count={left}
+            faded={left === 0}
+            data-group={key}
+            data-bank-item=""
+            onClick={(e) => onChipClick(first.token, e)}
+          />
+        );
+      })}
+    </PlaceBank>
   );
 }

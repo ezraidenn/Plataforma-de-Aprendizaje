@@ -16,14 +16,17 @@ import {
 } from "@dnd-kit/core";
 import { Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { IconArt } from "@/components/exam/image-pieces";
+import { FOCUS_OUTLINE, IconArt } from "@/components/exam/image-pieces";
 import { QUIET_ANNOUNCEMENTS, useIsClient } from "@/components/exam/image-dnd";
+import type { CategorizeCardView } from "@/lib/categorize";
 import { cn } from "@/lib/utils";
 
 /**
- * Piezas de «Clasificar en grupos» y del banco de «Completar el texto»: la
- * tarjeta (texto o ícono) que se arrastra o se toca, el banco donde espera, el
- * fantasma del arrastre y las reglas comunes. Las dos preguntas colocan igual:
+ * Piezas de «Clasificar en grupos» y del banco de «Completar el texto» (el
+ * banco, el número de copias y el foco también las usa «Arrastrar a la
+ * imagen»): la tarjeta (texto o ícono) que se arrastra o se toca, el banco
+ * donde espera, el fantasma del arrastre y las reglas comunes. Las dos
+ * preguntas colocan igual:
  * - Arrastrar (ratón o dedo): cae en el destino bajo el puntero (o, si no hay,
  *   en el que más cubre); fuera de todo, lo que estaba puesto vuelve al banco.
  * - Tocar y tocar: tocar una tarjeta la elige; tocar un destino la pone.
@@ -31,14 +34,34 @@ import { cn } from "@/lib/utils";
  *   Escape cancela.
  */
 
-/** Una tarjeta o palabra tal como se dibuja. */
-export type ChipFaceData = { kind: "text" | "icon"; text?: string; fileId?: string; ratio?: number };
+/** Una tarjeta o palabra tal como se dibuja: la misma cara que viaja al alumno y a la revisión. */
+export type ChipFaceData = CategorizeCardView;
 
 /** Id del banco como destino del arrastre (las fichas del servidor nunca lo usan). */
 export const BANK = "__banco__";
 
 /** Lado mayor de un ícono en una tarjeta (px), como en la paleta del banco de imagen. */
 const ICON_PX = 44;
+
+/** Columnas de los grupos: 2 o 3 por fila en escritorio (la que deja menos huecos), 1 o 2 en el celular. */
+export function groupColumns(n: number): string {
+  return cn("grid-cols-1 min-[360px]:grid-cols-2", n % 3 === 0 || n === 5 ? "sm:grid-cols-3" : "sm:grid-cols-2");
+}
+
+/**
+ * Agrupa las piezas iguales (misma `key`) con las que cumplen `keep` (p. ej.
+ * las que siguen en el banco). El orden de los grupos sale de TODAS, así un
+ * grupo no cambia de sitio al poner o devolver una; los vacíos no salen.
+ */
+export function groupBy<T>(all: T[], key: (item: T) => string, keep: (item: T) => boolean): [string, T[]][] {
+  const groups = new Map<string, T[]>();
+  for (const item of all) {
+    const group = groups.get(key(item)) ?? [];
+    if (keep(item)) group.push(item);
+    groups.set(key(item), group);
+  }
+  return [...groups.entries()].filter(([, group]) => group.length > 0);
+}
 
 /** Aspecto de una tarjeta, sin lo interactivo (también la usa la revisión). */
 export function chipLook(kind: ChipFaceData["kind"]): string {
@@ -63,12 +86,21 @@ export function ChipFace({ face }: { face: ChipFaceData }) {
   return <span className="min-w-0">{face.text}</span>;
 }
 
-/**
- * Foco del teclado: un contorno aparte del anillo de «elegida». Sin
- * `outline-none` ni `outline-hidden`: en Tailwind 4 apagan también este contorno
- * (el navegador ya no lo pone al hacer clic).
- */
-export const FOCUS_OUTLINE = "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary";
+/** «×N» en la esquina de una pieza con copias iguales en el banco (se lee en su etiqueta: «…, N copias»). */
+export function CountBadge({ count }: { count: number }) {
+  if (count <= 1) return null;
+  return (
+    <span
+      aria-hidden
+      className="absolute -right-2 -top-2 rounded-full bg-primary px-1.5 text-[11px] font-bold leading-[18px] text-primary-foreground ring-2 ring-card"
+    >
+      ×{count}
+    </span>
+  );
+}
+
+/** Etiqueta de una pieza con copias iguales en el banco: «de, 2 copias». */
+export const withCopies = (label: string, copies: number) => (copies > 1 ? `${label}, ${copies} copias` : label);
 
 /** Una tarjeta (en el banco o ya puesta): se arrastra o se toca. */
 export function PlaceChip({
@@ -117,14 +149,7 @@ export function PlaceChip({
       )}
     >
       <ChipFace face={face} />
-      {count > 1 && (
-        <span
-          aria-hidden
-          className="absolute -right-2 -top-2 rounded-full bg-primary px-1.5 text-[11px] font-bold leading-[18px] text-primary-foreground ring-2 ring-card"
-        >
-          ×{count}
-        </span>
-      )}
+      <CountBadge count={count} />
     </button>
   );
 }
@@ -189,7 +214,11 @@ export function PlaceDnd({
   );
 }
 
-/** El banco: destino para devolver lo puesto y, con algo puesto elegido, el botón «Devolver al banco». */
+/**
+ * El banco: destino para devolver lo puesto y, con algo puesto elegido, el
+ * botón «Devolver al banco». Va dentro de un DndContext (en «arrastrar a la
+ * imagen» el destino lo decide la foto y `hot` queda en false).
+ */
 export function PlaceBank({
   title,
   empty,
@@ -217,7 +246,7 @@ export function PlaceBank({
         hot && "border-solid border-primary bg-primary/5 ring-4 ring-primary/15"
       )}
       onClick={(e) => {
-        // Tocar el banco (fuera de las tarjetas) con una tarjeta puesta elegida la devuelve
+        // Tocar el banco (fuera de las piezas) con una puesta elegida la devuelve
         if (canReturn && !(e.target as Element).closest("button")) onReturn(e);
       }}
     >
@@ -230,7 +259,7 @@ export function PlaceBank({
           </Button>
         )}
       </div>
-      {empty ? <p className="text-sm text-muted-foreground">{empty}</p> : <div className="flex flex-wrap items-center gap-2">{children}</div>}
+      {empty ? <p className="text-sm text-muted-foreground">{empty}</p> : <div className="flex flex-wrap items-center gap-2.5">{children}</div>}
     </div>
   );
 }

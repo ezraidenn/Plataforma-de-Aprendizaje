@@ -3,8 +3,7 @@
 import { Fragment } from "react";
 import { Check, X } from "lucide-react";
 import { renderBold } from "@/components/exam/render-bold";
-import { groupColumns } from "@/components/student/categorize-control";
-import { ChipFace, chipLook } from "@/components/student/place-kit";
+import { ChipFace, chipLook, groupColumns } from "@/components/student/place-kit";
 import type { AnswerBoard } from "@/components/student/types";
 import type { CategorizeBoard, CategorizeCardView } from "@/lib/categorize";
 import type { ClozeBoard } from "@/lib/cloze";
@@ -15,9 +14,10 @@ import { cn } from "@/lib/utils";
  * Revisión de «Clasificar en grupos» y «Completar el texto», hermana de
  * `ImageReview`. Clasificar: cada grupo con las tarjetas que puso el alumno,
  * con ✓ o ✗ y, en las mal puestas, «iba en …»; aparte, las que dejó sin
- * poner. Completar: el texto con lo contestado en verde (bien) o rojo tachado
- * (mal) y la respuesta correcta al lado. Lo dibujado va oculto al lector de
- * pantalla: lo lee en la lista de abajo, tarjeta por tarjeta o hueco por hueco.
+ * poner; el tablero va oculto al lector de pantalla, que lo lee en una lista,
+ * tarjeta por tarjeta. Completar: el texto con lo contestado en verde (bien) o
+ * rojo tachado (mal) y la respuesta correcta al lado; el lector lee el texto
+ * entero con el resultado de cada hueco en su lugar.
  */
 export function AnswerReview({ board }: { board: AnswerBoard }) {
   return board.kind === "categorize" ? <CategorizeReview board={board} /> : <ClozeReview board={board} />;
@@ -89,50 +89,59 @@ function ReviewCard({ view, ok, note }: { view: CategorizeCardView; ok: boolean;
 
 type ClozeBlankReview = Extract<ClozeBoard["pieces"][number], { kind: "blank" }>;
 
+/**
+ * El texto se lee entero, también con lector de pantalla: en cada hueco, las
+ * píldoras van ocultas y en su lugar se lee «(hueco N: pusiste X, correcto)».
+ */
 function ClozeReview({ board }: { board: ClozeBoard }) {
-  const blanks = board.pieces.filter((p): p is ClozeBlankReview => p.kind === "blank");
+  let n = 0;
   return (
-    <div>
-      <div aria-hidden className="whitespace-pre-line text-base leading-[2.3]">
-        {board.pieces.map((p, i) =>
-          p.kind === "text" ? <Fragment key={i}>{renderBold(p.text)}</Fragment> : <ReviewBlank key={i} blank={p} />
-        )}
-      </div>
-      {/* Lo mismo en texto, para quien no ve el texto marcado */}
-      <ul className="sr-only">
-        {blanks.map((b, i) => (
-          <li key={i}>
-            Hueco {i + 1}:{" "}
-            {b.correct ? `correcto, ${b.given}` : b.given ? `pusiste ${b.given}; iba ${b.expected}` : `vacío; iba ${b.expected}`}
-          </li>
-        ))}
-      </ul>
+    <div className="whitespace-pre-line text-base leading-[2.3]">
+      {board.pieces.map((p, i) =>
+        p.kind === "text" ? <Fragment key={i}>{renderBold(p.text)}</Fragment> : <ReviewBlank key={i} n={++n} blank={p} />
+      )}
     </div>
   );
 }
 
-/** Un hueco en la revisión: lo contestado en verde, o en rojo tachado (o vacío) con la respuesta correcta al lado. */
-function ReviewBlank({ blank }: { blank: ClozeBlankReview }) {
-  const tag = "mx-0.5 inline-flex items-center gap-1 rounded-md px-1.5 align-baseline font-semibold leading-normal";
-  if (blank.correct) {
-    return (
-      <span className={cn(tag, "bg-green-100 text-green-800")}>
-        <Check className="size-3.5 shrink-0" strokeWidth={3} />
-        {blank.given}
-      </span>
-    );
-  }
+/** Lo que se lee de un hueco, en su lugar dentro de la oración. */
+function blankSummary(n: number, b: ClozeBlankReview): string {
+  if (b.correct) return `(hueco ${n}: pusiste ${b.given}, correcto)`;
+  if (b.given) return `(hueco ${n}: pusiste ${b.given}, incorrecto; iba ${b.expected})`;
+  return `(hueco ${n}: sin respuesta; iba ${b.expected})`;
+}
+
+/**
+ * Un hueco en la revisión: lo contestado en verde con ✓, o en rojo tachado con
+ * ✗ (o vacío) y la respuesta correcta al lado. Letra del color del texto (se
+ * lee bien sobre el fondo teñido); el color va en el fondo, el borde y la marca.
+ */
+function ReviewBlank({ n, blank }: { n: number; blank: ClozeBlankReview }) {
+  const tag = "mx-0.5 inline-flex items-center gap-1 rounded-md px-1.5 align-baseline font-semibold leading-normal ring-1 ring-inset";
+  const right = cn(tag, "bg-success/12 ring-success/60");
   return (
     <>
-      {blank.given ? (
-        <span className={cn(tag, "bg-red-100 text-red-800 line-through decoration-2")}>
-          <X className="size-3.5 shrink-0" strokeWidth={3} />
-          {blank.given}
-        </span>
-      ) : (
-        <span className="mx-0.5 inline-block h-6 w-14 rounded-md border-2 border-dashed border-destructive/60 bg-red-50 align-middle" />
-      )}
-      <span className={cn(tag, "bg-green-100 text-green-800")}>{blank.expected}</span>
+      <span aria-hidden>
+        {blank.correct ? (
+          <span className={right}>
+            <Check className="size-3.5 shrink-0 text-success" strokeWidth={3} />
+            {blank.given}
+          </span>
+        ) : (
+          <>
+            {blank.given ? (
+              <span className={cn(tag, "bg-destructive/10 line-through decoration-destructive decoration-2 ring-destructive/60")}>
+                <X className="size-3.5 shrink-0 text-destructive" strokeWidth={3} />
+                {blank.given}
+              </span>
+            ) : (
+              <span className="mx-0.5 inline-block h-6 w-14 rounded-md border-2 border-dashed border-destructive bg-destructive/5 align-middle" />
+            )}
+            <span className={right}>{blank.expected}</span>
+          </>
+        )}
+      </span>
+      <span className="sr-only">{blankSummary(n, blank)}</span>
     </>
   );
 }

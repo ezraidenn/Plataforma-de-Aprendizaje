@@ -2,14 +2,15 @@
 
 import { useMemo, useState } from "react";
 import { useDroppable } from "@dnd-kit/core";
+import { FOCUS_OUTLINE } from "@/components/exam/image-pieces";
 import { LiveRegion, useAnnouncer } from "@/components/exam/live-region";
 import {
   BANK,
-  FOCUS_OUTLINE,
   PlaceBank,
   PlaceChip,
   PlaceDnd,
   byAttr,
+  groupColumns,
   useFocusAfter,
   viaKeyboard,
 } from "@/components/student/place-kit";
@@ -28,11 +29,6 @@ import { cn } from "@/lib/utils";
 
 type CategorizeView = NonNullable<RunnerQuestion["categorize"]>;
 type Card = CategorizeView["cards"][number];
-
-/** Columnas de los grupos: 2 o 3 por fila en escritorio (la que deja menos huecos), 1 o 2 en el celular. */
-export function groupColumns(n: number): string {
-  return cn("grid-cols-1 min-[360px]:grid-cols-2", n % 3 === 0 || n === 5 ? "sm:grid-cols-3" : "sm:grid-cols-2");
-}
 
 const cardsWord = (n: number) => (n === 0 ? "vacío" : n === 1 ? "1 tarjeta" : `${n} tarjetas`);
 
@@ -232,7 +228,7 @@ function GroupBox({
   hot: boolean;
   /** Hay una tarjeta en la mano: todos los grupos se marcan como destino. */
   dragging: boolean;
-  /** Hay una tarjeta elegida: el grupo se ilumina al pasar. */
+  /** Hay una tarjeta elegida: también se marcan (con el dedo no hay «pasar encima») y se iluminan al pasar. */
   choosing: boolean;
   onPick: (e: React.MouseEvent) => void;
   children: React.ReactNode;
@@ -243,7 +239,7 @@ function GroupBox({
       ref={setNodeRef}
       className={cn(
         "flex min-h-32 min-w-0 flex-col gap-2 rounded-xl border-2 border-dashed bg-card p-2 transition-[background-color,border-color,box-shadow] duration-150 motion-reduce:transition-none",
-        dragging && "border-primary/40",
+        (dragging || choosing) && "border-primary/40",
         choosing && "cursor-pointer hover:border-primary/60 hover:bg-primary/5",
         hot && "border-solid border-primary bg-primary/5 ring-4 ring-primary/15"
       )}

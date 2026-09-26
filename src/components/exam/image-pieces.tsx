@@ -258,9 +258,15 @@ function useSilhouette(fileId: string | undefined): string {
   return fileId && !broken ? `url("${fileUrl(fileId)}")` : CARD_MASK;
 }
 
-/** Anillo de foco del teclado, separado de la foto por un anillo blanco. */
-export const FOCUS_RING =
-  "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary focus-visible:ring-2 focus-visible:ring-white";
+/**
+ * Foco del teclado de las fichas y tarjetas que se arrastran o se tocan: un
+ * contorno aparte del anillo de «elegida». Sin `outline-none` ni
+ * `outline-hidden` junto a él: en Tailwind 4 apagan también este contorno.
+ */
+export const FOCUS_OUTLINE = "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary";
+
+/** El mismo foco sobre la foto, separado de ella por un anillo blanco. */
+export const FOCUS_RING = `${FOCUS_OUTLINE} focus-visible:ring-2 focus-visible:ring-white`;
 
 /**
  * Área de toque de al menos 24 × 24 px (44 × 44 con el dedo) centrada en un
