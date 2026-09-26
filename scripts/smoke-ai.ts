@@ -340,7 +340,7 @@ async function chunkAndConvertChecks() {
   );
   check("Revisión: los distractores se separan con «|», como en el Excel", JSON.stringify(splitDistractors(" manguera | etiqueta|")) === JSON.stringify(["manguera", "etiqueta"]));
   const piped = toDrafts({ questions: [{ ...TWO.questions[1], distractors: ["manguera|etiqueta"] }] })[0];
-  check("Un distractor con «|» se marca para corregirlo", draftProblem(piped) === "Un distractor no puede llevar |", draftProblem(piped));
+  check("Un distractor con «|» se marca para corregirlo", draftProblem(piped) === "Un distractor no puede llevar «|»", draftProblem(piped));
 
   const ok = await interpretChunk("1. ¿Hola?", { key: "sk-test", model: "gpt-x", fetchImpl: fakeResponse(SEVEN) });
   check("interpretChunk: devuelve los borradores", ok.length === 7);

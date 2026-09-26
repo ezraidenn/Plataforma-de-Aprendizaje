@@ -19,7 +19,12 @@ export function csvLine(values: (string | number | boolean | null | undefined)[]
   return values.map(csvEscape).join(",");
 }
 
-/** Parsea una línea respetando comillas; detecta separador , o ; */
+/**
+ * Parsea un registro respetando comillas (RFC 4180, como Excel): una comilla
+ * solo abre una celda entre comillas al principio del campo (sin contar los
+ * espacios); dentro, `""` es una comilla; en medio de un campo sin comillas
+ * (`1/2"`) es texto, igual que en `csvRecords`.
+ */
 export function parseCsvLine(line: string, sep: "," | ";"): string[] {
   const out: string[] = [];
   let current = "";
@@ -32,7 +37,7 @@ export function parseCsvLine(line: string, sep: "," | ";"): string[] {
         i++;
       } else if (ch === '"') inQuotes = false;
       else current += ch;
-    } else if (ch === '"') inQuotes = true;
+    } else if (ch === '"' && current.trim() === "") inQuotes = true;
     else if (ch === sep) {
       out.push(current);
       current = "";
@@ -59,30 +64,54 @@ export function detectSeparator(headerLine: string): "," | ";" {
  * Los registros del CSV, sin los renglones vacíos. Una celda entre comillas
  * puede ocupar varios renglones (Excel la guarda así cuando tiene saltos de
  * línea): sus renglones van juntos, líneas en blanco incluidas, en un solo
- * registro —mientras el número de comillas acumuladas sea impar, la celda
- * sigue abierta—. Si al final quedan comillas sin cerrar (un archivo mal
- * hecho), esos renglones se vuelven a leer uno por uno, como si no hubiera
- * celdas de varias líneas, para no tragarse el resto del archivo.
+ * registro. Como en Excel (RFC 4180), una comilla solo abre esa celda al
+ * principio de un campo; en medio de uno sin comillas (`1/2"`) es texto y no
+ * junta nada. Si al final quedan comillas sin cerrar (un archivo mal hecho),
+ * esos renglones se vuelven a leer uno por uno, como si no hubiera celdas de
+ * varias líneas, para no tragarse el resto del archivo.
  *
  * Lo usan `parseCsv` y quien necesite rehacer un CSV con algunas de sus filas
  * (el registro i es la fila i + 1, la cabecera incluida).
  */
 export function csvRecords(text: string): string[] {
+  const lines = text.replace(/^﻿/, "").split(/\r?\n/);
+  // El separador es el de la cabecera (el primer renglón con algo)
+  const sep = detectSeparator(lines.find((l) => l.trim().length > 0) ?? "");
   const records: string[] = [];
   let open: string[] = [];
-  let quotes = 0;
-  for (const line of text.replace(/^﻿/, "").split(/\r?\n/)) {
+  let inQuotes = false;
+  for (const line of lines) {
     if (open.length === 0 && line.trim().length === 0) continue;
     open.push(line);
-    quotes += line.split('"').length - 1;
-    if (quotes % 2 === 0) {
+    inQuotes = quotedAtEnd(line, sep, inQuotes);
+    if (!inQuotes) {
       records.push(open.join("\n"));
       open = [];
-      quotes = 0;
     }
   }
   for (const line of open) if (line.trim().length > 0) records.push(line);
   return records;
+}
+
+/** ¿Sigue abierta una celda entre comillas al terminar este renglón? `inQuotes`: si ya venía abierta del anterior. */
+function quotedAtEnd(line: string, sep: "," | ";", inQuotes: boolean): boolean {
+  // Al empezar un renglón fuera de comillas empieza también un campo
+  let atStart = !inQuotes;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (line[i + 1] === '"') i++;
+        else {
+          inQuotes = false;
+          atStart = false;
+        }
+      }
+    } else if (ch === '"' && atStart) inQuotes = true;
+    else if (ch === sep) atStart = true;
+    else if (ch !== " " && ch !== "\t") atStart = false;
+  }
+  return inQuotes;
 }
 
 export type ParsedCsv = {

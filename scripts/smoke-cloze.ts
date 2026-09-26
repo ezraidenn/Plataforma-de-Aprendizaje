@@ -252,11 +252,19 @@ function pureChecks() {
     validateExamCsv(`tipo,pregunta,puntos,texto,modo,mayusculas,acentos\r\ncompletar,Completa,1,[[a|!b]],${modo},${mayusculas},${acentos}`).rows[0];
   check("«mayusculas» y «acentos»: sí/no en español; lo demás, error", (rowMa("", "sí", "no").input?.config as ClozeConfig).matchCase === true && rowMa("", "quizá").message === 'En "mayusculas" y "acentos" escribe SI o NO', rowMa("", "quizá").message);
   check("«mayusculas» y «acentos» fuera de escribir: lo dice", rowMa("lista", "", "SI").message === 'Las columnas "mayusculas" y "acentos" solo se usan en el modo escribir' && rowMa("lista", "NO", "").status === "ok", rowMa("lista", "", "SI").message);
-  check("Un distractor con «|» no vale (volvería partido)", clozeProblem({ text: "[[a]]", mode: "bank", distractors: ["b|c"] }) === "Un distractor no puede llevar |");
+  check("Un distractor con «|» no vale (volvería partido)", clozeProblem({ text: "[[a]]", mode: "bank", distractors: ["b|c"] }) === "Un distractor no puede llevar «|»");
   const [pipeAi] = toDrafts({ questions: [{ type: "cloze", prompt: "Completa", points: null, clozeText: "[[a]]", clozeMode: "bank", distractors: ["b|c"] }] });
-  check("IA: un distractor con «|» se marca para corregirlo", draftProblem(pipeAi) === "Un distractor no puede llevar |", draftProblem(pipeAi));
+  check("IA: un distractor con «|» se marca para corregirlo", draftProblem(pipeAi) === "Un distractor no puede llevar «|»", draftProblem(pipeAi));
   check("Registros: una comilla sin cerrar no se traga el resto (renglón por renglón)", JSON.stringify(csvRecords('a,b\n\n"c,d\ne,f\n')) === JSON.stringify(["a,b", '"c,d', "e,f"]), csvRecords('a,b\n\n"c,d\ne,f\n'));
   check("Registros: dentro de comillas, los renglones en blanco se quedan", JSON.stringify(csvRecords('a\n"b\n\nc"\nd')) === JSON.stringify(["a", '"b\n\nc"', "d"]), csvRecords('a\n"b\n\nc"\nd'));
+  check("Registros: una comilla en medio de un campo es texto (dos renglones con 5\" y 7\" no juntan lo de en medio)",
+    csvRecords('a\n5",x\ny,z\n7",w').length === 4, csvRecords('a\n5",x\ny,z\n7",w'));
+  check("Registros: con «;» de separador, y con espacios antes de la comilla, también abre al inicio del campo",
+    JSON.stringify(csvRecords('a;b\n1; "dos\ntres";4\n5;6')) === JSON.stringify(["a;b", '1; "dos\ntres";4', "5;6"]), csvRecords('a;b\n1; "dos\ntres";4\n5;6'));
+  const inches = validateExamCsv('tipo,pregunta,puntos\r\nabierta,Tubo de 1/2" de diámetro,2\r\nabierta,"Rosca de 3/4""",1\r\nabierta,Llave de 7/8",3');
+  check("Filas con pulgadas escritas a mano: ninguna se pierde ni se come columnas",
+    inches.ok === 3 && inches.rows.map((r) => `${r.input?.promptMd}:${r.input?.points}`).join("|") === 'Tubo de 1/2" de diámetro:2|Rosca de 3/4":1|Llave de 7/8":3',
+    inches.rows.map((r) => [r.line, r.status, r.message, r.input?.promptMd, r.input?.points]));
 }
 
 // ─── Recorrido contra la base ────────────────────────────────────────────────

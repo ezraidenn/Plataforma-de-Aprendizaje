@@ -124,7 +124,7 @@ export function clozeProblem(config: unknown): string | null {
       return "Hay un distractor vacío";
     }
     // «|» separa los distractores en el Excel/CSV (y en la revisión de la IA): uno que lo lleve volvería partido
-    if (c.distractors.some((d) => d.includes("|"))) return "Un distractor no puede llevar |";
+    if (c.distractors.some((d) => d.includes("|"))) return "Un distractor no puede llevar «|»";
     if (c.distractors.length > MAX_DISTRACTORS) return `Usa como máximo ${MAX_DISTRACTORS} distractores`;
     if (c.distractors.some((d) => d.length > MAX_BLANK_TEXT)) {
       return `Los distractores deben tener como máximo ${MAX_BLANK_TEXT} caracteres`;
