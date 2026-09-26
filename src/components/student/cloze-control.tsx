@@ -19,6 +19,7 @@ import {
 } from "@/components/student/place-kit";
 import type { RunnerQuestion } from "@/components/student/types";
 import { parseMapAnswer } from "@/lib/image-questions";
+import { MAX_WRITTEN_ANSWER } from "@/lib/cloze";
 import { cn } from "@/lib/utils";
 
 /**
@@ -33,8 +34,6 @@ type Word = NonNullable<ClozeView["words"]>[number];
 
 /** Ancho inicial de un cuadro para escribir, en `ch`: el mismo en todos, no delata la respuesta. */
 const WRITE_MIN_CH = 8;
-/** Lo más que se puede escribir en un hueco. */
-const WRITE_MAX = 100;
 
 /**
  * El texto con cada hueco dibujado por `blank` (su ficha y su número, desde 1).
@@ -79,7 +78,7 @@ export function ClozeControl({
               aria-label={`Hueco ${n}`}
               value={answer[token] ?? ""}
               onChange={(e) => set(token, e.target.value)}
-              maxLength={WRITE_MAX}
+              maxLength={MAX_WRITTEN_ANSWER}
               autoComplete="off"
               autoCapitalize="off"
               autoCorrect="off"

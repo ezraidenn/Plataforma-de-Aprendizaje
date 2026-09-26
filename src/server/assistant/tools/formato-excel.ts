@@ -11,6 +11,7 @@ import { buildXlsx, type Cell, type SheetSpec } from "@/server/services/xlsx";
 import type { AssistantBlock } from "@/lib/assistant-blocks";
 import { FORMAT_LABELS, type ExcelFormat } from "@/lib/excel-formats";
 import { plural } from "@/lib/plural";
+import { NOT_IN_CSV_RULE } from "@/lib/csv-fit";
 import { XLSX_MIME, createExport, createFileExport, exportFileName } from "../exports";
 import { schema, str, strEnum, param, type AssistantTool } from "../tool-types";
 
@@ -170,7 +171,7 @@ const NOTAS_EXAMEN = [
   "abierta no lleva opciones: la califica el maestro a mano.",
   "mayusculas y acentos: solo en completar con modo escribir; SI para que al calificar cuenten las mayúsculas o los acentos (la ñ siempre cuenta). Vacío = NO.",
   "Una celda puede tener varios renglones (Alt+Enter): el texto de completar los conserva.",
-  "Las preguntas sobre imagen y las de clasificar con íconos o con «:», «;» o «|» en sus grupos o tarjetas no caben en este Excel: se hacen en el editor del examen.",
+  `Las preguntas ${NOT_IN_CSV_RULE} no caben en este Excel: se hacen en el editor del examen.`,
 ];
 
 /** Matrícula del curso tal como está hoy; sin alumnos, una fila de ejemplo. */
@@ -320,8 +321,8 @@ export const formatoExcel: AssistantTool = {
     const avisoNoCaben = plantilla.omitidas
       ? plural(
           plantilla.omitidas,
-          "1 pregunta no cabe en el Excel (es sobre imagen, o de clasificar con íconos o con «:», «;» o «|» en sus grupos o tarjetas); en el examen se queda como está.",
-          `${plantilla.omitidas} preguntas no caben en el Excel (son sobre imagen, o de clasificar con íconos o con «:», «;» o «|» en sus grupos o tarjetas); en el examen se quedan como están.`
+          `1 pregunta no cabe en el Excel (es ${NOT_IN_CSV_RULE}); en el examen se queda como está.`,
+          `${plantilla.omitidas} preguntas no caben en el Excel (son ${NOT_IN_CSV_RULE}); en el examen se quedan como están.`
         )
       : "";
 

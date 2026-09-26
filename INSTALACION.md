@@ -44,7 +44,9 @@
    # Carpeta de archivos. Puede ser local o del NAS (\\\\NAS\\Capacitacion).
    # La base de datos SIEMPRE va en disco local.
    STORAGE_PATH=./storage
-   # OBLIGATORIO cambiarlo: cadena aleatoria larga (firma los certificados)
+   # OBLIGATORIO cambiarlo: cadena aleatoria larga (firma los certificados y
+   # las fichas de los exámenes; sin ella, los exámenes fallan con
+   # «Falta APP_SECRET en el entorno»)
    APP_SECRET=<cadena-aleatoria-larga-y-secreta>
    SOFFICE_PATH=C:\Program Files\LibreOffice\program\soffice.exe
    # Dirección del servidor en la red: la que llevan impresa los QR de los

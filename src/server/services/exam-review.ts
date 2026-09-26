@@ -133,6 +133,20 @@ export function boardAnswerSummary(q: BoardQuestion, answerText: string | null |
   return boardAnswer(q, answerText, attemptId)?.summary ?? NO_ANSWER;
 }
 
+/**
+ * «Completar» en modo escribir: lo que escribió el alumno en cada hueco, en
+ * corto («1: París · 2: roma · 3: —»), para el maestro al calificar (como en
+ * respuesta corta, que ve lo escrito). Leído igual que al calificar. null en
+ * otro modo, sin nada escrito o si la pregunta no se puede mostrar.
+ */
+export function clozeWrittenText(q: BoardQuestion, answerText: string | null | undefined, attemptId: string): string | null {
+  const cloze = q.type === "cloze" ? readCloze(q) : null;
+  if (!cloze || cloze.mode !== "write") return null;
+  const given = clozePlacement(cloze, answerText, attemptId, q.id);
+  if (!given.some((g) => g !== undefined)) return null;
+  return given.map((g, i) => `${i + 1}: ${g ?? "—"}`).join(" · ");
+}
+
 function selectedText(q: FullQuestion, ids: string[] | null): string {
   if (!ids || ids.length === 0) return NO_ANSWER;
   return ids

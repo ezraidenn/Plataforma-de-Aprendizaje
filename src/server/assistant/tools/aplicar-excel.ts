@@ -16,6 +16,7 @@ import { readSheetRows, type SheetData } from "@/server/services/sheet-colors";
 import { detectFormat, FORMAT_LABELS, type ExcelFormat } from "@/lib/excel-formats";
 import { extOf } from "@/lib/ai-import-files";
 import { plural } from "@/lib/plural";
+import { NOT_IN_CSV_RULE } from "@/lib/csv-fit";
 import type { AssistantBlock, ProposalColumn, ProposalRow } from "@/lib/assistant-blocks";
 import { createProposal } from "../proposal-store";
 import { schema, str, strEnum, param, type AssistantTool, type ToolCtx } from "../tool-types";
@@ -286,7 +287,7 @@ export const aplicarExcel: AssistantTool = {
       [...FORMATOS]
     ),
     modo: strEnum(
-      'SOLO para preguntas de examen: «reemplazar» borra las preguntas que tiene el examen (las que no caben en el Excel —sobre imagen, o de clasificar con íconos o con «:», «;» o «|» en sus grupos o tarjetas— se conservan) y deja las del archivo; «agregar» las suma al final. Déjalo en «» la primera vez: el servidor te dirá que se lo preguntes al usuario',
+      `SOLO para preguntas de examen: «reemplazar» borra las preguntas que tiene el examen (las que no caben en el Excel —${NOT_IN_CSV_RULE}— se conservan) y deja las del archivo; «agregar» las suma al final. Déjalo en «» la primera vez: el servidor te dirá que se lo preguntes al usuario`,
       [...MODOS]
     ),
   }),

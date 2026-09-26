@@ -22,8 +22,11 @@ export function inlineAllowed(mime: string): boolean {
   return INLINE_TYPES.has(base) || /^(video|audio)\/[a-z0-9][a-z0-9.+-]*$/.test(base);
 }
 
-/** Extensión del nombre neutro de una imagen del editor, según su tipo real. */
-const IMAGE_EXT: Record<string, string> = {
+/**
+ * Extensión del nombre neutro de una imagen del editor, según su tipo real: al
+ * servirla (`contentDisposition`) y al subirla (`neutralImageName`).
+ */
+export const IMAGE_EXT: Record<string, string> = {
   "image/png": "png",
   "image/jpeg": "jpg",
   "image/webp": "webp",

@@ -333,7 +333,7 @@ export function CourseSettingsForm({
                 </AlertDialogHeader>
                 <AlertDialogFooter>
                   <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                  <AlertDialogAction variant="destructive" onClick={() => setArchived(true)}>
+                  <AlertDialogAction variant="destructive-solid" onClick={() => setArchived(true)}>
                     Archivar
                   </AlertDialogAction>
                 </AlertDialogFooter>

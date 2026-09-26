@@ -197,9 +197,6 @@ export function createQuestion(examItemId: string, input: QuestionInput): string
   return id;
 }
 
-// Al cambiar la forma de contestar de «Completar el texto» que ya tiene respuestas guardadas (el editor lo avisa igual)
-export { CLOZE_MODE_LOCKED };
-
 /**
  * «Completar el texto» con respuestas guardadas (en cualquier intento) no
  * cambia de modo: lo guardado (lo escrito, una ficha de palabra o de opción)

@@ -229,7 +229,7 @@ export function StudentActions({
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <AlertDialogAction
-              variant={student.active ? "destructive" : "default"}
+              variant={student.active ? "destructive-solid" : "default"}
               className={student.active ? undefined : "bg-cta text-cta-foreground hover:bg-cta/90"}
               onClick={toggleActive}
             >

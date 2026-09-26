@@ -2,7 +2,7 @@ import "server-only";
 import { createHmac } from "node:crypto";
 import { dragCopies, parseMapAnswer, zoneKey, type ImageDragConfig, type ImageZone } from "@/lib/image-questions";
 import type { CategorizeConfig } from "@/lib/categorize";
-import { clozeBankWords, clozeOptions, parseCloze, type ClozeConfig } from "@/lib/cloze";
+import { MAX_WRITTEN_ANSWER, clozeBankWords, clozeOptions, parseCloze, type ClozeConfig } from "@/lib/cloze";
 
 /**
  * Fichas opacas por intento y lectura de las respuestas que las usan. Lo que
@@ -17,8 +17,20 @@ import { clozeBankWords, clozeOptions, parseCloze, type ClozeConfig } from "@/li
  * guardar nada extra, y el cliente no puede deducir de él lo que oculta.
  */
 function opaqueToken(...parts: (string | number)[]): string {
-  const secret = process.env.APP_SECRET ?? "dev-secret";
-  return createHmac("sha256", secret).update(parts.join("|")).digest("hex").slice(0, 16);
+  return createHmac("sha256", tokenSecret()).update(parts.join("|")).digest("hex").slice(0, 16);
+}
+
+/**
+ * La llave de las fichas: APP_SECRET. En producción es obligatoria (con una
+ * llave conocida, cualquiera calcularía las fichas y deduciría las
+ * respuestas): si falta, se falla con un mensaje claro en vez de firmar con la
+ * de desarrollo. En desarrollo y en los smokes basta la de desarrollo.
+ */
+function tokenSecret(): string {
+  const secret = process.env.APP_SECRET;
+  if (secret) return secret;
+  if (process.env.NODE_ENV === "production") throw new Error("Falta APP_SECRET en el entorno");
+  return "dev-secret";
 }
 
 /**
@@ -147,9 +159,10 @@ export function categorizePlacement(
 /**
  * Respuesta de completar ({fichaDeHueco: texto | fichaDePalabra | fichaDeOpción})
  * → lo puesto en cada hueco como texto, en orden de huecos (undefined = vacío).
- * Escribir: lo escrito. Banco: el texto de la palabra, y cada ficha vale una
- * sola vez (la misma en dos huecos cuenta en el primero). Lista: el texto de la
- * opción, solo si es de ese hueco. Lo usan la calificación y la revisión.
+ * Escribir: lo escrito (recortado a MAX_WRITTEN_ANSWER, como el cuadro del
+ * alumno). Banco: el texto de la palabra, y cada ficha vale una sola vez (la
+ * misma en dos huecos cuenta en el primero). Lista: el texto de la opción,
+ * solo si es de ese hueco. Lo usan la calificación y la revisión.
  */
 export function clozePlacement(
   config: ClozeConfig,
@@ -167,7 +180,7 @@ export function clozePlacement(
   return blanks.map((b, i) => {
     const v = answer[clozeBlankToken(attemptId, questionId, i)];
     if (typeof v !== "string") return undefined;
-    if (config.mode === "write") return v.trim() || undefined;
+    if (config.mode === "write") return v.slice(0, MAX_WRITTEN_ANSWER).trim() || undefined;
     if (words) {
       const text = words.get(v);
       if (text === undefined || used.has(v)) return undefined;

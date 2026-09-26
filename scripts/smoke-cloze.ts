@@ -14,13 +14,14 @@ import * as tree from "../src/server/services/tree";
 import * as examsSvc from "../src/server/services/exams";
 import * as answers from "../src/server/services/exam-answers";
 import { clozeQuestionsWithAnswers } from "../src/server/services/exam-results";
-import { boardAnswerSummary, buildReview } from "../src/server/services/exam-review";
+import { boardAnswerSummary, buildReview, clozeWrittenText } from "../src/server/services/exam-review";
 import { buildRunnerQuestions } from "../src/components/student/lesson-data";
 import { questionsToPreview } from "../src/lib/preview-question";
 import { questionProblem } from "../src/lib/question-validation";
 import { cleanupSmokeNotifications } from "./lib/smoke-cleanup";
 import { exportExamCsv, inputsToCsv, validateExamCsv } from "../src/server/services/exam-csv";
-import { csvRecords, parseCsv } from "../src/server/services/csv-core";
+import { csvRecords, parseCsv, parseCsvLine } from "../src/server/services/csv-core";
+import { csvRepresentable, csvWritable } from "../src/lib/csv-fit";
 import { toDrafts } from "../src/server/services/ai-exam-import";
 import { draftProblem, draftToInput } from "../src/lib/question-draft";
 import {
@@ -107,6 +108,11 @@ function pureChecks() {
   check("Hueco sin respuesta", clozeProblem({ text: "a [[!b]] c", mode: "write" }) === "El hueco 1 no tiene respuesta");
   check("Lista sin incorrectas", clozeProblem({ text: "[[a]]", mode: "select" }) === "Al hueco 1 le falta al menos una opción incorrecta (!opción)");
   check("Lista con incorrecta igual a la respuesta", clozeProblem({ text: "[[París|!paris]]", mode: "select" }) === "En el hueco 1 una opción incorrecta es igual a la respuesta");
+  check("Lista con incorrectas repetidas (también si solo cambian mayúsculas o acentos): no",
+    clozeProblem({ text: "[[París|!Londres|!londres]]", mode: "select" }) === "En el hueco 1 hay opciones incorrectas repetidas" &&
+      clozeProblem({ text: "[[a|!b]] y [[París|!Lóndres|!Londres]]", mode: "select" }) === "En el hueco 2 hay opciones incorrectas repetidas" &&
+      clozeProblem({ text: "[[París|!Londres|!Roma]]", mode: "select" }) === null,
+    clozeProblem({ text: "[[París|!Londres|!londres]]", mode: "select" }));
   const wrongs = (n: number) => Array.from({ length: n }, (_, i) => `!x${i}`).join("|");
   check("Lista: hasta 6 incorrectas por hueco", clozeProblem({ text: `[[a|${wrongs(MAX_WRONG_OPTIONS)}]]`, mode: "select" }) === null);
   check("Lista: más de 6 incorrectas en un hueco, no",
@@ -191,7 +197,6 @@ function pureChecks() {
   check("Forma de contestar: bloqueada solo si la pregunta tiene respuestas y cambia de forma",
     clozeModeLock(true, "write", "bank") === CLOZE_MODE_LOCKED && clozeModeLock(false, "write", "bank") === null &&
       clozeModeLock(true, "write", "write") === null && clozeModeLock(true, null, "bank") === null);
-  check("El servidor usa el mismo mensaje", examsSvc.CLOZE_MODE_LOCKED === CLOZE_MODE_LOCKED);
   const opened = initialClozeValue({ text: "[[a]]", mode: "bank", distractors: ["b"], matchCase: true });
   check("Abrir: todo lo guardado; sin nada, escribir", opened.mode === "bank" && opened.distractors[0] === "b" && opened.matchCase && initialClozeValue(null).mode === "write" && initialClozeValue(null).text === "");
   check("Guardar: solo lo de su forma de contestar",
@@ -232,6 +237,21 @@ function pureChecks() {
   check("Sin huecos: el mensaje del editor", row("Sin huecos").message === "Marca al menos un hueco con [[ ]]", row("Sin huecos").message);
   check("Lista sin incorrectas: el mensaje del editor", row("[[a]]", "lista").message === "Al hueco 1 le falta al menos una opción incorrecta (!opción)", row("[[a]]", "lista").message);
   check("Distractor igual a una respuesta: el mensaje del editor", row("[[a]]", "banco", "A | b").message === "Un distractor es igual a la respuesta de un hueco", row("[[a]]", "banco", "A | b").message);
+  // Rotas (un borrador de la IA a medio corregir): «Descargar como CSV» no las pierde
+  const broken: ClozeConfig[] = [
+    { text: "Sin huecos todavía.", mode: "write" },
+    { text: "El agua hierve a [[100]] grados.", mode: "select" },
+    { text: "[[a]] y [[b]]", mode: "bank", distractors: ["a"] },
+  ];
+  check("Rotas: no caben en el examen, pero sí se pueden escribir",
+    broken.every((config) => !csvRepresentable({ type: "cloze", config }) && csvWritable({ type: "cloze", config })));
+  const brokenCsv = inputsToCsv(broken.map((config, i) => ({ type: "cloze" as const, promptMd: `Rota ${i + 1}`, points: 1, config })));
+  const brokenBack = validateExamCsv(brokenCsv);
+  check("Rotas: salen al CSV tal cual y su fila dice qué falta, con el mensaje del editor",
+    brokenBack.rows.length === 3 && brokenBack.invalid === 3 && brokenCsv.includes("Sin huecos todavía.") &&
+      brokenBack.rows.map((r) => r.message).join(" | ") ===
+        "Marca al menos un hueco con [[ ]] | Al hueco 1 le falta al menos una opción incorrecta (!opción) | Un distractor es igual a la respuesta de un hueco",
+    brokenBack.rows.map((r) => r.message));
 
   console.log("\n— CSV/Excel: renglones, mayúsculas y acentos, «|»");
   // Banco con \r\n, \n y una línea en blanco; escribir distinguiendo mayúsculas y acentos
@@ -265,6 +285,12 @@ function pureChecks() {
   check("Filas con pulgadas escritas a mano: ninguna se pierde ni se come columnas",
     inches.ok === 3 && inches.rows.map((r) => `${r.input?.promptMd}:${r.input?.points}`).join("|") === 'Tubo de 1/2" de diámetro:2|Rosca de 3/4":1|Llave de 7/8":3',
     inches.rows.map((r) => [r.line, r.status, r.message, r.input?.promptMd, r.input?.points]));
+  // Mismo criterio de «inicio de campo» al juntar renglones y al leer las celdas: solo espacios y tabuladores
+  check("Campos: una comilla abre tras un tabulador; tras otro espacio (el de no separación) es texto, al leer y al juntar renglones",
+    JSON.stringify(parseCsvLine('1,\t"dos, tres",4', ",")) === JSON.stringify(["1", "dos, tres", "4"]) &&
+      JSON.stringify(parseCsvLine('a, "b,c"', ",")) === JSON.stringify(["a", '"b', 'c"']) &&
+      JSON.stringify(csvRecords('a, "b\nc"')) === JSON.stringify(['a, "b', 'c"']),
+    [parseCsvLine('a, "b,c"', ","), csvRecords('a, "b\nc"')]);
 }
 
 // ─── Recorrido contra la base ────────────────────────────────────────────────
@@ -399,6 +425,16 @@ async function endToEnd() {
       answers.clozePlacement(SELECT, JSON.stringify({ [blank(qS, 1)]: option(0, 0) }), attempt.id, qS).every((g) => g === undefined));
     check("Escribir: lo vacío o no escrito como texto no cuenta",
       answers.clozePlacement(WRITE, JSON.stringify({ [blank(qW, 0)]: "   ", [blank(qW, 1)]: 3 }), attempt.id, qW).every((g) => g === undefined));
+    const long = answers.clozePlacement(WRITE, JSON.stringify({ [blank(qW, 0)]: "x".repeat(150), [blank(qW, 1)]: `  ${"y".repeat(150)}` }), attempt.id, qW);
+    check("Escribir: lo escrito se recorta a 100 caracteres, como el cuadro del alumno",
+      long[0] === "x".repeat(100) && long[1] === "y".repeat(98), long.map((g) => g?.length));
+    const writeRow = { id: qW, type: "cloze" as const, config: WRITE };
+    check("Al calificar, el maestro ve lo escrito en cada hueco (solo al escribir)",
+      clozeWrittenText(writeRow, JSON.stringify(writeAnswer), attempt.id) === "1: paris · 2: Milán" &&
+        clozeWrittenText(writeRow, JSON.stringify({ [blank(qW, 1)]: "Roma" }), attempt.id) === "1: — · 2: Roma" &&
+        clozeWrittenText(writeRow, "{}", attempt.id) === null &&
+        clozeWrittenText({ id: qB, type: "cloze", config: BANK }, JSON.stringify(bankAnswer), attempt.id) === null,
+      clozeWrittenText(writeRow, JSON.stringify(writeAnswer), attempt.id));
     examsSvc.saveAnswer({ studentId: student, attemptId: attempt.id, questionId: qW, answerText: JSON.stringify(writeAnswer) });
     examsSvc.saveAnswer({ studentId: student, attemptId: attempt.id, questionId: qB, answerText: JSON.stringify(bankAnswer) });
     examsSvc.saveAnswer({ studentId: student, attemptId: attempt.id, questionId: qS, answerText: JSON.stringify(selectAnswer) });
@@ -447,11 +483,11 @@ async function endToEnd() {
       }
     };
     const modeOf = (id: string) => readCloze(examsSvc.listQuestions(exam.id).find((q) => q.id === id)!)?.mode;
-    check("Con respuestas guardadas, la forma de contestar no cambia (y la pregunta queda igual)",
-      tryUpdate(qB, { ...BANK, mode: "select", text: SELECT.text }) === examsSvc.CLOZE_MODE_LOCKED && modeOf(qB) === "bank" &&
-        tryUpdate(qS, { ...SELECT, mode: "write" }) === examsSvc.CLOZE_MODE_LOCKED && modeOf(qS) === "select",
+    check("Con respuestas guardadas, la forma de contestar no cambia (con el mismo mensaje que el editor, y la pregunta queda igual)",
+      tryUpdate(qB, { ...BANK, mode: "select", text: SELECT.text }) === CLOZE_MODE_LOCKED && modeOf(qB) === "bank" &&
+        tryUpdate(qS, { ...SELECT, mode: "write" }) === CLOZE_MODE_LOCKED && modeOf(qS) === "select",
       [modeOf(qB), modeOf(qS)]);
-    check("…el mensaje dice qué hacer", examsSvc.CLOZE_MODE_LOCKED === "Ya hay respuestas guardadas: no se puede cambiar la forma de contestar. Duplica la pregunta y cámbiala en la copia.");
+    check("…el mensaje dice qué hacer", CLOZE_MODE_LOCKED === "Ya hay respuestas guardadas: no se puede cambiar la forma de contestar. Duplica la pregunta y cámbiala en la copia.");
     check("…pero el texto y las variantes sí (mismo modo)",
       tryUpdate(qW, { ...WRITE, text: WRITE.text.replace("]]", "|Lutecia]]") }) === null && modeOf(qW) === "write");
     // Sin respuestas guardadas (su copia), el modo se cambia

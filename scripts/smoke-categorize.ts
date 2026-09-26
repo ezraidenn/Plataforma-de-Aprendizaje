@@ -16,9 +16,9 @@ import * as tree from "../src/server/services/tree";
 import * as examsSvc from "../src/server/services/exams";
 import * as answers from "../src/server/services/exam-answers";
 import { boardAnswerSummary, buildReview } from "../src/server/services/exam-review";
-import { countNotInCsv, exportExamCsv, importExamCsv, validateExamCsv } from "../src/server/services/exam-csv";
+import { countNotInCsv, exportExamCsv, importExamCsv, inputsToCsv, validateExamCsv } from "../src/server/services/exam-csv";
 import { parseCsv } from "../src/server/services/csv-core";
-import { csvRepresentable } from "../src/lib/csv-fit";
+import { csvRepresentable, csvWritable } from "../src/lib/csv-fit";
 import { deleteFile, getFileRecord, saveStream } from "../src/server/services/storage";
 import { contentDisposition } from "../src/lib/inline-mime";
 import { neutralImageName } from "../src/lib/image-processing";
@@ -99,6 +99,28 @@ function pureChecks() {
       !csvRepresentable({ type: "categorize", config: null }) && !csvRepresentable({ type: "image_drag", config: {} }) &&
       csvRepresentable({ type: "cloze", config: { text: "[[a]]", mode: "write" } }) && !csvRepresentable({ type: "cloze", config: null }) &&
       csvRepresentable({ type: "open_text" }));
+  check("Se puede escribir (aunque no quepa): todo menos lo que va sobre imagen y clasificar con íconos",
+    csvWritable({ type: "categorize", config: { ...C, cards: C.cards.slice(0, 3) } }) && !csvWritable({ type: "categorize", config: C }) &&
+      csvWritable({ type: "categorize", config: null }) && csvWritable({ type: "categorize", config: { groups: [C.groups[0]], cards: [] } }) &&
+      !csvWritable({ type: "image_drag", config: {} }) && !csvWritable({ type: "image_click" }) &&
+      csvWritable({ type: "cloze", config: null }) && csvWritable({ type: "open_text" }));
+  // «Descargar como CSV» de la IA: lo roto o con separadores sale tal cual (antes se perdía sin
+  // aviso); solo lo de ícono se omite. La exportación del examen sí los omite (se prueba abajo)
+  const groupsOf = (cards: { text: string; groupId: string }[]): CategorizeConfig => ({
+    groups: [{ id: "g1", name: "Frutas" }, { id: "g2", name: "Verduras" }],
+    cards: cards.map((k, i) => ({ id: `c${i + 1}`, kind: "text", ...k })),
+  });
+  const halfDone = inputsToCsv([
+    { type: "categorize", promptMd: "Sin verduras", points: 1, config: groupsOf([{ text: "Manzana", groupId: "g1" }, { text: "Pera", groupId: "g1" }]) },
+    { type: "categorize", promptMd: "Con punto y coma", points: 1, config: groupsOf([{ text: "Manzana", groupId: "g1" }, { text: "Sal; pimienta", groupId: "g2" }]) },
+    { type: "categorize", promptMd: "Con ícono", points: 1, config: C },
+  ]);
+  const halfSheet = parseCsv(halfDone, { maxRows: 10 });
+  const halfBack = validateExamCsv(halfDone);
+  check("CSV de borradores: lo roto y lo que lleva separadores salen tal cual; con íconos, no",
+    halfSheet.rows.map((r) => r.cells[halfSheet.headers.indexOf("grupos")]).join(" / ") === "Frutas: Manzana; Pera | Verduras: / Frutas: Manzana | Verduras: Sal; pimienta" &&
+      halfBack.rows.length === 2 && halfBack.rows[0].message === "El grupo «Verduras» no tiene tarjetas",
+    { cells: halfSheet.rows.map((r) => r.cells[halfSheet.headers.indexOf("grupos")]), rows: halfBack.rows.map((r) => r.message) });
   // Una fila de «clasificar» con error dice qué falta, con los mismos textos que el editor
   const row = (grupos: string) => validateExamCsv(`tipo,pregunta,puntos,grupos\r\nclasificar,Clasifica,1,"${grupos}"`).rows[0];
   check("Fila sin grupos: lo dice", row("").status === "invalid" && row("").message.includes('"grupos"'), row("").message);

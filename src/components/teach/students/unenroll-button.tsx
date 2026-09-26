@@ -91,7 +91,7 @@ export function UnenrollButton({
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancelar</AlertDialogCancel>
-          <AlertDialogAction variant="destructive" onClick={confirm}>
+          <AlertDialogAction variant="destructive-solid" onClick={confirm}>
             Quitar del curso
           </AlertDialogAction>
         </AlertDialogFooter>

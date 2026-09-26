@@ -3,9 +3,10 @@ import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { questions } from "@/server/db/schema";
 import type { ImageQuestionType } from "@/lib/image-questions";
-import { csvRepresentable } from "@/lib/csv-fit";
-import { categorizeProblem, formatGroupsCsv, parseGroupsCsv, readCategorize } from "@/lib/categorize";
+import { csvRepresentable, csvWritable } from "@/lib/csv-fit";
+import { categorizeProblem, formatGroupsCsv, parseGroupsCsv, type CategorizeConfig } from "@/lib/categorize";
 import { clozeProblem, lfOnly, type ClozeConfig, type ClozeMode } from "@/lib/cloze";
+import { splitDistractors } from "@/lib/question-draft";
 import { listQuestions, type QuestionInput } from "./exams";
 import { BOM, csvLine, parseCsv, columnGetter, parseBoolEs } from "./csv-core";
 import { importQuestionInputs } from "./exam-import";
@@ -116,17 +117,18 @@ export const EXAM_CSV_TEMPLATE =
 
 /**
  * Preguntas (ya en la forma del servicio) → CSV del mismo formato que la
- * plantilla. Lo usan la exportación y «Descargar como CSV» de la IA. Las que
- * no caben en el CSV (`csvRepresentable`: sobre imagen, o clasificar con
- * íconos o con separadores que no volverían igual) se omiten; la IA nunca
- * las crea, así que solo importa para la exportación real del examen, que
- * las cuenta aparte.
+ * plantilla. Escribe todo lo que se puede escribir (`csvWritable`), aunque no
+ * valide o lleve separadores que no volverían igual: así «Descargar como CSV»
+ * de la IA no pierde los borradores a medio corregir (su fila dirá qué falta
+ * al volver a subirla). Solo omite lo que una celda no puede llevar (sobre
+ * imagen, clasificar con íconos). La exportación del examen, en cambio, solo
+ * pasa lo que cabe (`exportExamCsv`).
  */
 export function inputsToCsv(inputs: QuestionInput[]): string {
   const lines = [csvLine([...HEADER])];
 
   for (const q of inputs) {
-    if (!csvRepresentable(q)) continue;
+    if (!csvWritable(q)) continue;
     const values: Partial<Record<Column, string | number>> = {
       tipo: TYPE_TO_CSV[q.type as CsvType],
       pregunta: q.promptMd,
@@ -155,11 +157,17 @@ export function inputsToCsv(inputs: QuestionInput[]): string {
     } else if (q.type === "ordering") {
       values.pasos = ((q.config as { steps?: string[] } | null)?.steps ?? []).join(" | ");
     } else if (q.type === "categorize") {
-      // Lo guardado siempre está completo; una config rota sale sin grupos y,
-      // al volver a subirla, su fila dice qué falta
-      const config = readCategorize({ config: q.config });
-      values.grupos = config ? formatGroupsCsv(config) : "";
+      // Los grupos que haya, tal cual, aunque no validen (un borrador de la IA
+      // con un grupo sin tarjetas, una tarjeta con «;»…): al volver a subirla,
+      // su fila dice qué falta. Sin grupos legibles, la celda va vacía
+      const config = (q.config ?? {}) as Partial<CategorizeConfig>;
+      values.grupos =
+        Array.isArray(config.groups) && Array.isArray(config.cards)
+          ? formatGroupsCsv({ groups: config.groups, cards: config.cards })
+          : "";
     } else if (q.type === "cloze") {
+      // También una config rota sale con lo que tenga (texto sin huecos, lista
+      // sin opciones incorrectas…): su fila lo dirá al volver a subirla
       const config = (q.config ?? {}) as Partial<ClozeConfig>;
       values.texto = config.text ?? "";
       values.modo = config.mode && Object.hasOwn(CLOZE_MODE_TO_CSV, config.mode) ? CLOZE_MODE_TO_CSV[config.mode] : "";
@@ -176,15 +184,21 @@ export function inputsToCsv(inputs: QuestionInput[]): string {
   return BOM + lines.join("\r\n");
 }
 
+/**
+ * El examen en CSV: solo las preguntas que caben (`csvRepresentable`); las
+ * demás se omiten y `countNotInCsv` las cuenta para el aviso.
+ */
 export function exportExamCsv(examItemId: string): string {
   return inputsToCsv(
-    listQuestions(examItemId).map((q) => ({
-      type: q.type,
-      promptMd: q.promptMd,
-      points: q.points,
-      config: q.config ?? undefined,
-      options: q.options.map((o) => ({ textMd: o.textMd, isCorrect: o.isCorrect })),
-    }))
+    listQuestions(examItemId)
+      .filter((q) => csvRepresentable(q))
+      .map((q) => ({
+        type: q.type,
+        promptMd: q.promptMd,
+        points: q.points,
+        config: q.config ?? undefined,
+        options: q.options.map((o) => ({ textMd: o.textMd, isCorrect: o.isCorrect })),
+      }))
   );
 }
 
@@ -245,13 +259,6 @@ const TYPE_LABELS: Record<string, string> = {
   completar: "Completar el texto",
   abierta: "Texto abierto",
 };
-
-/** «a | b | c» → sus partes, sin espacios ni vacías. */
-const splitBars = (s: string) =>
-  s
-    .split("|")
-    .map((t) => t.trim())
-    .filter(Boolean);
 
 export function validateExamCsv(text: string): {
   rows: ExamCsvRow[];
@@ -366,7 +373,7 @@ export function validateExamCsv(text: string): {
             ? CSV_TO_CLOZE_MODE[rawMode]
             : undefined;
         if (!mode) return fail('En "modo" escribe escribir, banco o lista');
-        const distractors = splitBars(col.get(cells, "distractores"));
+        const distractors = splitDistractors(col.get(cells, "distractores"));
         if (distractors.length > 0 && mode !== "bank") {
           return fail('Los "distractores" solo se usan en el modo banco: cambia "modo" a banco o deja "distractores" vacío');
         }

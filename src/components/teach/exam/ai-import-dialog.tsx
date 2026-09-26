@@ -54,8 +54,8 @@ export function AiImportDialog({
   /** Preguntas que "reemplazar" SÍ borra (las que caben en el CSV). */
   currentCount: number;
   /**
-   * Preguntas que ya tiene el examen y no caben en el CSV (sobre imagen, o
-   * clasificar con íconos o separadores): la IA nunca las crea y "reemplazar" las conserva.
+   * Preguntas que ya tiene el examen y no caben en el CSV (`csvRepresentable`:
+   * sobre imagen, o clasificar con íconos o separadores): "reemplazar" las conserva.
    */
   notInCsvCount: number;
 }) {
@@ -214,6 +214,15 @@ export function AiImportDialog({
       }
       downloadTextFile(result.filename, result.csv);
       toast.success("CSV descargado. Edítalo en Excel y súbelo con «Importar CSV».");
+      if (result.omitted > 0) {
+        toast.warning(
+          plural(
+            result.omitted,
+            "1 pregunta no cabe en el CSV y no va en el archivo; sigue aquí, en la revisión.",
+            `${result.omitted} preguntas no caben en el CSV y no van en el archivo; siguen aquí, en la revisión.`
+          )
+        );
+      }
     });
   }
 

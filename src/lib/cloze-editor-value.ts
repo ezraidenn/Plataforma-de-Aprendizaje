@@ -31,13 +31,13 @@ export type ClozeEditorValue = {
 /**
  * Lo guardado → valor del editor. Sin nada guardado: texto vacío y «Escribir».
  * Los saltos de línea de Windows (de un Excel o de la IA) quedan en «\n», como
- * los da el campo de texto: si no, las posiciones de la selección no cuadrarían
- * con las del texto al hacer un hueco.
+ * los da el campo de texto (lo hace `sanitizeCloze` con `lfOnly`): si no, las
+ * posiciones de la selección no cuadrarían con las del texto al hacer un hueco.
  */
 export function initialClozeValue(raw: unknown): ClozeEditorValue {
   const c = sanitizeCloze(raw) as Partial<ClozeConfig>;
   return {
-    text: (c.text ?? "").replace(/\r\n?/g, "\n"),
+    text: c.text ?? "",
     mode: c.mode ?? "write",
     distractors: c.distractors ?? [],
     matchCase: c.matchCase ?? false,

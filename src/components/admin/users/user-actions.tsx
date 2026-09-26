@@ -499,7 +499,7 @@ export function UserActions({
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <AlertDialogAction
-              variant={user.active ? "destructive" : "default"}
+              variant={user.active ? "destructive-solid" : "default"}
               className={user.active ? undefined : "bg-cta text-cta-foreground hover:bg-cta/90"}
               onClick={toggleActive}
             >
@@ -603,7 +603,8 @@ export function UserActions({
                   Atrás
                 </Button>
                 <Button
-                  className="h-11 bg-destructive text-white hover:bg-destructive/90"
+                  variant="destructive-solid"
+                  className="h-11"
                   onClick={deleteUser}
                   disabled={pending || deleteConfirm.trim().toLowerCase() !== user.email}
                 >

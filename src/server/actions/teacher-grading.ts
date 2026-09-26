@@ -16,7 +16,7 @@ import {
   gradedRecently,
 } from "@/server/services/grading";
 import { listQuestions } from "@/server/services/exams";
-import { NO_ANSWER, boardAnswerSummary, imageAnswerSummary } from "@/server/services/exam-review";
+import { NO_ANSWER, boardAnswerSummary, clozeWrittenText, imageAnswerSummary } from "@/server/services/exam-review";
 import { getAssignmentDetail, listSubmissionFiles } from "@/server/services/assignments";
 
 function errorMessage(err: unknown, fallback: string): string {
@@ -122,6 +122,9 @@ export async function loadExamGradingAction(attemptId: string): Promise<LoadExam
       // El mismo resumen que lee el alumno («N de M tarjetas bien», «N de M huecos bien»)
       const summary = boardAnswerSummary(q, ans?.answerText, attemptId);
       if (summary !== NO_ANSWER) answerDisplay = summary;
+      // Completar al escribir: además, lo escrito en cada hueco (como en respuesta corta)
+      const written = clozeWrittenText(q, ans?.answerText, attemptId);
+      if (written) answerDisplay += ` — ${written}`;
     }
     return {
       questionId: q.id,

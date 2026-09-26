@@ -156,7 +156,7 @@ export function ManagedFilesSection({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" onClick={() => void confirmRemove()}>
+            <AlertDialogAction variant="destructive-solid" onClick={() => void confirmRemove()}>
               Quitar
             </AlertDialogAction>
           </AlertDialogFooter>

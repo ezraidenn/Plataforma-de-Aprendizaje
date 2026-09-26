@@ -8,6 +8,7 @@ import { alphaBounds, type CropRect } from "./image-layout";
 import { MAX_ASPECT, MIN_ASPECT, clamp, round4 } from "./image-questions";
 import { pixelRect, scaledSize } from "./photo-crop";
 import { EDITOR_IMAGE_MAX_BYTES } from "./upload-types";
+import { IMAGE_EXT } from "./inline-mime";
 
 /** Lado mayor máximo de un ícono guardado. */
 export const MAX_ICON_SIDE = 800;
@@ -21,9 +22,6 @@ const MAX_READ_PIXELS = 16_000_000;
 const INSPECT_SIDE = 256;
 /** Un ícono opaco que en PNG pesa más que esto (una foto, no una señal) se prueba también en JPEG. */
 const PNG_HEAVY_BYTES = 150 * 1024;
-
-/** Extensión de una imagen del editor según su tipo. */
-const IMAGE_EXT: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif" };
 
 /**
  * Nombre neutro con que se suben las fotos y los íconos de las preguntas, nunca

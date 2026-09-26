@@ -20,28 +20,43 @@ export function csvLine(values: (string | number | boolean | null | undefined)[]
 }
 
 /**
+ * Lo único que puede ir antes de la comilla que abre una celda: espacios y
+ * tabuladores. El mismo criterio en `parseCsvLine` y en `csvRecords`: si no,
+ * uno juntaría renglones que el otro lee como celdas separadas.
+ */
+const isFieldPad = (ch: string) => ch === " " || ch === "\t";
+
+/**
  * Parsea un registro respetando comillas (RFC 4180, como Excel): una comilla
  * solo abre una celda entre comillas al principio del campo (sin contar los
- * espacios); dentro, `""` es una comilla; en medio de un campo sin comillas
- * (`1/2"`) es texto, igual que en `csvRecords`.
+ * espacios y tabuladores: `isFieldPad`); dentro, `""` es una comilla; en medio
+ * de un campo sin comillas (`1/2"`) o tras cerrar las comillas es texto, igual
+ * que en `csvRecords`.
  */
 export function parseCsvLine(line: string, sep: "," | ";"): string[] {
   const out: string[] = [];
   let current = "";
   let inQuotes = false;
+  let atStart = true;
   for (let i = 0; i < line.length; i++) {
     const ch = line[i];
     if (inQuotes) {
       if (ch === '"' && line[i + 1] === '"') {
         current += '"';
         i++;
-      } else if (ch === '"') inQuotes = false;
-      else current += ch;
-    } else if (ch === '"' && current.trim() === "") inQuotes = true;
+      } else if (ch === '"') {
+        inQuotes = false;
+        atStart = false;
+      } else current += ch;
+    } else if (ch === '"' && atStart) inQuotes = true;
     else if (ch === sep) {
       out.push(current);
       current = "";
-    } else current += ch;
+      atStart = true;
+    } else {
+      current += ch;
+      if (!isFieldPad(ch)) atStart = false;
+    }
   }
   out.push(current);
   return out.map((s) => s.trim());
@@ -109,7 +124,7 @@ function quotedAtEnd(line: string, sep: "," | ";", inQuotes: boolean): boolean {
       }
     } else if (ch === '"' && atStart) inQuotes = true;
     else if (ch === sep) atStart = true;
-    else if (ch !== " " && ch !== "\t") atStart = false;
+    else if (!isFieldPad(ch)) atStart = false;
   }
   return inQuotes;
 }

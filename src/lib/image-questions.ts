@@ -430,12 +430,6 @@ export function parseMapAnswer(text: string | null | undefined): Record<string, 
   }
 }
 
-/**
- * `{ fichaDeLugar: fichaDeElemento }`; lo ilegible se descarta.
- * @deprecated Usa `parseMapAnswer`: es la misma lectura para todos los tipos con respuesta en mapa.
- */
-export const parseDragAnswer = parseMapAnswer;
-
 /** Marcas válidas (0–1), como mucho `max`. */
 export function parseClickAnswer(text: string | null | undefined, max: number): Point[] {
   try {

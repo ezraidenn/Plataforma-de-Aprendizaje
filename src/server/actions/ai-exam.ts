@@ -18,6 +18,7 @@ import {
 import { interpretChunkWithRetry, toDrafts } from "@/server/services/ai-exam-import";
 import { importQuestionInputs } from "@/server/services/exam-import";
 import { inputsToCsv } from "@/server/services/exam-csv";
+import { csvWritable } from "@/lib/csv-fit";
 import { draftToInput, type QuestionDraft } from "@/lib/question-draft";
 import { questionsToPreview, type PreviewQuestion } from "@/lib/preview-question";
 
@@ -139,9 +140,15 @@ export async function importAiQuestionsAction(input: {
   }
 }
 
-export type DraftsCsvResult = { csv: string; filename: string } | { error: string };
+/** `omitted`: borradores que no van en el archivo (el diálogo lo avisa). */
+export type DraftsCsvResult = { csv: string; filename: string; omitted: number } | { error: string };
 
-/** «Descargar como CSV»: los borradores en el formato de «Importar CSV». */
+/**
+ * «Descargar como CSV»: los borradores en el formato de «Importar CSV». Van
+ * todos, también los que aún no validan (para corregirlos en Excel: su fila
+ * dirá qué falta al volver a subirlos); solo se omite lo que una celda no
+ * puede llevar (`csvWritable`), y se cuenta.
+ */
 export async function draftsToCsvAction(input: {
   courseId: string;
   itemId: string;
@@ -155,7 +162,12 @@ export async function draftsToCsvAction(input: {
     .replace(/[^a-z0-9]+/gi, "-")
     .replace(/^-|-$/g, "")
     .toLowerCase();
-  return { csv: inputsToCsv(cleanDrafts(input.drafts).map(draftToInput)), filename: `${slug || "examen"}-ia.csv` };
+  const inputs = cleanDrafts(input.drafts).map(draftToInput);
+  // Lo que llegó menos lo que se escribe: también cuenta un borrador que la
+  // limpieza descarta (sin enunciado o de un tipo que no es de la IA)
+  const received = Array.isArray(input.drafts) ? input.drafts.length : 0;
+  const omitted = Math.max(0, received - inputs.filter(csvWritable).length);
+  return { csv: inputsToCsv(inputs), filename: `${slug || "examen"}-ia.csv`, omitted };
 }
 
 export type ExamPreviewResult = { questions: PreviewQuestion[] } | { error: string };

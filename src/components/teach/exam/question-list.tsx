@@ -295,7 +295,7 @@ export function QuestionList({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" onClick={confirmDelete}>
+            <AlertDialogAction variant="destructive-solid" onClick={confirmDelete}>
               Eliminar
             </AlertDialogAction>
           </AlertDialogFooter>

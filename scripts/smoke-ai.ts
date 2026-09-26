@@ -31,6 +31,7 @@ import { draftProblem, draftToInput, formatGroupLines, parseGroupLines, splitDis
 import { draftToPreview } from "../src/lib/preview-question";
 import { importQuestionInputs } from "../src/server/services/exam-import";
 import { inputsToCsv, validateExamCsv } from "../src/server/services/exam-csv";
+import { csvRepresentable, csvWritable } from "../src/lib/csv-fit";
 import { eq, like } from "drizzle-orm";
 import { db } from "../src/server/db";
 import { auditLog, courses as coursesTable, users } from "../src/server/db/schema";
@@ -448,6 +449,30 @@ function importChecks() {
   const csv = inputsToCsv([...drafts, ...toDrafts(TWO)].map(draftToInput));
   const back = validateExamCsv(csv);
   check("CSV desde borradores: las 9 filas son válidas", back.ok === 9 && back.invalid === 0, { ok: back.ok, invalid: back.invalid, rows: back.rows.filter((r) => r.status !== "ok") });
+
+  // Borradores a medio corregir: justo los que el maestro quiere arreglar en Excel. Van al
+  // CSV con lo que tengan (antes se perdían sin aviso) y, al volver, su fila dice qué falta
+  const needsFix = toDrafts({
+    questions: [
+      { ...NONE, type: "categorize", prompt: "Clasifica (un grupo sin tarjetas)", points: 2, groups: [{ name: "Frutas", cards: ["Manzana", "Pera"] }, { name: "Verduras", cards: [] }] },
+      { ...NONE, type: "cloze", prompt: "Completa (lista sin incorrectas)", points: 1, clozeText: "El agua hierve a [[100]] grados.", clozeMode: "select" },
+      { ...NONE, type: "cloze", prompt: "Completa (sin huecos)", points: 1, clozeText: "Todavía sin huecos.", clozeMode: "write" },
+    ],
+  });
+  const fixInputs = needsFix.map(draftToInput);
+  check("Borradores a medio corregir: no se pueden importar, pero sí escribir en el CSV",
+    needsFix.length === 3 && needsFix.every((d) => draftProblem(d) !== null) && fixInputs.every((q) => !csvRepresentable(q) && csvWritable(q)),
+    needsFix.map((d) => draftProblem(d)));
+  const fixCsv = inputsToCsv(fixInputs);
+  const fixBack = validateExamCsv(fixCsv);
+  check("…van al CSV con lo que tienen y su fila dice qué falta (el mensaje del editor)",
+    fixBack.rows.length === 3 && fixBack.invalid === 3 &&
+      fixCsv.includes("Frutas: Manzana; Pera | Verduras: ") && fixCsv.includes("Todavía sin huecos.") &&
+      fixBack.rows.map((r) => r.message).join(" | ") ===
+        "El grupo «Verduras» no tiene tarjetas | Al hueco 1 le falta al menos una opción incorrecta (!opción) | Marca al menos un hueco con [[ ]]",
+    fixBack.rows.map((r) => r.message));
+  check("…y como ninguno va sobre imagen ni lleva íconos, no se omite ninguno (el aviso de omitidos no sale)",
+    [...drafts, ...toDrafts(TWO), ...needsFix].map(draftToInput).every(csvWritable));
 
   const logged = db.select().from(auditLog).where(eq(auditLog.entityId, exam.id)).all();
   const first = logged.find((r) => (r.detail as { mode?: string } | null)?.mode === "append");

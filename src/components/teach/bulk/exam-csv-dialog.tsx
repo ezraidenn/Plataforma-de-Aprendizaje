@@ -19,6 +19,7 @@ import {
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { plural } from "@/lib/plural";
 import { replaceWarning } from "@/lib/replace-warning";
+import { NOT_IN_CSV_RULE } from "@/lib/csv-fit";
 import { downloadTextFile } from "@/components/teach/csv-download";
 import {
   StepIndicator,
@@ -45,8 +46,7 @@ type Preview = {
 };
 
 /** Por qué una pregunta no cabe en el CSV, para los avisos. */
-const WHY_NOT_IN_CSV =
-  "las preguntas sobre imagen y las de clasificar con íconos o con «:», «;» o «|» en sus grupos o tarjetas se editan solo en el editor";
+const WHY_NOT_IN_CSV = `las preguntas ${NOT_IN_CSV_RULE} se editan solo en el editor`;
 
 /** "1 pregunta no cabe..." / "N preguntas no caben...", con la concordancia correcta. */
 function notInCsvOmittedText(n: number): string {

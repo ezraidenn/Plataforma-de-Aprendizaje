@@ -24,7 +24,12 @@ export const MAX_GROUP_NAME = 40;
 export const MAX_CARD_TEXT = 80;
 const MAX_ID = 64;
 
-const lower = (s: string) => s.trim().toLocaleLowerCase("es");
+/**
+ * Clave para comparar nombres de grupo y textos de tarjeta: sin los espacios
+ * de las orillas ni mayúsculas. «Manzana» y «manzana » son la misma tarjeta
+ * (la validación y el editor usan esta misma clave).
+ */
+export const categorizeTextKey = (s: string) => s.trim().toLocaleLowerCase("es");
 
 /** null = válida; si no, el primer problema (texto que ve el maestro). */
 export function categorizeProblem(config: unknown): string | null {
@@ -40,8 +45,8 @@ export function categorizeProblem(config: unknown): string | null {
     const name = typeof g.name === "string" ? g.name.trim() : "";
     if (!name) return "Hay un grupo sin nombre";
     if (name.length > MAX_GROUP_NAME) return `Los nombres de grupo deben tener como máximo ${MAX_GROUP_NAME} caracteres`;
-    if (names.has(lower(name))) return "Hay dos grupos con el mismo nombre";
-    names.add(lower(name));
+    if (names.has(categorizeTextKey(name))) return "Hay dos grupos con el mismo nombre";
+    names.add(categorizeTextKey(name));
   }
   if (c.cards.length < MIN_CARDS) return "Agrega al menos dos tarjetas";
   if (c.cards.length > MAX_CARDS) return `Usa como máximo ${MAX_CARDS} tarjetas`;
@@ -63,7 +68,7 @@ export function categorizeProblem(config: unknown): string | null {
     } else {
       return "Hay una tarjeta de un tipo desconocido";
     }
-    const look = k.kind === "icon" ? `i:${k.fileId}` : `t:${lower(k.text as string)}`;
+    const look = k.kind === "icon" ? `i:${k.fileId}` : `t:${categorizeTextKey(k.text as string)}`;
     if (looks.has(look)) return "Hay dos tarjetas iguales: el alumno no las distinguiría";
     looks.add(look);
   }

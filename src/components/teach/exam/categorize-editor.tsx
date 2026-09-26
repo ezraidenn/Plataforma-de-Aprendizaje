@@ -20,6 +20,7 @@ import {
   MAX_GROUPS,
   MIN_GROUPS,
   categorizeProblem,
+  categorizeTextKey,
   type CategorizeCard,
   type CategorizeConfig,
   type CategorizeGroup,
@@ -50,7 +51,8 @@ const DUPLICATE_ICON = "Ya hay una tarjeta con ese ícono: el alumno no las dist
 /** Selector de un atributo `data-…` con su valor escapado (las claves vienen de lo guardado). */
 const byData = (name: string, value: string) => `[data-${name}="${CSS.escape(value)}"]`;
 
-const sameText = (a: string | undefined, b: string) => (a ?? "").trim().toLocaleLowerCase("es") === b.trim().toLocaleLowerCase("es");
+/** Dos textos de tarjeta que el alumno no distinguiría: la misma clave que la validación. */
+const sameText = (a: string | undefined, b: string) => categorizeTextKey(a ?? "") === categorizeTextKey(b);
 
 export function CategorizeEditor({
   value,
@@ -339,7 +341,7 @@ export function CategorizeEditor({
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <AlertDialogAction
-              variant="destructive"
+              variant="destructive-solid"
               onClick={() => {
                 if (removing) removeGroup(removing);
                 setRemoving(null);

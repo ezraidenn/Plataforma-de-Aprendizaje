@@ -139,7 +139,8 @@ export function DeleteForeverDialog({
               </Button>
               <Button
                 type="submit"
-                className="h-11 bg-destructive text-white hover:bg-destructive/90"
+                variant="destructive-solid"
+                className="h-11"
                 disabled={pending || !isDeleteConfirmed(typed)}
               >
                 {pending ? <Loader2 className="animate-spin" aria-hidden /> : <Trash2 aria-hidden />}

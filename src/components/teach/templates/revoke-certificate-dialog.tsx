@@ -83,8 +83,7 @@ export function RevokeCertificateDialog({
         <AlertDialogFooter>
           <AlertDialogCancel disabled={pending}>Cancelar</AlertDialogCancel>
           <Button
-            variant="destructive"
-            className="bg-destructive text-white hover:bg-destructive/90"
+            variant="destructive-solid"
             onClick={revoke}
             disabled={pending || !reason.trim()}
           >
