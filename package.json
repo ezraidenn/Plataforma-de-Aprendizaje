@@ -40,6 +40,7 @@
     "smoke:copy": "node --conditions=react-server --import tsx scripts/smoke-copy.ts",
     "smoke:assistant": "node --conditions=react-server --import tsx scripts/smoke-assistant.ts",
     "smoke:image": "node --conditions=react-server --import tsx scripts/smoke-image-questions.ts",
+    "smoke:cloze": "node --conditions=react-server --import tsx scripts/smoke-cloze.ts",
     "certs:backfill": "node --conditions=react-server --import tsx scripts/backfill-certificates.ts",
     "certs:backfill-teacher": "node --conditions=react-server --import tsx scripts/backfill-certificates.ts",
     "help:shots": "node scripts/help-shots.cjs",
