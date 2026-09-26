@@ -45,7 +45,8 @@ type Preview = {
 };
 
 /** Por qué una pregunta no cabe en el CSV, para los avisos. */
-const WHY_NOT_IN_CSV = "las preguntas sobre imagen y las de clasificar con tarjetas de ícono se editan solo en el editor";
+const WHY_NOT_IN_CSV =
+  "las preguntas sobre imagen y las de clasificar con íconos o con «:», «;» o «|» en sus grupos o tarjetas se editan solo en el editor";
 
 /** "1 pregunta no cabe..." / "N preguntas no caben...", con la concordancia correcta. */
 function notInCsvOmittedText(n: number): string {

@@ -8,8 +8,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Textarea } from "@/components/ui/textarea";
-import { DRAFT_TYPE_LABEL, draftProblem, formatGroupLines, parseGroupLines, type QuestionDraft } from "@/lib/question-draft";
-import type { ClozeMode } from "@/lib/cloze";
+import {
+  DRAFT_TYPE_LABEL,
+  draftProblem,
+  formatGroupLines,
+  parseGroupLines,
+  splitDistractors,
+  type QuestionDraft,
+} from "@/lib/question-draft";
+import { CLOZE_MODES, CLOZE_MODE_LABELS, type ClozeMode } from "@/lib/cloze";
 import { aiFileKind } from "@/lib/ai-import-files";
 
 /**
@@ -165,6 +172,9 @@ export function DraftCard({
 function GroupsField({ draft, n, onChange }: { draft: QuestionDraft; n: number; onChange: (d: QuestionDraft) => void }) {
   const hintId = useId();
   const [text, setText] = useState(() => formatGroupLines(draft.groups));
+  // Aquí «:» separa el nombre de las tarjetas: un nombre que ya lo lleva (así
+  // lo transcribió la IA) se partiría en otro lugar al corregir las líneas
+  const colon = draft.groups.find((g) => g.name.includes(":"));
   return (
     <div className="grid gap-1 pl-8">
       <Textarea
@@ -180,24 +190,27 @@ function GroupsField({ draft, n, onChange }: { draft: QuestionDraft; n: number; 
       />
       <p id={hintId} className="text-xs text-muted-foreground">
         Un grupo por línea: <code>Grupo: tarjeta; tarjeta</code>.
+        {colon && (
+          <span className="mt-0.5 flex items-start gap-1.5 text-[13px] text-amber-800">
+            <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+            El grupo «{colon.name}» lleva «:» en el nombre: si corriges estas líneas, quítaselo (lo que va antes del
+            primer «:» es el nombre).
+          </span>
+        )}
       </p>
     </div>
   );
 }
 
-const CLOZE_MODES: [ClozeMode, string][] = [
-  ["write", "Escribir"],
-  ["bank", "Banco"],
-  ["select", "Lista"],
-];
+const MODE_LABELS: [ClozeMode, string][] = CLOZE_MODES.map((m) => [m, CLOZE_MODE_LABELS[m]]);
 
 /** Completar el texto: el texto con sus huecos, cómo se contesta y, en banco, los distractores. */
 function ClozeFields({ draft, n, onChange }: { draft: QuestionDraft; n: number; onChange: (d: QuestionDraft) => void }) {
   const hintId = useId();
   const modeId = useId();
   const wordsId = useId();
-  // Como los grupos: lo escrito tal cual, las palabras se leen de ahí
-  const [words, setWords] = useState(() => draft.distractors.join("; "));
+  // Como los grupos: lo escrito tal cual, las palabras se leen de ahí (separadas por «|», como en el Excel)
+  const [words, setWords] = useState(() => draft.distractors.join(" | "));
   return (
     <div className="grid gap-2 pl-8">
       <div className="grid gap-1">
@@ -223,7 +236,7 @@ function ClozeFields({ draft, n, onChange }: { draft: QuestionDraft; n: number; 
           aria-labelledby={modeId}
           className="flex w-auto flex-wrap gap-4"
         >
-          {CLOZE_MODES.map(([mode, label]) => (
+          {MODE_LABELS.map(([mode, label]) => (
             <Label key={mode} className="flex items-center gap-2 font-normal">
               <RadioGroupItem value={mode} /> {label}
             </Label>
@@ -233,20 +246,14 @@ function ClozeFields({ draft, n, onChange }: { draft: QuestionDraft; n: number; 
       {draft.clozeMode === "bank" && (
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <Label htmlFor={wordsId} className="text-xs font-normal text-muted-foreground">
-            Distractores (palabras de más en el banco, separadas por ;):
+            Distractores (palabras de más en el banco, separadas por |):
           </Label>
           <Input
             id={wordsId}
             value={words}
             onChange={(e) => {
               setWords(e.target.value);
-              onChange({
-                ...draft,
-                distractors: e.target.value
-                  .split(";")
-                  .map((s) => s.trim())
-                  .filter(Boolean),
-              });
+              onChange({ ...draft, distractors: splitDistractors(e.target.value) });
             }}
             className="h-9 min-w-40 flex-1 text-sm"
           />

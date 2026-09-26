@@ -94,10 +94,11 @@ function pureChecks() {
   check("Leer grupos", !("error" in back) && back.groups.length === 2 && back.cards.length === 3 && back.cards[2].groupId === back.groups[1].id, back);
   check("Leer grupos: sin «:» es error", "error" in parseGroupsCsv("Frutas Manzana | Verduras: Zanahoria"));
   check("Leer grupos: formato tolerante a espacios", !("error" in parseGroupsCsv("  Frutas :Manzana ;  Pera|Verduras:Zanahoria ")));
-  check("Cabe en el CSV: solo texto sí; con un ícono, o sobre imagen, no; lo demás, siempre",
+  check("Cabe en el CSV: solo texto sí; con un ícono, rota o sobre imagen, no; completar si está completa; lo demás, siempre",
     csvRepresentable({ type: "categorize", config: { ...C, cards: C.cards.slice(0, 3) } }) && !csvRepresentable({ type: "categorize", config: C }) &&
       !csvRepresentable({ type: "categorize", config: null }) && !csvRepresentable({ type: "image_drag", config: {} }) &&
-      csvRepresentable({ type: "cloze", config: null }) && csvRepresentable({ type: "open_text" }));
+      csvRepresentable({ type: "cloze", config: { text: "[[a]]", mode: "write" } }) && !csvRepresentable({ type: "cloze", config: null }) &&
+      csvRepresentable({ type: "open_text" }));
   // Una fila de «clasificar» con error dice qué falta, con los mismos textos que el editor
   const row = (grupos: string) => validateExamCsv(`tipo,pregunta,puntos,grupos\r\nclasificar,Clasifica,1,"${grupos}"`).rows[0];
   check("Fila sin grupos: lo dice", row("").status === "invalid" && row("").message.includes('"grupos"'), row("").message);
@@ -364,9 +365,19 @@ async function endToEnd() {
     check("CSV: exportar las omite", parseCsv(exportExamCsv(main.exam.id), { maxRows: 10 }).rows.length === 0);
     const textOnly: CategorizeConfig = { ...config, cards: config.cards.slice(0, 3) };
     const textId = examsSvc.createQuestion(main.exam.id, { type: "categorize", promptMd: `${P} Solo texto`, points: 2, config: textOnly });
-    // Entre las dos de ícono, para ver que cada una vuelve a su lugar
-    examsSvc.reorderQuestions(main.exam.id, [main.qId, textId, copyId]);
-    check("CSV: la de solo texto sí cabe", countNotInCsv(main.exam.id) === 2 && csvRepresentable({ type: "categorize", config: textOnly }));
+    // Solo texto, pero con separadores del CSV: «Frutas: rojas» y «Sal; pimienta» volverían partidos
+    const colonName: CategorizeConfig = { ...textOnly, groups: [{ id: G.fr, name: "Frutas: rojas" }, textOnly.groups[1]] };
+    const semicolonCard: CategorizeConfig = { ...textOnly, cards: [...textOnly.cards.slice(0, 2), { id: K.zan, kind: "text", text: "Sal; pimienta", groupId: G.ve }] };
+    const colonId = examsSvc.createQuestion(main.exam.id, { type: "categorize", promptMd: `${P} Con dos puntos`, points: 1, config: colonName });
+    const semicolonId = examsSvc.createQuestion(main.exam.id, { type: "categorize", promptMd: `${P} Con punto y coma`, points: 1, config: semicolonCard });
+    // Entre las que no caben, para ver que cada una vuelve a su lugar
+    examsSvc.reorderQuestions(main.exam.id, [main.qId, colonId, textId, semicolonId, copyId]);
+    check("CSV: la de solo texto sí cabe; con «:» en un grupo o «;» en una tarjeta, no (se cuentan)",
+      countNotInCsv(main.exam.id) === 4 && csvRepresentable({ type: "categorize", config: textOnly }) &&
+        !csvRepresentable({ type: "categorize", config: colonName }) && !csvRepresentable({ type: "categorize", config: semicolonCard }) &&
+        !csvRepresentable({ type: "categorize", config: { ...textOnly, cards: [...textOnly.cards.slice(0, 2), { ...textOnly.cards[2], text: "Zana|horia" }] } }) &&
+        csvRepresentable({ type: "categorize", config: { ...textOnly, cards: [...textOnly.cards.slice(0, 2), { ...textOnly.cards[2], text: "Zanahoria: naranja" }] } }),
+      countNotInCsv(main.exam.id));
     const csv = exportExamCsv(main.exam.id);
     const sheet = parseCsv(csv, { maxRows: 10 });
     const cell = (name: string) => sheet.rows[0]?.cells[sheet.headers.indexOf(name)];
@@ -380,10 +391,11 @@ async function endToEnd() {
       back.rows);
     const replaced = importExamCsv({ actorId: teacher, examItemId: main.exam.id, csvText: csv, mode: "replace" });
     const afterReplace = examsSvc.listQuestions(main.exam.id);
-    check("CSV: «reemplazar» conserva las de ícono en su lugar y cambia la de texto por la del archivo",
-      replaced.kept === 2 && replaced.imported === 1 && afterReplace.length === 3 &&
-        afterReplace[0].id === main.qId && afterReplace[2].id === copyId &&
-        afterReplace[1].id !== textId && afterReplace[1].promptMd === `${P} Solo texto` && csvRepresentable(afterReplace[1]),
+    check("CSV: «reemplazar» conserva en su lugar las que no caben (íconos, separadores) y cambia la de texto por la del archivo",
+      replaced.kept === 4 && replaced.imported === 1 && afterReplace.length === 5 &&
+        afterReplace[0].id === main.qId && afterReplace[1].id === colonId && afterReplace[3].id === semicolonId && afterReplace[4].id === copyId &&
+        JSON.stringify(afterReplace[1].config) === JSON.stringify(colonName) && JSON.stringify(afterReplace[3].config) === JSON.stringify(semicolonCard) &&
+        afterReplace[2].id !== textId && afterReplace[2].promptMd === `${P} Solo texto` && csvRepresentable(afterReplace[2]),
       { replaced, order: afterReplace.map((q) => q.promptMd) });
   } finally {
     await cleanupDb();

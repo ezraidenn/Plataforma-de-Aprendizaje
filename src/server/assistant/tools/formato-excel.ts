@@ -60,6 +60,8 @@ const WIDTHS: Record<string, number> = {
   texto: 16,
   modo: 4,
   distractores: 8,
+  mayusculas: 4,
+  acentos: 4,
 };
 
 type Plantilla = {
@@ -166,7 +168,9 @@ const NOTAS_EXAMEN = [
   "modo: solo en completar, escribir (el alumno escribe), banco (elige palabras de un banco) o lista (elige de una lista en cada hueco). Vacío = escribir.",
   "distractores: solo en completar con modo banco, las palabras de más del banco separadas por | (manguera | etiqueta).",
   "abierta no lleva opciones: la califica el maestro a mano.",
-  "Las preguntas sobre imagen y las de clasificar con tarjetas de ícono no caben en este Excel: se hacen en el editor del examen.",
+  "mayusculas y acentos: solo en completar con modo escribir; SI para que al calificar cuenten las mayúsculas o los acentos (la ñ siempre cuenta). Vacío = NO.",
+  "Una celda puede tener varios renglones (Alt+Enter): el texto de completar los conserva.",
+  "Las preguntas sobre imagen y las de clasificar con íconos o con «:», «;» o «|» en sus grupos o tarjetas no caben en este Excel: se hacen en el editor del examen.",
 ];
 
 /** Matrícula del curso tal como está hoy; sin alumnos, una fila de ejemplo. */
@@ -316,8 +320,8 @@ export const formatoExcel: AssistantTool = {
     const avisoNoCaben = plantilla.omitidas
       ? plural(
           plantilla.omitidas,
-          "1 pregunta no cabe en el Excel (es sobre imagen o de clasificar con íconos); en el examen se queda como está.",
-          `${plantilla.omitidas} preguntas no caben en el Excel (son sobre imagen o de clasificar con íconos); en el examen se quedan como están.`
+          "1 pregunta no cabe en el Excel (es sobre imagen, o de clasificar con íconos o con «:», «;» o «|» en sus grupos o tarjetas); en el examen se queda como está.",
+          `${plantilla.omitidas} preguntas no caben en el Excel (son sobre imagen, o de clasificar con íconos o con «:», «;» o «|» en sus grupos o tarjetas); en el examen se quedan como están.`
         )
       : "";
 

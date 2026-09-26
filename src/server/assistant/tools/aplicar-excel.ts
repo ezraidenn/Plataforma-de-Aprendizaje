@@ -6,7 +6,7 @@ import { getOwnedCourse, type Course } from "@/server/services/courses";
 import { getItem } from "@/server/services/tree";
 import { getExam, listQuestions } from "@/server/services/exams";
 import { audit } from "@/server/services/audit";
-import { BOM, csvLine } from "@/server/services/csv-core";
+import { BOM, csvLine, csvRecords } from "@/server/services/csv-core";
 import { validateRosterCsv, importRosterCsv } from "@/server/services/bulk-roster";
 import { validateLessonsCsv, importLessonsCsv } from "@/server/services/bulk-lessons";
 import { validateExamCsv, countNotInCsv } from "@/server/services/exam-csv";
@@ -88,25 +88,32 @@ function hojaDe(sheets: SheetData[], forzado: ExcelFormat | ""): Hoja | null {
   };
 }
 
-/** La hoja tal cual → el CSV que esperan los validadores. */
-function csvOf(hoja: Hoja): string {
-  return BOM + [csvLine(hoja.headers), ...hoja.rows.map((cells) => csvLine(cells))].join("\r\n");
+/**
+ * La hoja tal cual → el CSV que esperan los validadores. Las celdas llegan con
+ * sus renglones (ver `sheetsOf`): las preguntas de examen los conservan (un
+ * texto de completar con párrafos); los demás formatos, en una sola línea,
+ * como siempre.
+ */
+function csvOf(hoja: Hoja, formato: ExcelFormat): string {
+  const cell = formato === "examen" ? (c: string) => c : (c: string) => c.replace(/\s*\n\s*/g, " ");
+  return BOM + [csvLine(hoja.headers.map(cell)), ...hoja.rows.map((cells) => csvLine(cells.map(cell)))].join("\r\n");
 }
 
-/** Id de fila = su línea en el CSV, para poder rehacerlo con solo las que queden. */
+/** Id de fila = su número de fila en el CSV, para poder rehacerlo con solo las que queden. */
 const rowId = (line: number) => `l${line}`;
 
 /**
- * El CSV con solo las líneas que siguen en la tabla (el usuario pudo quitar
+ * El CSV con solo las filas que siguen en la tabla (el usuario pudo quitar
  * filas, y las bloqueadas nunca llegan aquí). `null` = no quedó ninguna.
  */
 function keepLines(csv: string, rows: ProposalRow[]): string | null {
   const wanted = new Set(rows.map((r) => Number(r.id.slice(1))).filter((n) => Number.isFinite(n)));
-  // Las líneas se cuentan como en `parseCsv`: sin las vacías y empezando en 1
-  const lines = csv.replace(/^﻿/, "").split(/\r?\n/).filter((l) => l.trim() !== "");
-  const kept = lines.filter((_, i) => wanted.has(i + 1));
-  if (lines.length === 0 || kept.length === 0) return null;
-  return BOM + [lines[0], ...kept].join("\r\n");
+  // Las filas se cuentan como en `parseCsv`: por registro (una celda de varias
+  // líneas es una sola fila), sin los renglones vacíos y empezando en 1
+  const records = csvRecords(csv);
+  const kept = records.filter((_, i) => wanted.has(i + 1));
+  if (records.length === 0 || kept.length === 0) return null;
+  return BOM + [records[0], ...kept].join("\r\n");
 }
 
 /** Curso del parámetro, comprobando que sea suyo. */
@@ -244,10 +251,10 @@ function reemplazoTexto(examTitle: string, imported: number, kept: number, antes
   return `${plural(total, `${examTitle} quedó con 1 pregunta`, `${examTitle} quedó con ${total} preguntas`)}: ${partes.join("; ")}.`;
 }
 
-/** Las hojas del último adjunto del mensaje. */
+/** Las hojas del último adjunto del mensaje, con los renglones de cada celda (`csvOf` decide qué hacer con ellos). */
 async function sheetsOf(adjunto: StoredAttachment): Promise<SheetData[]> {
   const { bytes, fileName } = await attachmentBytes(adjunto);
-  return readSheetRows(bytes, fileName);
+  return readSheetRows(bytes, fileName, { lineBreaks: true });
 }
 
 /**
@@ -279,7 +286,7 @@ export const aplicarExcel: AssistantTool = {
       [...FORMATOS]
     ),
     modo: strEnum(
-      'SOLO para preguntas de examen: «reemplazar» borra las preguntas que tiene el examen (las que no caben en el Excel —sobre imagen o de clasificar con íconos— se conservan) y deja las del archivo; «agregar» las suma al final. Déjalo en «» la primera vez: el servidor te dirá que se lo preguntes al usuario',
+      'SOLO para preguntas de examen: «reemplazar» borra las preguntas que tiene el examen (las que no caben en el Excel —sobre imagen, o de clasificar con íconos o con «:», «;» o «|» en sus grupos o tarjetas— se conservan) y deja las del archivo; «agregar» las suma al final. Déjalo en «» la primera vez: el servidor te dirá que se lo preguntes al usuario',
       [...MODOS]
     ),
   }),
@@ -342,7 +349,7 @@ export const aplicarExcel: AssistantTool = {
       return { forModel: `El archivo trae los encabezados de ${FORMAT_LABELS[formato]} pero ninguna fila debajo; no hay nada que aplicar.${discrepa}` };
     }
 
-    const csv = csvOf(hoja);
+    const csv = csvOf(hoja, formato);
     const cursoId = param(params, "curso_id");
     const itemId = param(params, "item_id");
     // Lo que no esté en el enum se trata como «todavía no se sabe»: se pregunta
@@ -439,7 +446,7 @@ export const aplicarExcel: AssistantTool = {
       try {
         const hoja = hojaDe(await sheetsOf(adjunto), formato);
         if (!hoja) return { text: "Ya no pude leer el archivo de esta revisión; vuelve a adjuntarlo." };
-        csv = csvOf(hoja);
+        csv = csvOf(hoja, formato);
       } catch (err) {
         return { text: err instanceof Error ? err.message : "Ya no pude leer el archivo de esta revisión." };
       }

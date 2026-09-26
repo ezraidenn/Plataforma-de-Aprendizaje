@@ -9,23 +9,17 @@ import { plural } from "./plural";
 export function replaceWarning(replacedCount: number, keptCount: number): string {
   const partes: string[] = [];
   if (replacedCount > 0) {
-    partes.push(
-      keptCount > 0
-        ? plural(
-            replacedCount,
-            "se borrará la pregunta que sí cabe en el CSV",
-            `se borrarán las ${replacedCount} preguntas que sí caben en el CSV`
-          )
-        : plural(replacedCount, "se borrará la pregunta actual", `se borrarán las ${replacedCount} preguntas actuales`)
-    );
+    partes.push(plural(replacedCount, "se borrará la pregunta actual", `se borrarán las ${replacedCount} preguntas actuales`));
   }
   if (keptCount > 0) {
     partes.push(
-      plural(
-        keptCount,
-        "la pregunta que no cabe en el CSV se conserva tal como está",
-        `las ${keptCount} preguntas que no caben en el CSV se conservan tal como están`
-      )
+      replacedCount > 0
+        ? plural(keptCount, "se conserva tal como está la que no cabe en el CSV", `se conservan tal como están las ${keptCount} que no caben en el CSV`)
+        : plural(
+            keptCount,
+            "se conserva tal como está la pregunta que no cabe en el CSV",
+            `se conservan tal como están las ${keptCount} preguntas que no caben en el CSV`
+          )
     );
   }
   const texto = `${partes.join("; ")}.`;

@@ -1059,36 +1059,57 @@ async function aplicarExcelChecks() {
   check("Reemplazar: el resultado dice a cuántas sustituyó", "text" in aplR && aplR.text.includes("1 del archivo reemplazó a la que tenía"), aplR);
 
   // ── Clasificar y completar: entran por el Excel y vuelven a salir en el formato ──
-  const cabN = ["tipo", "pregunta", "puntos", "grupos", "texto", "modo", "distractores"];
+  // El texto de completar con dos renglones y una línea en blanco (Alt+Enter en Excel)
+  const TEXTO_N = "Jala el [[seguro]].\n\nDespués apunta a la [[base]]\ny barre de lado a lado.";
+  const cabN = ["tipo", "pregunta", "puntos", "grupos", "texto", "modo", "distractores", "mayusculas", "acentos"];
   const filasN = [
-    ["clasificar", `${P} Clasifica los materiales`, "3", "Clase A: Madera; Papel | Clase B: Gasolina", "", "", ""],
-    ["completar", `${P} Completa la técnica`, "2", "", "Jala el [[seguro]] y apunta a la [[base]].", "banco", "manguera | etiqueta"],
+    ["clasificar", `${P} Clasifica los materiales`, "3", "Clase A: Madera; Papel | Clase B: Gasolina", "", "", "", "", ""],
+    ["completar", `${P} Completa la técnica`, "2", "", TEXTO_N, "banco", "manguera | etiqueta", "", ""],
+    ["completar", `${P} Escribe la sigla`, "1", "", "La técnica se llama [[PASS]].", "escribir", "", "SI", "SI"],
   ];
   const adjN = await adjuntar(conv.id, await xlsxDeFilas("Preguntas", cabN, filasN), `${P}-examen-3.xlsx`);
   const ctxN = { ...base, attachments: [adjN] };
   const propN = await tool.run({ curso_id: "", item_id: fmt.examen, formato: "", modo: "agregar" }, ctxN);
   const pN = getProposal(propN.proposalId!)!;
-  check("Clasificar y completar: la tabla los reconoce y no los bloquea", pN.rows.map((r) => `${r.cells.tipo}:${r.blocked ? "no" : "sí"}`).join() === "Clasificar en grupos:sí,Completar el texto:sí", pN.rows.map((r) => r.cells));
-  await applyProposal(propN.proposalId!, pN.rows, ctxN, "");
-  const nuevas = listQuestions(fmt.examen).slice(-2);
   check(
-    "Clasificar y completar: se crean con su config",
-    nuevas.map((q) => q.type).join() === "categorize,cloze" && (nuevas[1].config as { mode?: string; distractors?: string[] }).distractors?.join() === "manguera,etiqueta",
+    "Clasificar y completar: la tabla los reconoce y no los bloquea (el texto de varios renglones es una sola fila)",
+    pN.rows.map((r) => `${r.cells.tipo}:${r.blocked ? "no" : "sí"}`).join() === "Clasificar en grupos:sí,Completar el texto:sí,Completar el texto:sí",
+    pN.rows.map((r) => r.cells)
+  );
+  await applyProposal(propN.proposalId!, pN.rows, ctxN, "");
+  const nuevas = listQuestions(fmt.examen).slice(-3);
+  const cfgN = (i: number) => nuevas[i]?.config as { text?: string; mode?: string; distractors?: string[]; matchCase?: boolean; matchAccents?: boolean };
+  check(
+    "Clasificar y completar: se crean con su config, renglones, distractores, mayúsculas y acentos incluidos",
+    nuevas.map((q) => q.type).join() === "categorize,cloze,cloze" &&
+      cfgN(1).text === TEXTO_N && cfgN(1).distractors?.join() === "manguera,etiqueta" &&
+      cfgN(2).mode === "write" && cfgN(2).matchCase === true && cfgN(2).matchAccents === true,
     nuevas.map((q) => [q.type, q.config])
   );
   const deVuelta = await toolByName("formato_excel")!.run({ tipo: "examen", curso_id: "", item_id: fmt.examen }, base);
-  const hojaV = (await hojasDeDescarga(deVuelta.blocks))[0];
+  const archivoV = await readExportBytes(ids.teacher, exportIdOf(deVuelta.blocks));
+  const hojaV = archivoV ? (await readSheetRows(archivoV.bytes, archivoV.fileName, { lineBreaks: true }))[0] : undefined;
   const cabV = hojaV?.rows[0]?.cells ?? [];
-  const filaDe = (tipo: string) => hojaV?.rows.find((r) => r.cells[0] === tipo)?.cells ?? [];
+  const filaDe = (tipo: string, n = 0) => hojaV?.rows.filter((r) => r.cells[0] === tipo)[n]?.cells ?? [];
   check(
-    "…y el formato del examen los trae de vuelta con sus columnas",
+    "…y el formato del examen los trae de vuelta con sus columnas (y sus renglones)",
     filaDe("clasificar")[cabV.indexOf("grupos")] === "Clase A: Madera; Papel | Clase B: Gasolina" &&
-      filaDe("completar")[cabV.indexOf("texto")] === "Jala el [[seguro]] y apunta a la [[base]]." &&
+      filaDe("completar")[cabV.indexOf("texto")] === TEXTO_N &&
       filaDe("completar")[cabV.indexOf("modo")] === "banco" &&
-      filaDe("completar")[cabV.indexOf("distractores")] === "manguera | etiqueta",
+      filaDe("completar")[cabV.indexOf("distractores")] === "manguera | etiqueta" &&
+      filaDe("completar", 1)[cabV.indexOf("mayusculas")] === "SI" && filaDe("completar", 1)[cabV.indexOf("acentos")] === "SI",
     hojaV?.rows.map((r) => r.cells)
   );
   check("…y como todas caben, no avisa de ninguna que falte", !deVuelta.forModel.includes("no cabe"), deVuelta.forModel);
+  // La vuelta completa: ese mismo Excel, devuelto tal cual con «reemplazar», deja el examen igual
+  const antesV = listQuestions(fmt.examen).map((q) => [q.type, q.promptMd, q.points, q.config, q.options.map((o) => [o.textMd, o.isCorrect])]);
+  const adjV = await adjuntar(conv.id, archivoV!.bytes, `${P}-examen-vuelta.xlsx`);
+  const ctxV = { ...base, attachments: [adjV] };
+  const propV = await tool.run({ curso_id: "", item_id: fmt.examen, formato: "", modo: "reemplazar" }, ctxV);
+  const pV = getProposal(propV.proposalId!)!;
+  await applyProposal(propV.proposalId!, pV.rows, ctxV, "");
+  const despuesV = listQuestions(fmt.examen).map((q) => [q.type, q.promptMd, q.points, q.config, q.options.map((o) => [o.textMd, o.isCorrect])]);
+  check("Vuelta completa formato_excel → aplicar_excel (reemplazar): las preguntas quedan iguales", JSON.stringify(despuesV) === JSON.stringify(antesV), { antesV, despuesV });
 
   // ── Lo que no es de nadie y lo que ya tiene herramienta ──
   const adjRaro = await adjuntar(conv.id, await xlsxDeFilas("Hoja", ["cosa", "otra"], [["1", "2"]]), `${P}-raro.xlsx`);

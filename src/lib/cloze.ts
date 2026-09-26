@@ -21,6 +21,8 @@ export type ClozeBlank = { answers: string[]; wrong: string[] };
 export type ClozePiece = { kind: "text"; text: string } | { kind: "blank"; index: number };
 
 export const CLOZE_MODES: readonly ClozeMode[] = ["write", "bank", "select"];
+/** Nombre de cada forma de contestar: el mismo en el editor y en la revisión de la IA. */
+export const CLOZE_MODE_LABELS: Record<ClozeMode, string> = { write: "Escribir", bank: "Banco", select: "Lista" };
 export const MAX_BLANKS = 20;
 export const MAX_CLOZE_TEXT = 3000;
 export const MAX_BLANK_TEXT = 60;
@@ -121,6 +123,8 @@ export function clozeProblem(config: unknown): string | null {
     if (!Array.isArray(c.distractors) || c.distractors.some((d) => typeof d !== "string" || !d.trim())) {
       return "Hay un distractor vacío";
     }
+    // «|» separa los distractores en el Excel/CSV (y en la revisión de la IA): uno que lo lleve volvería partido
+    if (c.distractors.some((d) => d.includes("|"))) return "Un distractor no puede llevar |";
     if (c.distractors.length > MAX_DISTRACTORS) return `Usa como máximo ${MAX_DISTRACTORS} distractores`;
     if (c.distractors.some((d) => d.length > MAX_BLANK_TEXT)) {
       return `Los distractores deben tener como máximo ${MAX_BLANK_TEXT} caracteres`;

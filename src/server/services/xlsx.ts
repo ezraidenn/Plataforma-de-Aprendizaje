@@ -126,7 +126,15 @@ function sheetName(raw: string, used: Set<string>): string {
 function cellXml(cell: Cell): string {
   const style = cell.style ?? "normal";
   const text = esc(cell.text ?? "");
-  const p = text ? `<text:p>${text}</text:p>` : "";
+  // Un párrafo por renglón (dentro de un párrafo, un salto de línea es solo un
+  // espacio): así una celda de varias líneas vuelve igual, líneas en blanco incluidas
+  const p = text
+    ? (cell.text ?? "")
+        .replace(/\r\n?/g, "\n")
+        .split("\n")
+        .map((line) => (line ? `<text:p>${esc(line)}</text:p>` : "<text:p/>"))
+        .join("")
+    : "";
 
   let format: Format = "";
   let value = "";

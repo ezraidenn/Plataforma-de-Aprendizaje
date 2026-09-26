@@ -9,7 +9,7 @@ import { audit } from "./audit";
  * Importa preguntas ya interpretadas (del CSV o de la IA). Todo ocurre en una
  * transacción: si algo falla al crearlas, el examen queda como estaba (ni
  * siquiera «reemplazar» borra nada). Las preguntas que no caben en el CSV
- * (`csvRepresentable`: sobre imagen, o clasificar con alguna tarjeta de ícono)
+ * (`csvRepresentable`: sobre imagen, o clasificar con íconos o separadores)
  * no las puede traer el archivo ni las crea la IA, así que «reemplazar» las
  * conserva tal cual en vez de borrarlas (`kept`) — y, para que el examen no
  * quede desordenado, cada una vuelve a su lugar original: las nuevas llenan los

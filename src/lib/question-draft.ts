@@ -113,6 +113,14 @@ export function formatGroupLines(groups: QuestionDraft["groups"]): string {
   return groups.map((g) => `${g.name}: ${g.cards.join("; ")}`).join("\n");
 }
 
+/** Distractores escritos en la revisión, separados por «|» como en el Excel/CSV. */
+export function splitDistractors(text: string): string[] {
+  return text
+    .split("|")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 /**
  * Lo escrito en la revisión → grupos. Cada línea no vacía es un grupo: su
  * nombre antes de «:» y sus tarjetas después, separadas por «;». Una línea sin

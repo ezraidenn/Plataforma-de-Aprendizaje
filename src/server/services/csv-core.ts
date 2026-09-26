@@ -12,7 +12,7 @@ export const BOM = "﻿";
 export function csvEscape(value: string | number | boolean | null | undefined): string {
   const s =
     typeof value === "boolean" ? (value ? "SI" : "NO") : String(value ?? "");
-  return /[",;\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  return /[",;\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
 export function csvLine(values: (string | number | boolean | null | undefined)[]): string {
@@ -55,9 +55,40 @@ export function detectSeparator(headerLine: string): "," | ";" {
   return semis > commas ? ";" : ",";
 }
 
+/**
+ * Los registros del CSV, sin los renglones vacíos. Una celda entre comillas
+ * puede ocupar varios renglones (Excel la guarda así cuando tiene saltos de
+ * línea): sus renglones van juntos, líneas en blanco incluidas, en un solo
+ * registro —mientras el número de comillas acumuladas sea impar, la celda
+ * sigue abierta—. Si al final quedan comillas sin cerrar (un archivo mal
+ * hecho), esos renglones se vuelven a leer uno por uno, como si no hubiera
+ * celdas de varias líneas, para no tragarse el resto del archivo.
+ *
+ * Lo usan `parseCsv` y quien necesite rehacer un CSV con algunas de sus filas
+ * (el registro i es la fila i + 1, la cabecera incluida).
+ */
+export function csvRecords(text: string): string[] {
+  const records: string[] = [];
+  let open: string[] = [];
+  let quotes = 0;
+  for (const line of text.replace(/^﻿/, "").split(/\r?\n/)) {
+    if (open.length === 0 && line.trim().length === 0) continue;
+    open.push(line);
+    quotes += line.split('"').length - 1;
+    if (quotes % 2 === 0) {
+      records.push(open.join("\n"));
+      open = [];
+      quotes = 0;
+    }
+  }
+  for (const line of open) if (line.trim().length > 0) records.push(line);
+  return records;
+}
+
 export type ParsedCsv = {
   /** Encabezados normalizados (minúsculas, sin acentos, _ por espacios) */
   headers: string[];
+  /** `line`: número de fila (la cabecera es la 1), contando registros: una celda de varias líneas es una sola fila, como en Excel */
   rows: { line: number; cells: string[] }[];
   sep: "," | ";";
 };
@@ -68,17 +99,16 @@ export type ParsedCsv = {
 export { normalizeHeader };
 
 export function parseCsv(text: string, opts: { maxRows: number }): ParsedCsv {
-  const clean = text.replace(/^﻿/, "");
-  const lines = clean.split(/\r?\n/).filter((l) => l.trim().length > 0);
-  if (lines.length === 0) throw new Error("El archivo está vacío");
-  if (lines.length > opts.maxRows + 1) {
+  const records = csvRecords(text);
+  if (records.length === 0) throw new Error("El archivo está vacío");
+  if (records.length > opts.maxRows + 1) {
     throw new Error(`Máximo ${opts.maxRows} filas por archivo`);
   }
-  const sep = detectSeparator(lines[0]);
-  const headers = parseCsvLine(lines[0], sep).map(normalizeHeader);
-  const rows = lines.slice(1).map((line, i) => ({
+  const sep = detectSeparator(records[0]);
+  const headers = parseCsvLine(records[0], sep).map(normalizeHeader);
+  const rows = records.slice(1).map((record, i) => ({
     line: i + 2,
-    cells: parseCsvLine(line, sep),
+    cells: parseCsvLine(record, sep),
   }));
   return { headers, rows, sep };
 }

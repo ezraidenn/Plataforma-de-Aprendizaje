@@ -7,6 +7,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { LiveRegion, useAnnouncer } from "@/components/exam/live-region";
 import {
+  CLOZE_MODES,
+  CLOZE_MODE_LABELS,
   MAX_CLOZE_TEXT,
   MAX_DISTRACTORS,
   MAX_WRONG_OPTIONS,
@@ -44,11 +46,7 @@ import { usePendingDrafts, type ReportDraft } from "./use-pending-drafts";
  * cambiar la forma de una pregunta que ya tiene respuestas guardadas no se guarda.
  */
 
-const MODES: [ClozeMode, string][] = [
-  ["write", "Escribir"],
-  ["bank", "Banco"],
-  ["select", "Lista"],
-];
+const MODES: [ClozeMode, string][] = CLOZE_MODES.map((m) => [m, CLOZE_MODE_LABELS[m]]);
 
 const MODE_HINT: Record<ClozeMode, string> = {
   write: "El alumno escribe cada respuesta; también cuentan sus variantes.",

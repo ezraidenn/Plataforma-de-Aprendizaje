@@ -55,7 +55,7 @@ export function AiImportDialog({
   currentCount: number;
   /**
    * Preguntas que ya tiene el examen y no caben en el CSV (sobre imagen, o
-   * clasificar con íconos): la IA nunca las crea y "reemplazar" las conserva.
+   * clasificar con íconos o separadores): la IA nunca las crea y "reemplazar" las conserva.
    */
   notInCsvCount: number;
 }) {

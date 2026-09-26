@@ -27,7 +27,7 @@ import {
   splitIntoChunks,
   toDrafts,
 } from "../src/server/services/ai-exam-import";
-import { draftProblem, draftToInput, formatGroupLines, parseGroupLines, type QuestionDraft } from "../src/lib/question-draft";
+import { draftProblem, draftToInput, formatGroupLines, parseGroupLines, splitDistractors, type QuestionDraft } from "../src/lib/question-draft";
 import { draftToPreview } from "../src/lib/preview-question";
 import { importQuestionInputs } from "../src/server/services/exam-import";
 import { inputsToCsv, validateExamCsv } from "../src/server/services/exam-csv";
@@ -335,8 +335,12 @@ async function chunkAndConvertChecks() {
     "El esquema y la instrucción los piden",
     ["groups", "clozeText", "clozeMode", "distractors"].every((k) => JSON.stringify(AI_SCHEMA).includes(`"${k}"`)) &&
       SYSTEM_PROMPT.includes("- categorize: clasificar en grupos; en `groups`") &&
-      SYSTEM_PROMPT.includes("- cloze: completar el texto; en `clozeText`")
+      SYSTEM_PROMPT.includes("- cloze: completar el texto; en `clozeText`") &&
+      SYSTEM_PROMPT.includes("Si es una sola respuesta sin texto alrededor, short_text; si son huecos dentro de un texto, cloze.")
   );
+  check("Revisión: los distractores se separan con «|», como en el Excel", JSON.stringify(splitDistractors(" manguera | etiqueta|")) === JSON.stringify(["manguera", "etiqueta"]));
+  const piped = toDrafts({ questions: [{ ...TWO.questions[1], distractors: ["manguera|etiqueta"] }] })[0];
+  check("Un distractor con «|» se marca para corregirlo", draftProblem(piped) === "Un distractor no puede llevar |", draftProblem(piped));
 
   const ok = await interpretChunk("1. ¿Hola?", { key: "sk-test", model: "gpt-x", fetchImpl: fakeResponse(SEVEN) });
   check("interpretChunk: devuelve los borradores", ok.length === 7);

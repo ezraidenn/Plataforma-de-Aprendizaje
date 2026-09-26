@@ -58,7 +58,7 @@ export default async function ExamEditPage({
       config: isImageQuestionType(q.type) || q.type === "categorize" || q.type === "cloze" ? q.config : null,
     };
   });
-  // Las que no caben en el CSV (sobre imagen, o clasificar con íconos) no las
+  // Las que no caben en el CSV (sobre imagen, o clasificar con íconos o separadores) no las
   // trae el archivo ni las crea la IA: exportar las omite y "reemplazar" las conserva
   const notInCsvCount = rawQuestions.filter((q) => !csvRepresentable(q)).length;
   // Alumnos con un intento enviado: la publicación de resultados y el editor de fotos (cambiar una foto cambia sus revisiones)

@@ -7,14 +7,15 @@ import { csvRepresentable } from "@/lib/csv-fit";
 import { categorizeProblem, formatGroupsCsv, parseGroupsCsv, readCategorize } from "@/lib/categorize";
 import { clozeProblem, lfOnly, type ClozeConfig, type ClozeMode } from "@/lib/cloze";
 import { listQuestions, type QuestionInput } from "./exams";
-import { BOM, csvLine, parseCsv, columnGetter } from "./csv-core";
+import { BOM, csvLine, parseCsv, columnGetter, parseBoolEs } from "./csv-core";
 import { importQuestionInputs } from "./exam-import";
 
 /**
  * Formato CSV de exámenes — editable en Excel y re-subible.
  *
  * Columnas: tipo, pregunta, puntos, opcion_1..opcion_6, correctas,
- *           respuestas_aceptadas, pares, pasos, grupos, texto, modo, distractores
+ *           respuestas_aceptadas, pares, pasos, grupos, texto, modo, distractores,
+ *           mayusculas, acentos
  * - tipo: opcion_unica | opcion_multiple | verdadero_falso | respuesta_corta |
  *         relacionar | ordenar | clasificar | completar | abierta
  * - correctas: números de opción separados por | (ej. "2" o "1|3").
@@ -23,11 +24,15 @@ import { importQuestionInputs } from "./exam-import";
  * - pares (relacionar): "izquierda=derecha | izquierda2=derecha2"
  * - pasos (ordenar): "paso 1 | paso 2 | paso 3" en el orden correcto.
  * - grupos (clasificar): "Grupo: tarjeta; tarjeta | Grupo2: tarjeta" (tarjetas
- *   de texto; con alguna de ícono la pregunta no cabe: ver `csvRepresentable`).
+ *   de texto; con alguna de ícono, o con separadores que no volverían igual,
+ *   la pregunta no cabe: ver `csvRepresentable`).
  * - texto (completar): el texto con cada hueco entre [[ ]], con sus variantes
- *   y opciones incorrectas: [[respuesta|variante|!incorrecta]].
+ *   y opciones incorrectas: [[respuesta|variante|!incorrecta]]. Puede tener
+ *   varios renglones (la celda va entre comillas: ver `csvRecords`).
  * - modo (completar): escribir | banco | lista (vacío = escribir).
  * - distractores (completar en modo banco): palabras de más, "a | b".
+ * - mayusculas, acentos (completar en modo escribir): SI para distinguirlos
+ *   al calificar (vacío = NO).
  * Las columnas a partir de «pasos» son opcionales: un CSV sin ellas sirve
  * para los demás tipos.
  */
@@ -82,6 +87,8 @@ const HEADER = [
   "texto",
   "modo",
   "distractores",
+  "mayusculas",
+  "acentos",
 ] as const;
 type Column = (typeof HEADER)[number];
 
@@ -111,8 +118,9 @@ export const EXAM_CSV_TEMPLATE =
  * Preguntas (ya en la forma del servicio) → CSV del mismo formato que la
  * plantilla. Lo usan la exportación y «Descargar como CSV» de la IA. Las que
  * no caben en el CSV (`csvRepresentable`: sobre imagen, o clasificar con
- * alguna tarjeta de ícono) se omiten; la IA nunca las crea, así que solo
- * importa para la exportación real del examen, que las cuenta aparte.
+ * íconos o con separadores que no volverían igual) se omiten; la IA nunca
+ * las crea, así que solo importa para la exportación real del examen, que
+ * las cuenta aparte.
  */
 export function inputsToCsv(inputs: QuestionInput[]): string {
   const lines = [csvLine([...HEADER])];
@@ -155,8 +163,11 @@ export function inputsToCsv(inputs: QuestionInput[]): string {
       const config = (q.config ?? {}) as Partial<ClozeConfig>;
       values.texto = config.text ?? "";
       values.modo = config.mode && Object.hasOwn(CLOZE_MODE_TO_CSV, config.mode) ? CLOZE_MODE_TO_CSV[config.mode] : "";
-      // Los distractores solo existen en el banco (al importarlos en otro modo, la fila lo diría)
+      // Los distractores solo existen en el banco, y distinguir mayúsculas y
+      // acentos solo al escribir (en otro modo, al importarlos la fila lo diría)
       values.distractores = config.mode === "bank" ? (config.distractors ?? []).join(" | ") : "";
+      values.mayusculas = config.mode === "write" && config.matchCase ? "SI" : "";
+      values.acentos = config.mode === "write" && config.matchAccents ? "SI" : "";
     }
 
     lines.push(csvRow(values));
@@ -219,6 +230,8 @@ const ALIASES = {
   texto: ["texto", "texto_con_huecos", "huecos"],
   modo: ["modo", "forma_de_contestar"],
   distractores: ["distractores", "palabras_de_mas", "palabras_extra"],
+  mayusculas: ["mayusculas", "distinguir_mayusculas"],
+  acentos: ["acentos", "distinguir_acentos"],
 };
 
 const TYPE_LABELS: Record<string, string> = {
@@ -357,7 +370,19 @@ export function validateExamCsv(text: string): {
         if (distractors.length > 0 && mode !== "bank") {
           return fail('Los "distractores" solo se usan en el modo banco: cambia "modo" a banco o deja "distractores" vacío');
         }
-        const config: ClozeConfig = { text, mode, ...(distractors.length > 0 ? { distractors } : {}) };
+        const matchCase = parseBoolEs(col.get(cells, "mayusculas"));
+        const matchAccents = parseBoolEs(col.get(cells, "acentos"));
+        if (matchCase === null || matchAccents === null) return fail('En "mayusculas" y "acentos" escribe SI o NO');
+        if ((matchCase || matchAccents) && mode !== "write") {
+          return fail('Las columnas "mayusculas" y "acentos" solo se usan en el modo escribir');
+        }
+        const config: ClozeConfig = {
+          text,
+          mode,
+          ...(distractors.length > 0 ? { distractors } : {}),
+          ...(matchCase ? { matchCase: true } : {}),
+          ...(matchAccents ? { matchAccents: true } : {}),
+        };
         // Los mismos textos que el editor («Marca al menos un hueco con [[ ]]», «Al hueco 2 le falta…»)
         const problem = clozeProblem(config);
         if (problem) return fail(problem);

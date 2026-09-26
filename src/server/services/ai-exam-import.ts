@@ -110,6 +110,7 @@ export const SYSTEM_PROMPT = [
   "- La respuesta correcta se reconoce por las marcas del documento: asteriscos, «(x)», «correcta», «Respuesta: b», una clave de respuestas al final, una columna «correcta» en tablas, etc.",
   "- Si no hay forma de saber cuál es la correcta, déjala sin marcar y agrega a `issues` «No se indica la respuesta correcta».",
   "- Si dudas del tipo, elige el más probable y agrega a `issues` «Tipo dudoso».",
+  "- Si es una sola respuesta sin texto alrededor, short_text; si son huecos dentro de un texto, cloze.",
   "- El texto de cada opción va SIN su letra o número inicial («a)», «1.», «B -»).",
   "- `points`: solo si el documento los indica; si no, null.",
   "- Si la última pregunta del texto quedó cortada, omítela.",

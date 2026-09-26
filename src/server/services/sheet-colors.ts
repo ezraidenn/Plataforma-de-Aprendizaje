@@ -22,14 +22,29 @@ const ENTITIES: Record<string, string> = {
   amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ",
 };
 
-function decode(html: string): string {
-  return html
+/**
+ * HTML de una celda → su texto. Con `lineBreaks`, los renglones de la celda
+ * (LibreOffice los escribe como `<br>`, uno por párrafo; una línea en blanco
+ * son dos) vuelven como «\n» y solo se juntan los espacios de cada renglón;
+ * sin él, todo queda en una línea, con un espacio entre renglón y renglón (lo
+ * que esperan las listas de alumnos, los resúmenes, etc.). Los saltos del
+ * propio código HTML siempre son espacios.
+ */
+function decode(html: string, lineBreaks = false): string {
+  const marked = html
+    .replace(/\s+/g, " ")
+    .replace(/<br\s*\/?>|<\/p>\s*<p\b[^>]*>/gi, lineBreaks ? "\n" : " ");
+  const text = marked
     .replace(/<[^>]+>/g, "")
     .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
     .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
-    .replace(/&([a-z]+);/gi, (m, name) => ENTITIES[name.toLowerCase()] ?? m)
-    .replace(/\s+/g, " ")
-    .trim();
+    .replace(/&([a-z]+);/gi, (m, name) => ENTITIES[name.toLowerCase()] ?? m);
+  return lineBreaks
+    ? text
+        .replace(/[^\S\n]+/g, " ")
+        .replace(/ ?\n ?/g, "\n")
+        .trim()
+    : text.replace(/\s+/g, " ").trim();
 }
 
 /**
@@ -106,7 +121,12 @@ function namesFromFile(bytes: Buffer, fileName: string): string[] {
   }
 }
 
-export async function readSheetRows(bytes: Buffer, fileName: string): Promise<SheetData[]> {
+/**
+ * `lineBreaks`: conservar los renglones de cada celda («\n»). Solo lo pide
+ * quien los necesita (las preguntas de examen: un texto de completar con
+ * párrafos); lo demás sigue recibiendo cada celda en una sola línea.
+ */
+export async function readSheetRows(bytes: Buffer, fileName: string, opts: { lineBreaks?: boolean } = {}): Promise<SheetData[]> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "lms-hoja-"));
   try {
     const ext = path.extname(fileName).toLowerCase() || ".xlsx";
@@ -129,7 +149,7 @@ export async function readSheetRows(bytes: Buffer, fileName: string): Promise<Sh
         const cells: string[] = [];
         let color: ColorFamily | null = null;
         for (const td of tr[0].matchAll(/<t[dh]([^>]*)>([\s\S]*?)<\/t[dh]>/gi)) {
-          cells.push(decode(td[2]));
+          cells.push(decode(td[2], opts.lineBreaks));
           if (!color) {
             const bg = /bgcolor="([^"]+)"/i.exec(td[1]);
             if (bg) color = colorFamily(bg[1]);

@@ -20,9 +20,9 @@ import { questionsToPreview } from "../src/lib/preview-question";
 import { questionProblem } from "../src/lib/question-validation";
 import { cleanupSmokeNotifications } from "./lib/smoke-cleanup";
 import { exportExamCsv, inputsToCsv, validateExamCsv } from "../src/server/services/exam-csv";
-import { parseCsv } from "../src/server/services/csv-core";
+import { csvRecords, parseCsv } from "../src/server/services/csv-core";
 import { toDrafts } from "../src/server/services/ai-exam-import";
-import { draftToInput } from "../src/lib/question-draft";
+import { draftProblem, draftToInput } from "../src/lib/question-draft";
 import {
   MAX_BLANKS,
   MAX_WRONG_OPTIONS,
@@ -204,8 +204,12 @@ function pureChecks() {
   check("Saneo: el texto sale con \\n", (sanitizeCloze({ text: "Uno\r\n[[dos]]\rtres", mode: "write" }) as ClozeConfig).text === "Uno\n[[dos]]\ntres");
   const [fromAi] = toDrafts({ questions: [{ type: "cloze", prompt: "Completa", points: null, clozeText: "Uno\r\n[[dos]]", clozeMode: "write" }] });
   check("IA: el texto llega con \\n", fromAi?.clozeText === "Uno\n[[dos]]" && (draftToInput(fromAi).config as ClozeConfig).text === "Uno\n[[dos]]", fromAi);
-  const fromCsv = validateExamCsv('tipo,pregunta,puntos,texto\r\ncompletar,Completa,1,"Uno\r[[dos]]"').rows[0];
-  check("CSV: el texto llega con \\n", (fromCsv?.input?.config as ClozeConfig | undefined)?.text === "Uno\n[[dos]]", fromCsv);
+  // Una celda entre comillas que ocupa dos renglones (\r\n de Windows), seguida de otra fila
+  const fromCsv = validateExamCsv('tipo,pregunta,puntos,texto\r\ncompletar,Completa,1,"Uno\r\n[[dos]]"\r\ncompletar,Otra,1,[[tres]]');
+  check("CSV: una celda de dos renglones llega con \\n y la fila siguiente, entera",
+    fromCsv.ok === 2 && (fromCsv.rows[0]?.input?.config as ClozeConfig | undefined)?.text === "Uno\n[[dos]]" &&
+      fromCsv.rows.map((r) => r.line).join() === "2,3" && (fromCsv.rows[1]?.input?.config as ClozeConfig | undefined)?.text === "[[tres]]",
+    fromCsv.rows);
 
   console.log("\n— CSV/Excel");
   const csv = inputsToCsv([WRITE, BANK, SELECT].map((config, i) => ({ type: "cloze" as const, promptMd: `Pregunta ${i + 1}`, points: i + 1, config })));
@@ -228,6 +232,31 @@ function pureChecks() {
   check("Sin huecos: el mensaje del editor", row("Sin huecos").message === "Marca al menos un hueco con [[ ]]", row("Sin huecos").message);
   check("Lista sin incorrectas: el mensaje del editor", row("[[a]]", "lista").message === "Al hueco 1 le falta al menos una opción incorrecta (!opción)", row("[[a]]", "lista").message);
   check("Distractor igual a una respuesta: el mensaje del editor", row("[[a]]", "banco", "A | b").message === "Un distractor es igual a la respuesta de un hueco", row("[[a]]", "banco", "A | b").message);
+
+  console.log("\n— CSV/Excel: renglones, mayúsculas y acentos, «|»");
+  // Banco con \r\n, \n y una línea en blanco; escribir distinguiendo mayúsculas y acentos
+  const MULTI: ClozeConfig = { text: "Primera línea: [[uno]]\r\nsegunda, [[dos]]\n\ntras la línea en blanco; [[tres]].", mode: "bank", distractors: ["cuatro", "cinco"] };
+  const STRICT: ClozeConfig = { ...WRITE, matchCase: true, matchAccents: true };
+  const ACCENTS: ClozeConfig = { ...WRITE, matchAccents: true };
+  const csv2 = inputsToCsv([MULTI, STRICT, ACCENTS, SELECT].map((config, i) => ({ type: "cloze" as const, promptMd: `P${i + 1}`, points: 1, config })));
+  const back2 = validateExamCsv(csv2);
+  check("Ida y vuelta: el banco de varios renglones (con línea en blanco) vuelve igual, sin filas de más",
+    back2.ok === 4 && back2.invalid === 0 && back2.rows.map((r) => r.line).join() === "2,3,4,5" &&
+      JSON.stringify(back2.rows[0].input?.config) === JSON.stringify({ ...MULTI, text: lfOnly(MULTI.text) }),
+    back2.rows.map((r) => [r.line, r.status, r.message, r.input?.config]));
+  check("Ida y vuelta: escribir con mayúsculas y acentos, o solo acentos", JSON.stringify(back2.rows.slice(1).map((r) => r.input?.config)) === JSON.stringify([STRICT, ACCENTS, SELECT]), back2.rows.slice(1).map((r) => r.input?.config));
+  const sheet2 = parseCsv(csv2, { maxRows: 10 });
+  const cells2 = (name: string) => sheet2.rows.map((r) => r.cells[sheet2.headers.indexOf(name)]);
+  check("Exportar: SI en «mayusculas» y «acentos» solo donde se distingue", cells2("mayusculas").join() === ",SI,," && cells2("acentos").join() === ",SI,SI,", [cells2("mayusculas"), cells2("acentos")]);
+  const rowMa = (modo: string, mayusculas: string, acentos = "") =>
+    validateExamCsv(`tipo,pregunta,puntos,texto,modo,mayusculas,acentos\r\ncompletar,Completa,1,[[a|!b]],${modo},${mayusculas},${acentos}`).rows[0];
+  check("«mayusculas» y «acentos»: sí/no en español; lo demás, error", (rowMa("", "sí", "no").input?.config as ClozeConfig).matchCase === true && rowMa("", "quizá").message === 'En "mayusculas" y "acentos" escribe SI o NO', rowMa("", "quizá").message);
+  check("«mayusculas» y «acentos» fuera de escribir: lo dice", rowMa("lista", "", "SI").message === 'Las columnas "mayusculas" y "acentos" solo se usan en el modo escribir' && rowMa("lista", "NO", "").status === "ok", rowMa("lista", "", "SI").message);
+  check("Un distractor con «|» no vale (volvería partido)", clozeProblem({ text: "[[a]]", mode: "bank", distractors: ["b|c"] }) === "Un distractor no puede llevar |");
+  const [pipeAi] = toDrafts({ questions: [{ type: "cloze", prompt: "Completa", points: null, clozeText: "[[a]]", clozeMode: "bank", distractors: ["b|c"] }] });
+  check("IA: un distractor con «|» se marca para corregirlo", draftProblem(pipeAi) === "Un distractor no puede llevar |", draftProblem(pipeAi));
+  check("Registros: una comilla sin cerrar no se traga el resto (renglón por renglón)", JSON.stringify(csvRecords('a,b\n\n"c,d\ne,f\n')) === JSON.stringify(["a,b", '"c,d', "e,f"]), csvRecords('a,b\n\n"c,d\ne,f\n'));
+  check("Registros: dentro de comillas, los renglones en blanco se quedan", JSON.stringify(csvRecords('a\n"b\n\nc"\nd')) === JSON.stringify(["a", '"b\n\nc"', "d"]), csvRecords('a\n"b\n\nc"\nd'));
 }
 
 // ─── Recorrido contra la base ────────────────────────────────────────────────
