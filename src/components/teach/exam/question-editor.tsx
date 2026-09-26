@@ -208,6 +208,8 @@ export function QuestionEditor({
           </span>
           {type === "image_drag" && <HelpTip topic="exam.imageDrag" />}
           {type === "image_click" && <HelpTip topic="exam.imageClick" />}
+          {type === "categorize" && <HelpTip topic="exam.categorize" />}
+          {type === "cloze" && <HelpTip topic="exam.cloze" />}
         </span>
         {type === "open_text" && (
           <span className="flex items-center gap-1.5">

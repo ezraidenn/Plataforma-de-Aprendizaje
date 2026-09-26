@@ -48,6 +48,8 @@ export const CATALOG_GROUPS: readonly { title: string; topics: readonly HelpTopi
       "exam.ordering",
       "exam.imageDrag",
       "exam.imageClick",
+      "exam.categorize",
+      "exam.cloze",
     ],
   },
   { title: "Tareas", topics: ["assignment.late", "assignment.replace", "assignment.fileTypes"] },

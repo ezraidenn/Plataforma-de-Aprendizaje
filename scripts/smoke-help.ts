@@ -30,6 +30,16 @@ import {
 } from "../src/components/help/scenes/exam.story";
 import { OPEN_ANSWER, openQuestionStory, orderingStory, poolStory, shuffleStory } from "../src/components/help/scenes/exam-bank.story";
 import { DRAG_PIECES, imageClickStory, imageDragStory } from "../src/components/help/scenes/exam-image.story";
+import {
+  FILL_BANK_WORDS,
+  FILL_ROWS,
+  FILL_SELECT_OPTIONS,
+  fillStory,
+  SORT_CONFIG,
+  sortStory,
+} from "../src/components/help/scenes/exam-sort-fill.story";
+import { categorizeProblem } from "../src/lib/categorize";
+import { blankCorrect, clozeBankWords, clozeOptions, clozeProblem, parseCloze } from "../src/lib/cloze";
 import { fileTypesStory, lateStory, replaceStory } from "../src/components/help/scenes/assignment.story";
 import { groupCloseStory, importStory, renewalsStory, trashStory } from "../src/components/help/scenes/people.story";
 import { templateFieldsStory } from "../src/components/help/scenes/certificates.story";
@@ -62,7 +72,7 @@ check("between es [a, b)", between(0.5, 0.5, 0.9) && !between(0.9, 0.5, 0.9));
 
 console.log("\n— Temas y frases");
 const ids = Object.keys(HELP_TOPICS) as HelpTopicId[];
-check("Hay 37 temas (todas las fases)", ids.length === 37, ids);
+check("Hay 39 temas (todas las fases)", ids.length === 39, ids);
 for (const id of ids) {
   const t = HELP_TOPICS[id];
   const text = (t.caption as (v: unknown) => string)(t.example);
@@ -434,6 +444,63 @@ check("Señalar: los círculos aparecen después de marcar", !imageClickStory(0.
 const clickEnd = imageClickStory(0.97);
 check("Señalar: una dentro y otra fuera → 1 de 2", clickEnd.graded && clickEnd.hits.join() === "true,false" && clickEnd.ok === 1 && clickEnd.total === 2, clickEnd);
 check("Señalar: la frase explica el círculo", HELP_TOPICS["exam.imageClick"].caption({}).includes("dentro de su círculo"));
+
+console.log("\n— Historia: clasificar en grupos");
+check("Clasificar: la pregunta de la escena pasa la validación del editor", categorizeProblem(SORT_CONFIG) === null, categorizeProblem(SORT_CONFIG));
+const sortRest = sortStory(0.02);
+check("Clasificar: empieza con las 5 tarjetas en el banco", sortRest.held === null && sortRest.placedIn.every((g) => g === null) && !sortRest.bankEmpty);
+check("Clasificar: toma una tarjeta y aún no viaja", sortStory(0.06).held === 0 && !sortStory(0.06).travelling && sortStory(0.06).hot === null);
+check("Clasificar: viaja a su grupo y el grupo se ilumina antes de caer", sortStory(0.09).travelling && sortStory(0.09).hot === null && sortStory(0.13).hot === sortStory(0.13).target);
+check("Clasificar: al caer queda en el grupo y suelta la mano", sortStory(0.16).held === null && sortStory(0.16).placedIn[0] === 0);
+const sortEnd = sortStory(0.97);
+const aguacate = SORT_CONFIG.cards.findIndex((k) => k.id === "aguacate");
+const verduras = SORT_CONFIG.groups.findIndex((g) => g.id === "verduras");
+check("Clasificar: el aguacate cae en Verduras y cuenta mal", sortEnd.placedIn[aguacate] === verduras && !sortEnd.correct[aguacate], sortEnd);
+check("Clasificar: dos tarjetas en un grupo toman lugares distintos", sortEnd.slot.filter((sl, i) => sortEnd.placedIn[i] === 2).sort().join() === "0,1", sortEnd.slot);
+check("Clasificar: todas puestas antes de revisar", sortStory(0.66).bankEmpty && !sortStory(0.66).graded);
+check("Clasificar: termina 4 de 5 tarjetas", sortEnd.graded && sortEnd.bankEmpty && sortEnd.ok === 4 && sortEnd.total === 5, sortEnd);
+check(
+  "Clasificar: la frase dice que el grupo se ilumina y que cada tarjeta vale su parte",
+  HELP_TOPICS["exam.categorize"].caption({}).includes("se ilumina") && HELP_TOPICS["exam.categorize"].caption({}).includes("su parte")
+);
+
+console.log("\n— Historia: completar el texto");
+check(
+  "Completar: las tres preguntas de la escena pasan la validación del editor",
+  FILL_ROWS.every((row) => clozeProblem(row.config) === null),
+  FILL_ROWS.map((row) => clozeProblem(row.config))
+);
+check("Completar: una fila por forma de contestar", FILL_ROWS.map((row) => row.mode).join() === "write,bank,select");
+const sentence = (text: string) => parseCloze(text).pieces.map((p) => (p.kind === "text" ? p.text : "_")).join("");
+check("Completar: la misma oración en las tres", new Set(FILL_ROWS.map((row) => sentence(row.config.text))).size === 1);
+const sorted = (xs: readonly string[]) => [...xs].sort().join();
+check("Completar: el banco trae la respuesta y los distractores", sorted(FILL_BANK_WORDS) === sorted(clozeBankWords(FILL_ROWS[1].config).map((w) => w.text)));
+check("Completar: la lista trae la correcta y las incorrectas", sorted(FILL_SELECT_OPTIONS) === sorted(clozeOptions(parseCloze(FILL_ROWS[2].config.text).blanks[0])));
+check("Completar: las filas se llenan por turno", fillStory(0.1).active === "write" && fillStory(0.3).active === "bank" && fillStory(0.5).active === "select");
+const typedWord = FILL_ROWS[0].given;
+check(
+  "Completar: escribe letra a letra",
+  fillStory(0.05).typed === "" && fillStory(0.14).typed.length > 0 && fillStory(0.14).typed.length < typedWord.length && fillStory(0.24).typed === typedWord
+);
+check("Completar: la palabra viaja y el hueco se ilumina antes de encajar", fillStory(0.37).bankTravelling && !fillStory(0.37).bankHot && fillStory(0.41).bankHot && !fillStory(0.41).bankPlaced && fillStory(0.44).bankPlaced);
+check(
+  "Completar: la lista se abre, pasa por las opciones y elige una incorrecta",
+  fillStory(0.56).listOpen &&
+    fillStory(0.56).listHover === 0 &&
+    FILL_SELECT_OPTIONS[fillStory(0.6).listHover ?? 0] === FILL_ROWS[2].given &&
+    !fillStory(0.66).listOpen &&
+    fillStory(0.66).listChosen === FILL_ROWS[2].given
+);
+const fillEnd = fillStory(0.97);
+check("Completar: al revisar, ✓ ✓ ✗ con la calificación real", fillEnd.graded && fillEnd.results.join() === "true,true,false", fillEnd.results);
+check(
+  "Completar: lo escrito sin acento vale, pero no si se exigen acentos",
+  blankCorrect(FILL_ROWS[0].config, 0, typedWord) && !blankCorrect({ ...FILL_ROWS[0].config, matchAccents: true }, 0, typedWord)
+);
+check(
+  "Completar: la frase nombra las tres formas y la normalización",
+  ["escribir", "banco de palabras", "lista en cada hueco", "mayúsculas ni acentos"].every((w) => HELP_TOPICS["exam.cloze"].caption({}).includes(w))
+);
 
 console.log("\n— Historia: ordenar pasos");
 check("Ordenar: empieza revuelto", orderingStory(0.05).order.join() !== "0,1,2,3");

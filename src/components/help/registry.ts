@@ -37,6 +37,8 @@ export const SCENES: SceneMap = {
   "exam.ordering": lazy(() => import("./scenes/exam-bank").then((m) => ({ default: m.OrderingScene }))),
   "exam.imageDrag": lazy(() => import("./scenes/exam-image").then((m) => ({ default: m.ImageDragScene }))),
   "exam.imageClick": lazy(() => import("./scenes/exam-image").then((m) => ({ default: m.ImageClickScene }))),
+  "exam.categorize": lazy(() => import("./scenes/exam-sort-fill").then((m) => ({ default: m.SortScene }))),
+  "exam.cloze": lazy(() => import("./scenes/exam-sort-fill").then((m) => ({ default: m.FillScene }))),
   "assignment.late": lazy(() => import("./scenes/assignment").then((m) => ({ default: m.LateScene }))),
   "assignment.replace": lazy(() => import("./scenes/assignment").then((m) => ({ default: m.ReplaceScene }))),
   "assignment.fileTypes": lazy(() => import("./scenes/assignment").then((m) => ({ default: m.FileTypesScene }))),

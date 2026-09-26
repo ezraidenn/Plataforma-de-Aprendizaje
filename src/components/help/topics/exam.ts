@@ -13,6 +13,8 @@ export type ExamValues = {
   "exam.ordering": NoValue;
   "exam.imageDrag": NoValue;
   "exam.imageClick": NoValue;
+  "exam.categorize": NoValue;
+  "exam.cloze": NoValue;
 };
 
 const POLICY_PHRASE = {
@@ -134,6 +136,22 @@ export const EXAM_TOPICS: TopicsOf<ExamValues> = {
     kicker: "Cómo se califica",
     caption: () =>
       "El alumno pone tantas marcas como puntos hay. Cada punto cuenta si una marca cae **dentro de su círculo**; la **precisión** decide el tamaño del círculo, y una marca solo vale por un punto.",
+    example: {},
+  },
+  "exam.categorize": {
+    label: "Clasificar en grupos",
+    where: "Examen › Preguntas",
+    kicker: "Qué ve el alumno",
+    caption: () =>
+      "El alumno arrastra cada tarjeta (texto o imagen) a su grupo, o la toca y luego toca el grupo; el grupo donde caería **se ilumina**. Cada tarjeta en su grupo vale **su parte** de los puntos.",
+    example: {},
+  },
+  "exam.cloze": {
+    label: "Completar el texto",
+    where: "Examen › Preguntas",
+    kicker: "Tres formas de contestar",
+    caption: () =>
+      "Eliges una por pregunta: **escribir** (sin importar mayúsculas ni acentos, salvo que lo pidas), **banco de palabras** o **lista en cada hueco**. Cada hueco vale su parte; al revisar, junto a cada falla aparece la correcta.",
     example: {},
   },
 };
