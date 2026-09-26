@@ -4,9 +4,11 @@ import type { ImageQuestionType } from "./image-questions";
 /**
  * Pregunta interpretada (por la IA) que el maestro revisa antes de importar.
  * Puro: lo usan el servidor y el diálogo. Sin las preguntas sobre imagen:
- * necesitan foto y posiciones, y la IA no las crea.
+ * necesitan foto y posiciones, y la IA no las crea. Por ahora tampoco
+ * «Clasificar en grupos» ni «Completar el texto»: la IA los reconocerá cuando
+ * el borrador tenga sus campos (tarea 6 del plan de clasificar y completar).
  */
-export type DraftType = Exclude<QuestionShape["type"], ImageQuestionType>;
+export type DraftType = Exclude<QuestionShape["type"], ImageQuestionType | "categorize" | "cloze">;
 
 export type QuestionDraft = {
   /** Id local (no es de la BD) */

@@ -15,6 +15,11 @@ import {
   listQuestions,
   listAttempts,
   examWindowState,
+  categorizeCardToken,
+  categorizeGroupToken,
+  clozeBlankToken,
+  clozeOptionToken,
+  clozeWordToken,
   imageItemToken,
   imageZoneToken,
   matchingToken,
@@ -26,6 +31,8 @@ import { resultsVisible } from "@/lib/exam-results";
 import { shuffledOrder } from "@/lib/ordering";
 import { dragCopies, readImageClick, readImageDrag } from "@/lib/image-questions";
 import { elementView } from "@/lib/image-layout";
+import { categorizeView, readCategorize } from "@/lib/categorize";
+import { clozeView, readCloze } from "@/lib/cloze";
 import type {
   AssignmentLessonData,
   AttemptDto,
@@ -141,6 +148,31 @@ export function buildRunnerQuestions(attempt: ExamAttempt): RunnerQuestion[] {
       image = click.image;
       imageClick = { aspect: click.config.aspect, marks: click.config.spots.length };
     }
+    // Clasificar y completar: fichas por intento, tarjetas, palabras y opciones
+    // revueltas; nunca el grupo de una tarjeta, las variantes ni cuál opción va
+    const cat = q.type === "categorize" ? readCategorize(q) : null;
+    const categorize: RunnerQuestion["categorize"] = cat
+      ? categorizeView(
+          cat,
+          {
+            group: (id) => categorizeGroupToken(attempt.id, q.id, id),
+            card: (id) => categorizeCardToken(attempt.id, q.id, id),
+          },
+          shuffle
+        )
+      : null;
+    const clz = q.type === "cloze" ? readCloze(q) : null;
+    const cloze: RunnerQuestion["cloze"] = clz
+      ? clozeView(
+          clz,
+          {
+            blank: (i) => clozeBlankToken(attempt.id, q.id, i),
+            word: (key) => clozeWordToken(attempt.id, q.id, key),
+            option: (i, k) => clozeOptionToken(attempt.id, q.id, i, k),
+          },
+          shuffle
+        )
+      : null;
     out.push({
       id: q.id,
       type: q.type,
@@ -152,6 +184,8 @@ export function buildRunnerQuestions(attempt: ExamAttempt): RunnerQuestion[] {
       image,
       imageDrag,
       imageClick,
+      categorize,
+      cloze,
     });
   }
   return out;

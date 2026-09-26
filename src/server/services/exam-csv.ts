@@ -2,7 +2,7 @@ import "server-only";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/server/db";
 import { questions } from "@/server/db/schema";
-import { IMAGE_QUESTION_TYPES, isImageQuestionType, type ImageQuestionType } from "@/lib/image-questions";
+import { NOT_IN_CSV_TYPES, isNotInCsvType, type NotInCsvType } from "@/lib/question-validation";
 import { listQuestions, type QuestionInput } from "./exams";
 import { BOM, csvLine, parseCsv, columnGetter } from "./csv-core";
 import { importQuestionInputs } from "./exam-import";
@@ -24,9 +24,10 @@ import { importQuestionInputs } from "./exam-import";
 
 /**
  * Tipado exhaustivo: si se agrega un tipo de pregunta, el compilador obliga a
- * decidir aquí su columna CSV (o a excluirlo, como las preguntas sobre imagen).
+ * decidir aquí su columna CSV (o a excluirlo, como las preguntas sobre imagen
+ * y, por ahora, clasificar y completar: ver NOT_IN_CSV_TYPES).
  */
-const TYPE_TO_CSV: Record<Exclude<QuestionInput["type"], ImageQuestionType>, string> = {
+const TYPE_TO_CSV: Record<Exclude<QuestionInput["type"], NotInCsvType>, string> = {
   single_choice: "opcion_unica",
   multiple_choice: "opcion_multiple",
   true_false: "verdadero_falso",
@@ -86,7 +87,7 @@ export function inputsToCsv(inputs: QuestionInput[]): string {
   const lines = [csvLine(HEADER)];
 
   for (const q of inputs) {
-    if (isImageQuestionType(q.type)) continue;
+    if (isNotInCsvType(q.type)) continue;
     const opts = q.options ?? [];
     const options = ["", "", "", "", "", ""];
     let correctas = "";
@@ -136,13 +137,16 @@ export function exportExamCsv(examItemId: string): string {
   );
 }
 
-/** Cuántas preguntas del examen son sobre imagen: no caben en el CSV/Excel. */
+/**
+ * Cuántas preguntas del examen no caben en el CSV/Excel: las sobre imagen y,
+ * por ahora (temporal, ver NOT_IN_CSV_TYPES), las de clasificar y completar.
+ */
 export function countImageQuestions(examItemId: string): number {
   return (
     db
       .select({ n: sql<number>`count(*)` })
       .from(questions)
-      .where(and(eq(questions.examItemId, examItemId), inArray(questions.type, IMAGE_QUESTION_TYPES)))
+      .where(and(eq(questions.examItemId, examItemId), inArray(questions.type, [...NOT_IN_CSV_TYPES])))
       .get()?.n ?? 0
   );
 }

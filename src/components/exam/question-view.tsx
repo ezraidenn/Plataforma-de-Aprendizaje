@@ -16,7 +16,7 @@ import { ImageClickControl } from "@/components/student/image-click-control";
 import { ImageDragControl } from "@/components/student/image-drag-control";
 import { OrderingControl } from "@/components/student/ordering-control";
 import type { RunnerQuestion } from "@/components/student/types";
-import { parseClickAnswer, parseDragAnswer } from "@/lib/image-questions";
+import { parseClickAnswer, parseDragAnswer, parseMapAnswer } from "@/lib/image-questions";
 
 /**
  * Una pregunta tal como la ve el alumno: enunciado, puntos y el control de su
@@ -94,6 +94,31 @@ export function isAnswered(q: RunnerQuestion, a: AnswerState | undefined): boole
     case "image_click": {
       const marks = q.imageClick?.marks ?? 0;
       return marks > 0 && parseClickAnswer(a.answerText, marks).length === marks;
+    }
+    case "categorize": {
+      // Todas las tarjetas puestas en un grupo que existe
+      const cat = q.categorize;
+      if (!cat || cat.cards.length === 0) return false;
+      const map = parseMapAnswer(a.answerText);
+      const groups = new Set(cat.groups.map((g) => g.token));
+      return cat.cards.every((k) => groups.has(map[k.token]));
+    }
+    case "cloze": {
+      // Todos los huecos llenos; en banco, cada palabra en un solo hueco
+      const cloze = q.cloze;
+      const blanks = cloze?.pieces.flatMap((p) => (p.kind === "blank" ? [p.token] : [])) ?? [];
+      if (!cloze || blanks.length === 0) return false;
+      const map = parseMapAnswer(a.answerText);
+      if (cloze.mode === "write") return blanks.every((t) => !!map[t]?.trim());
+      if (cloze.mode === "select") return blanks.every((t) => !!cloze.options?.[t]?.some((o) => o.token === map[t]));
+      const words = new Set(cloze.words?.map((w) => w.token));
+      const used = new Set<string>();
+      return blanks.every((t) => {
+        const w = map[t];
+        if (!w || !words.has(w) || used.has(w)) return false;
+        used.add(w);
+        return true;
+      });
     }
   }
 }

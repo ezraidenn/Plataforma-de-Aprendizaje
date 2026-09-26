@@ -137,3 +137,112 @@ export function sanitizeCloze(raw: unknown): unknown {
   if (typeof c.matchAccents === "boolean") out.matchAccents = c.matchAccents;
   return out;
 }
+
+/**
+ * Pregunta guardada → su config, o null si no está completa. Es el único
+ * criterio para lo que ve el alumno, la calificación y la revisión (como
+ * `readImageDrag`): usa las mismas reglas que al guardar.
+ */
+export function readCloze(q: { config: unknown }): ClozeConfig | null {
+  return clozeProblem(q.config) === null ? (q.config as ClozeConfig) : null;
+}
+
+/**
+ * Palabras del banco: la respuesta canónica de cada hueco (clave `b{i}`, una
+ * por hueco aunque se repita) y los distractores (clave `d{j}`). De la clave
+ * sale su ficha; el alumno y la calificación usan esta misma lista.
+ */
+export function clozeBankWords(config: ClozeConfig): { key: string; text: string }[] {
+  const { blanks } = parseCloze(config.text);
+  return [
+    ...blanks.map((b, i) => ({ key: `b${i}`, text: b.answers[0] })),
+    ...(config.distractors ?? []).map((d, j) => ({ key: `d${j}`, text: d })),
+  ];
+}
+
+/** Opciones de un hueco en modo lista: la canónica y las incorrectas (la ficha de cada una sale de su índice aquí). */
+export function clozeOptions(blank: ClozeBlank): string[] {
+  return [blank.answers[0], ...blank.wrong];
+}
+
+/**
+ * Lo que recibe el alumno: el texto en trozos con una ficha por hueco y, según
+ * el modo, las palabras del banco (revueltas) o las opciones de cada hueco
+ * (revueltas, por ficha de hueco). Nunca las variantes aceptadas ni cuál
+ * opción es la correcta. Respuesta: `{ fichaDeHueco: texto }` al escribir,
+ * `{ fichaDeHueco: fichaDePalabra | fichaDeOpción }` en banco y lista.
+ */
+export type ClozeView = {
+  mode: ClozeMode;
+  pieces: ({ kind: "text"; text: string } | { kind: "blank"; token: string })[];
+  words?: { token: string; text: string }[];
+  options?: Record<string, { token: string; text: string }[]>;
+};
+
+/** La vista del alumno con las fichas que dan `tokens` (el servidor: HMAC por intento; la vista previa: locales). */
+export function clozeView(
+  config: ClozeConfig,
+  tokens: { blank: (index: number) => string; word: (key: string) => string; option: (blank: number, k: number) => string },
+  shuffle: <T>(items: T[]) => T[]
+): ClozeView {
+  const { pieces, blanks } = parseCloze(config.text);
+  const view: ClozeView = {
+    mode: config.mode,
+    pieces: pieces.map((p) => (p.kind === "text" ? { kind: "text", text: p.text } : { kind: "blank", token: tokens.blank(p.index) })),
+  };
+  if (config.mode === "bank") {
+    view.words = shuffle(clozeBankWords(config).map((w) => ({ token: tokens.word(w.key), text: w.text })));
+  }
+  if (config.mode === "select") {
+    view.options = Object.fromEntries(
+      blanks.map((b, i) => [tokens.blank(i), shuffle(clozeOptions(b).map((text, k) => ({ token: tokens.option(i, k), text })))])
+    );
+  }
+  return view;
+}
+
+/** Qué huecos quedaron bien, en orden. `given[i]` = lo puesto en el hueco i (lo escrito, la palabra o la opción). */
+export function clozeHits(config: ClozeConfig, given: (string | undefined)[]): boolean[] {
+  const { blanks } = parseCloze(config.text);
+  return blanks.map((_, i) => blankCorrect(config, i, given[i]));
+}
+
+/** Fracción 0–1 de huecos bien. */
+export function clozeScore(config: ClozeConfig, given: (string | undefined)[]): number {
+  const hits = clozeHits(config, given);
+  return hits.length === 0 ? 0 : hits.filter(Boolean).length / hits.length;
+}
+
+/**
+ * Tablero de revisión (solo viaja con resultados visibles): el texto con lo
+ * puesto en cada hueco, si quedó bien y la respuesta canónica.
+ */
+export type ClozeBoard = {
+  kind: "cloze";
+  pieces: ({ kind: "text"; text: string } | { kind: "blank"; given: string | null; correct: boolean; expected: string })[];
+};
+
+/**
+ * Sin `given`, la solución: cada hueco con su respuesta (la vista previa del
+ * maestro). Con `given` (lo puesto en cada hueco), lo del alumno y si acertó.
+ */
+export function clozeBoard(config: ClozeConfig, given?: (string | undefined)[]): ClozeBoard {
+  const { pieces, blanks } = parseCloze(config.text);
+  const hits = given ? clozeHits(config, given) : null;
+  return {
+    kind: "cloze",
+    pieces: pieces.map((p) => {
+      if (p.kind === "text") return { kind: "text", text: p.text };
+      const expected = blanks[p.index].answers[0];
+      if (!given || !hits) return { kind: "blank", given: expected, correct: true, expected };
+      return { kind: "blank", given: given[p.index] ?? null, correct: hits[p.index], expected };
+    }),
+  };
+}
+
+/** La solución en texto: «Hueco 1: París · Hueco 2: Roma». */
+export function clozeSolutionText(config: ClozeConfig): string {
+  return parseCloze(config.text)
+    .blanks.map((b, i) => `Hueco ${i + 1}: ${b.answers[0]}`)
+    .join(" · ");
+}

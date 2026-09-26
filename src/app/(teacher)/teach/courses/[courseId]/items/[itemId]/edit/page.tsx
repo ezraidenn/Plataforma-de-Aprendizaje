@@ -8,6 +8,7 @@ import { getItem } from "@/server/services/tree";
 import { getExam, listQuestions } from "@/server/services/exams";
 import { questionsAnsweredInProgress, studentsWithAttempts } from "@/server/services/exam-results";
 import { isImageQuestionType } from "@/lib/image-questions";
+import { isNotInCsvType } from "@/lib/question-validation";
 import { ExamSettingsCard } from "@/components/teach/exam/exam-settings-card";
 import { QuestionList } from "@/components/teach/exam/question-list";
 import type { QuestionData } from "@/components/teach/exam/question-editor";
@@ -56,12 +57,13 @@ export default async function ExamEditPage({
       imageConfig: isImageQuestionType(q.type) ? q.config : null,
     };
   });
-  // La IA nunca crea preguntas sobre imagen; "reemplazar" solo borra las demás
-  const imageQuestionCount = rawQuestions.filter((q) => isImageQuestionType(q.type)).length;
+  // La IA nunca crea preguntas sobre imagen (ni, por ahora, de clasificar o
+  // completar: ver NOT_IN_CSV_TYPES); "reemplazar" solo borra las demás
+  const imageQuestionCount = rawQuestions.filter((q) => isNotInCsvType(q.type)).length;
   // Alumnos con un intento enviado: la publicación de resultados y el editor de fotos (cambiar una foto cambia sus revisiones)
   const attempted = studentsWithAttempts(itemId);
   // Y las preguntas sobre imagen que alguien ya respondió en un intento en curso (su foto también pide confirmación)
-  const answeredInProgress = imageQuestionCount > 0 ? questionsAnsweredInProgress(itemId) : [];
+  const answeredInProgress = rawQuestions.some((q) => isImageQuestionType(q.type)) ? questionsAnsweredInProgress(itemId) : [];
 
   return (
     <div className="space-y-4">

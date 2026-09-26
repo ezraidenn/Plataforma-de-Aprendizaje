@@ -32,6 +32,7 @@ import {
 import { fileUrl } from "@/lib/image-questions";
 import { QuestionEditor, TYPE_LABEL, type QuestionData, type QuestionType } from "./question-editor";
 
+// «Clasificar en grupos» y «Completar el texto» entran al selector cuando tengan su editor
 const QUESTION_TYPES: QuestionType[] = [
   "single_choice",
   "multiple_choice",

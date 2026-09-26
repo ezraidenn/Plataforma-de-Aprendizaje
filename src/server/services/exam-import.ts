@@ -1,7 +1,6 @@
 import "server-only";
 import { db } from "@/server/db";
-import { questionProblem } from "@/lib/question-validation";
-import { isImageQuestionType } from "@/lib/image-questions";
+import { isNotInCsvType, questionProblem } from "@/lib/question-validation";
 import { createQuestion, deleteQuestion, listQuestions, reorderQuestions, type QuestionInput } from "./exams";
 import { audit } from "./audit";
 
@@ -10,7 +9,8 @@ import { audit } from "./audit";
  * transacción: si algo falla al crearlas, el examen queda como estaba (ni
  * siquiera «reemplazar» borra nada). Las preguntas sobre imagen no se pueden
  * expresar en CSV ni las crea la IA, así que «reemplazar» las conserva tal
- * cual en vez de borrarlas (`kept`) — y, para que el examen no quede
+ * cual en vez de borrarlas (`kept`; por ahora también clasificar y completar,
+ * ver NOT_IN_CSV_TYPES) — y, para que el examen no quede
  * desordenado, cada una vuelve a su lugar original: las nuevas llenan los
  * huecos que dejaron las que sí se borraron, en su mismo orden, y las que
  * sobran (si hay más nuevas que huecos) van al final. La auditoría guarda
@@ -36,17 +36,17 @@ export function importQuestionInputs(opts: {
       // que cada pregunta sobre imagen debe volver
       const original = listQuestions(opts.examItemId);
       for (const q of original) {
-        if (!isImageQuestionType(q.type)) deleteQuestion(opts.examItemId, q.id);
+        if (!isNotInCsvType(q.type)) deleteQuestion(opts.examItemId, q.id);
       }
       const newIds = valid.map((input) => createQuestion(opts.examItemId, input));
-      kept = original.filter((q) => isImageQuestionType(q.type)).length;
+      kept = original.filter((q) => isNotInCsvType(q.type)).length;
 
       // Un solo recorrido: cada imagen vuelve a su índice original, las
       // nuevas llenan los huecos (en su orden) y las que sobran van al final
       let newCursor = 0;
       const finalOrder: string[] = [];
       for (const q of original) {
-        if (isImageQuestionType(q.type)) {
+        if (isNotInCsvType(q.type)) {
           finalOrder.push(q.id);
         } else if (newCursor < newIds.length) {
           finalOrder.push(newIds[newCursor]);

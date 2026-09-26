@@ -1,4 +1,4 @@
-import type { QuestionKind, RunnerQuestion } from "@/components/student/types";
+import type { AnswerBoard, QuestionKind, RunnerQuestion } from "@/components/student/types";
 import type { QuestionDraft } from "./question-draft";
 import { shuffledOrder } from "./ordering";
 import { clickReviewBoard, dragReviewBoard, type ReviewBoard } from "./image-boards";
@@ -10,6 +10,8 @@ import {
   readImageDrag,
   type ImageQuestionType,
 } from "./image-questions";
+import { categorizeBoard, categorizeSolutionText, categorizeView, readCategorize } from "./categorize";
+import { clozeBoard, clozeSolutionText, clozeView, readCloze } from "./cloze";
 
 /**
  * Pregunta de la vista previa «Ver como alumno»: lo mismo que recibe el
@@ -22,11 +24,16 @@ export type PreviewQuestion = RunnerQuestion & {
   answerText: string | null;
   /** Preguntas sobre imagen: la solución dibujada, en vez del texto. */
   solution?: ReviewBoard;
+  /** Clasificar y completar: la solución como tablero (cada tarjeta en su grupo, cada hueco con su respuesta), además del texto. */
+  answerBoard?: AnswerBoard;
 };
 
 function shuffle<T>(items: T[]): T[] {
   return shuffledOrder(items.length).map((i) => items[i]);
 }
+
+/** Lo que dice la vista previa en lugar de la solución de una pregunta que no se puede mostrar. */
+const INCOMPLETE = "La pregunta está incompleta: complétala en el editor.";
 
 /** Borrador → pregunta de vista previa, revuelta como la ve el alumno. */
 export function draftToPreview(d: QuestionDraft): PreviewQuestion {
@@ -60,10 +67,12 @@ export function draftToPreview(d: QuestionDraft): PreviewQuestion {
       d.type === "ordering"
         ? { steps: shuffledOrder(d.steps.length).map((i) => ({ token: `${d.key}-s${i}`, text: d.steps[i] })) }
         : null,
-    // Los borradores nunca son preguntas sobre imagen
+    // Los borradores nunca son preguntas sobre imagen (ni, por ahora, de clasificar o completar)
     image: null,
     imageDrag: null,
     imageClick: null,
+    categorize: null,
+    cloze: null,
     answerText,
   };
 }
@@ -92,7 +101,9 @@ export function imagePreview(q: {
     image: null,
     imageDrag: null,
     imageClick: null,
-    answerText: "La pregunta está incompleta: complétala en el editor.",
+    categorize: null,
+    cloze: null,
+    answerText: INCOMPLETE,
   };
   const drag = q.type === "image_drag" ? readImageDrag(q) : null;
   if (drag) {
@@ -127,6 +138,59 @@ export function imagePreview(q: {
   return base;
 }
 
+/**
+ * Clasificar o completar (guardada o la que se está editando) → vista previa.
+ * Como la del alumno, con fichas locales (el id de la tarjeta o del grupo, el
+ * índice del hueco): sin secreto que guardar. Lleva la solución en texto y
+ * como tablero.
+ */
+export function boardPreview(q: {
+  id: string;
+  type: "categorize" | "cloze";
+  promptMd: string;
+  points: number;
+  config: unknown;
+}): PreviewQuestion {
+  const base: PreviewQuestion = {
+    id: q.id,
+    type: q.type,
+    promptMd: q.promptMd,
+    points: q.points,
+    options: [],
+    matching: null,
+    ordering: null,
+    image: null,
+    imageDrag: null,
+    imageClick: null,
+    categorize: null,
+    cloze: null,
+    answerText: INCOMPLETE,
+  };
+  const cat = q.type === "categorize" ? readCategorize(q) : null;
+  if (cat) {
+    return {
+      ...base,
+      categorize: categorizeView(cat, { group: (id) => `${q.id}-g-${id}`, card: (id) => `${q.id}-c-${id}` }, shuffle),
+      answerText: categorizeSolutionText(cat),
+      answerBoard: categorizeBoard(cat),
+    };
+  }
+  const cloze = q.type === "cloze" ? readCloze(q) : null;
+  if (cloze) {
+    return {
+      ...base,
+      cloze: clozeView(
+        cloze,
+        { blank: (i) => `${q.id}-b${i}`, word: (key) => `${q.id}-w-${key}`, option: (i, k) => `${q.id}-o${i}-${k}` },
+        shuffle
+      ),
+      answerText: clozeSolutionText(cloze),
+      answerBoard: clozeBoard(cloze),
+    };
+  }
+  return base;
+}
+
 /** Preguntas guardadas del examen → vista previa «Ver como alumno», en su orden. */
 export function questionsToPreview(
   qs: {
@@ -140,7 +204,11 @@ export function questionsToPreview(
   }[]
 ): PreviewQuestion[] {
   return qs.map((q) =>
-    isImageQuestionType(q.type) ? imagePreview({ ...q, type: q.type }) : draftToPreview(questionToDraft({ ...q, type: q.type }))
+    isImageQuestionType(q.type)
+      ? imagePreview({ ...q, type: q.type })
+      : q.type === "categorize" || q.type === "cloze"
+        ? boardPreview({ ...q, type: q.type })
+        : draftToPreview(questionToDraft({ ...q, type: q.type }))
   );
 }
 

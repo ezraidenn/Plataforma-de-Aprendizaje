@@ -16,7 +16,7 @@ import {
   gradedRecently,
 } from "@/server/services/grading";
 import { listQuestions } from "@/server/services/exams";
-import { NO_ANSWER, imageAnswerSummary } from "@/server/services/exam-review";
+import { NO_ANSWER, boardAnswerSummary, imageAnswerSummary } from "@/server/services/exam-review";
 import { getAssignmentDetail, listSubmissionFiles } from "@/server/services/assignments";
 
 function errorMessage(err: unknown, fallback: string): string {
@@ -117,6 +117,10 @@ export async function loadExamGradingAction(attemptId: string): Promise<LoadExam
     } else if (q.type === "image_drag" || q.type === "image_click") {
       // El mismo resumen que lee el alumno en su revisión («N de M lugares correctos»…)
       const summary = imageAnswerSummary(q, ans?.answerText, attemptId);
+      if (summary !== NO_ANSWER) answerDisplay = summary;
+    } else if (q.type === "categorize" || q.type === "cloze") {
+      // El mismo resumen que lee el alumno («N de M tarjetas bien», «N de M huecos bien»)
+      const summary = boardAnswerSummary(q, ans?.answerText, attemptId);
       if (summary !== NO_ANSWER) answerDisplay = summary;
     }
     return {

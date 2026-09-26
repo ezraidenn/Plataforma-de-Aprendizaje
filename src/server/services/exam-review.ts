@@ -3,6 +3,8 @@ import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { attemptAnswers } from "@/server/db/schema";
 import {
+  categorizePlacement,
+  clozePlacement,
   imageDragPlacement,
   listQuestions,
   matchingToken,
@@ -13,7 +15,9 @@ import {
 } from "./exams";
 import { parseClickAnswer, readImageClick, readImageDrag } from "@/lib/image-questions";
 import { clickReviewBoard, dragReviewBoard, type ReviewBoard } from "@/lib/image-boards";
-import type { ReviewEntry, ReviewResult } from "@/components/student/types";
+import { categorizeBoard, categorizeSolutionText, readCategorize } from "@/lib/categorize";
+import { clozeBoard, clozeHits, clozeSolutionText, readCloze } from "@/lib/cloze";
+import type { AnswerBoard, ReviewEntry, ReviewResult } from "@/components/student/types";
 
 /**
  * Desglose por pregunta de un intento calificado. Lleva la solución: quien lo
@@ -93,6 +97,50 @@ export function imageAnswerSummary(q: ImageQuestion, answerText: string | null |
   return imageAnswer(q, answerText, attemptId).summary;
 }
 
+type BoardQuestion = Pick<Question, "id" | "type" | "config">;
+
+/**
+ * Respuesta a clasificar o completar, leída igual que al calificar: el resumen
+ * en texto, la solución en texto y el tablero. null si la pregunta no se puede
+ * mostrar (incompleta) o es de otro tipo.
+ */
+function boardAnswer(
+  q: BoardQuestion,
+  answerText: string | null | undefined,
+  attemptId: string
+): { summary: string; solution: string; board: AnswerBoard } | null {
+  const cat = q.type === "categorize" ? readCategorize(q) : null;
+  if (cat) {
+    const placed = categorizePlacement(cat, answerText, attemptId, q.id);
+    const right = cat.cards.filter((k) => placed[k.id] === k.groupId).length;
+    return {
+      summary: Object.keys(placed).length > 0 ? `${right} de ${cat.cards.length} tarjetas bien` : NO_ANSWER,
+      solution: categorizeSolutionText(cat),
+      board: categorizeBoard(cat, placed),
+    };
+  }
+  const cloze = q.type === "cloze" ? readCloze(q) : null;
+  if (cloze) {
+    const given = clozePlacement(cloze, answerText, attemptId, q.id);
+    const hits = clozeHits(cloze, given);
+    return {
+      summary: given.some((g) => g !== undefined) ? `${hits.filter(Boolean).length} de ${hits.length} huecos bien` : NO_ANSWER,
+      solution: clozeSolutionText(cloze),
+      board: clozeBoard(cloze, given),
+    };
+  }
+  return null;
+}
+
+/**
+ * Resumen de la respuesta a clasificar o completar: «N de M tarjetas bien»,
+ * «N de M huecos bien» o «Sin respuesta». Lo leen igual el alumno en su
+ * revisión y el maestro al calificar.
+ */
+export function boardAnswerSummary(q: BoardQuestion, answerText: string | null | undefined, attemptId: string): string {
+  return boardAnswer(q, answerText, attemptId)?.summary ?? NO_ANSWER;
+}
+
 function selectedText(q: FullQuestion, ids: string[] | null): string {
   if (!ids || ids.length === 0) return NO_ANSWER;
   return ids
@@ -104,6 +152,7 @@ function reviewEntry(q: FullQuestion, ans: AnswerRow | null, attemptId: string):
   let yourAnswer = NO_ANSWER;
   let correctAnswer: string | null = null;
   let board: ReviewBoard | undefined;
+  let answerBoard: AnswerBoard | undefined;
 
   switch (q.type) {
     case "single_choice":
@@ -175,6 +224,16 @@ function reviewEntry(q: FullQuestion, ans: AnswerRow | null, attemptId: string):
       board = image.board;
       break;
     }
+    case "categorize":
+    case "cloze": {
+      // Como las de imagen: una pregunta incompleta queda sin tablero y en «Sin respuesta»
+      const answer = boardAnswer(q, ans?.answerText, attemptId);
+      if (!answer) break;
+      yourAnswer = answer.summary;
+      correctAnswer = answer.solution;
+      answerBoard = answer.board;
+      break;
+    }
     case "open_text": {
       yourAnswer = ans?.answerText?.trim() || NO_ANSWER;
       correctAnswer = null;
@@ -206,5 +265,6 @@ function reviewEntry(q: FullQuestion, ans: AnswerRow | null, attemptId: string):
     yourAnswer,
     correctAnswer,
     ...(board ? { board } : {}),
+    ...(answerBoard ? { answerBoard } : {}),
   };
 }

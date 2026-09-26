@@ -2,7 +2,7 @@
  * «Clasificar en grupos» (categorize): tarjetas de texto o imagen que el alumno
  * acomoda en grupos. Puro (sin BD ni DOM).
  */
-import { validAspect } from "./image-questions";
+import { iconNumbers, imageItemName, validAspect } from "./image-questions";
 
 export type CategorizeGroup = { id: string; name: string };
 export type CategorizeCard = {
@@ -72,11 +72,98 @@ export function categorizeProblem(config: unknown): string | null {
   return null;
 }
 
+/**
+ * Pregunta guardada → su config, o null si no está completa. Es el único
+ * criterio para lo que ve el alumno, la calificación y la revisión (como
+ * `readImageDrag`): usa las mismas reglas que al guardar.
+ */
+export function readCategorize(q: { config: unknown }): CategorizeConfig | null {
+  return categorizeProblem(q.config) === null ? (q.config as CategorizeConfig) : null;
+}
+
+/** Una tarjeta tal como se dibuja: sin su id ni su grupo. */
+export type CategorizeCardView = { kind: "text" | "icon"; text?: string; fileId?: string; ratio?: number };
+
+export function categorizeCardView(card: CategorizeCard): CategorizeCardView {
+  if (card.kind === "icon") return { kind: "icon", fileId: card.fileId, ...(card.ratio !== undefined ? { ratio: card.ratio } : {}) };
+  return { kind: "text", text: card.text?.trim() };
+}
+
+/**
+ * Lo que recibe el alumno: los grupos en su orden y las tarjetas revueltas,
+ * cada uno con su ficha. Nunca el grupo de una tarjeta ni los ids.
+ * Respuesta: `{ fichaDeTarjeta: fichaDeGrupo }`.
+ */
+export type CategorizeView = {
+  groups: { token: string; name: string }[];
+  cards: (CategorizeCardView & { token: string })[];
+};
+
+/** La vista del alumno con las fichas que dan `tokens` (el servidor: HMAC por intento; la vista previa: locales). */
+export function categorizeView(
+  config: CategorizeConfig,
+  tokens: { group: (groupId: string) => string; card: (cardId: string) => string },
+  shuffle: <T>(items: T[]) => T[]
+): CategorizeView {
+  return {
+    groups: config.groups.map((g) => ({ token: tokens.group(g.id), name: g.name.trim() })),
+    cards: shuffle(config.cards.map((k) => ({ token: tokens.card(k.id), ...categorizeCardView(k) }))),
+  };
+}
+
 /** Fracción 0–1 de tarjetas en su grupo. `placed[idTarjeta]` = id del grupo donde quedó. */
 export function categorizeScore(config: CategorizeConfig, placed: Record<string, string | undefined>): number {
   if (config.cards.length === 0) return 0;
   const hits = config.cards.filter((k) => placed[k.id] === k.groupId).length;
   return hits / config.cards.length;
+}
+
+/**
+ * Tablero de revisión (solo viaja con resultados visibles): cada grupo con las
+ * tarjetas que quedaron en él, y las que no se pusieron. `expectedGroup` es el
+ * nombre del grupo al que iba la tarjeta (en las mal puestas y las sin poner).
+ */
+export type CategorizeBoard = {
+  kind: "categorize";
+  groups: { name: string; cards: { view: CategorizeCardView; correct: boolean; expectedGroup?: string }[] }[];
+  unplaced: { view: CategorizeCardView; expectedGroup: string }[];
+};
+
+/**
+ * Sin `placed`, la solución: cada tarjeta en su grupo (la vista previa del
+ * maestro). Con `placed` (id de tarjeta → id del grupo donde la puso el
+ * alumno), lo que puso y si acertó.
+ */
+export function categorizeBoard(config: CategorizeConfig, placed?: Record<string, string | undefined>): CategorizeBoard {
+  const nameOf = new Map(config.groups.map((g) => [g.id, g.name.trim()]));
+  const where = (k: CategorizeCard) => {
+    const g = placed ? placed[k.id] : k.groupId;
+    return g !== undefined && nameOf.has(g) ? g : undefined;
+  };
+  // La config ya se validó: cada tarjeta es de un grupo que existe
+  const expected = (k: CategorizeCard) => nameOf.get(k.groupId)!;
+  return {
+    kind: "categorize",
+    groups: config.groups.map((g) => ({
+      name: g.name.trim(),
+      cards: config.cards
+        .filter((k) => where(k) === g.id)
+        .map((k) =>
+          k.groupId === g.id
+            ? { view: categorizeCardView(k), correct: true }
+            : { view: categorizeCardView(k), correct: false, expectedGroup: expected(k) }
+        ),
+    })),
+    unplaced: config.cards.filter((k) => where(k) === undefined).map((k) => ({ view: categorizeCardView(k), expectedGroup: expected(k) })),
+  };
+}
+
+/** La solución en texto: «Frutas: Manzana, Pera · Verduras: Zanahoria, Ícono 1». */
+export function categorizeSolutionText(config: CategorizeConfig): string {
+  const icons = iconNumbers(config.cards.map((k) => k.fileId));
+  return config.groups
+    .map((g) => `${g.name.trim()}: ${config.cards.filter((k) => k.groupId === g.id).map((k) => imageItemName(k, icons).trim()).join(", ")}`)
+    .join(" · ");
 }
 
 /** Cabe en el CSV si todas las tarjetas son de texto. */

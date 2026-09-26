@@ -34,7 +34,9 @@ export type QuestionType =
   | "ordering"
   | "open_text"
   | "image_drag"
-  | "image_click";
+  | "image_click"
+  | "categorize"
+  | "cloze";
 
 export type QuestionData = {
   id: string;
@@ -60,6 +62,8 @@ export const TYPE_LABEL: Record<QuestionType, string> = {
   open_text: "Texto abierto",
   image_drag: "Arrastrar a la imagen",
   image_click: "Señalar en la imagen",
+  categorize: "Clasificar en grupos",
+  cloze: "Completar el texto",
 };
 
 // ─── Editor inline de una pregunta ───────────────────────────────────────────
@@ -156,7 +160,7 @@ export function QuestionEditor({
           : {}),
         ...(type === "matching" ? { pairs } : {}),
         ...(type === "ordering" ? { steps } : {}),
-        ...(isImageQuestionType(type) ? { imageFileId: image.imageFileId, imageConfig: image.config } : {}),
+        ...(isImageQuestionType(type) ? { imageFileId: image.imageFileId, config: image.config } : {}),
       };
       const message = await onSave(input);
       if (message) setError(message);

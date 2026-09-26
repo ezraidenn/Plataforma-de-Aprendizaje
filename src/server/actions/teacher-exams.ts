@@ -23,7 +23,9 @@ import {
 } from "@/server/services/exams";
 import { setExamResultsPublished } from "@/server/services/exam-results";
 import { audit } from "@/server/services/audit";
-import { isImageQuestionType, sanitizeImageConfig } from "@/lib/image-questions";
+import { sanitizeImageConfig } from "@/lib/image-questions";
+import { sanitizeCategorize } from "@/lib/categorize";
+import { sanitizeCloze } from "@/lib/cloze";
 import { questionProblem } from "@/lib/question-validation";
 
 // ─── Guard común: el ítem debe ser un examen de un curso del maestro ─────────
@@ -181,7 +183,9 @@ export type QuestionFormInput = {
     | "ordering"
     | "open_text"
     | "image_drag"
-    | "image_click";
+    | "image_click"
+    | "categorize"
+    | "cloze";
   promptMd: string;
   points: number;
   /** single/multiple/true_false */
@@ -194,8 +198,11 @@ export type QuestionFormInput = {
   steps?: string[];
   /** image_drag/image_click: foto de fondo (archivo editor_image) */
   imageFileId?: string | null;
-  /** image_drag/image_click: la config tal como la arma el editor */
-  imageConfig?: unknown;
+  /**
+   * image_drag/image_click/categorize/cloze: la config tal como la arma su
+   * editor. Llega del navegador: el servidor la sanea según el tipo.
+   */
+  config?: unknown;
 };
 
 /** Convierte el input del formulario al contrato del servicio (config por tipo). */
@@ -212,8 +219,12 @@ function toServiceInput(input: QuestionFormInput): QuestionInput | { error: stri
       return {
         ...base,
         imageFileId: typeof input.imageFileId === "string" && input.imageFileId ? input.imageFileId : null,
-        config: sanitizeImageConfig(input.type, input.imageConfig),
+        config: sanitizeImageConfig(input.type, input.config),
       };
+    case "categorize":
+      return { ...base, config: sanitizeCategorize(input.config) };
+    case "cloze":
+      return { ...base, config: sanitizeCloze(input.config) };
     case "short_text": {
       const accepted = (input.accepted ?? []).map((a) => a.trim()).filter(Boolean);
       return { ...base, config: { accepted } };
@@ -247,13 +258,16 @@ function ownsQuestion(itemId: string, questionId: string): boolean {
   return listQuestions(itemId).some((q) => q.id === questionId);
 }
 
-/** Preguntas sobre imagen: la foto y los íconos deben ser imágenes que subió este usuario. */
+/**
+ * Preguntas con imágenes (sobre imagen, y clasificar con tarjetas de ícono): la
+ * foto y los íconos deben ser imágenes que subió este usuario. Las demás no
+ * traen archivos (su config saneada no tiene de dónde sacarlos).
+ */
 function imageFilesError(
   user: { id: string; role: string },
   input: QuestionInput,
   questionId?: string
 ): { error: string } | null {
-  if (!isImageQuestionType(input.type)) return null;
   const problem = imageQuestionFilesProblem(user, input.imageFileId, input.config, questionId);
   return problem ? { error: problem } : null;
 }

@@ -2,10 +2,18 @@
 
 import type { ElementView } from "@/lib/image-layout";
 import type { ReviewBoard } from "@/lib/image-boards";
+import type { CategorizeBoard, CategorizeView } from "@/lib/categorize";
+import type { ClozeBoard, ClozeView } from "@/lib/cloze";
 
 // Vive en src/lib (la usan también la revisión y la vista previa, sin UI);
 // se reexporta para quien ya la importa de aquí
 export type { ReviewBoard };
+
+/**
+ * Tablero de revisión de clasificar y completar: hermano de `ReviewBoard`
+ * (que es de las preguntas sobre imagen), para no mezclarlo con sus dibujos.
+ */
+export type AnswerBoard = CategorizeBoard | ClozeBoard;
 
 export type StudentItemStatus = "completed" | "in_progress" | "available" | "locked";
 
@@ -119,7 +127,9 @@ export type QuestionKind =
   | "ordering"
   | "open_text"
   | "image_drag"
-  | "image_click";
+  | "image_click"
+  | "categorize"
+  | "cloze";
 
 export type RunnerQuestion = {
   id: string;
@@ -159,6 +169,19 @@ export type RunnerQuestion = {
    * viajan. Respuesta: `[{ x, y }, …]` relativas a la foto (0–1).
    */
   imageClick: { aspect: number; marks: number } | null;
+  /**
+   * categorize: grupos en su orden y tarjetas revueltas, cada uno con un token
+   * opaco por intento; NUNCA el grupo de una tarjeta. Respuesta:
+   * `{ fichaDeTarjeta: fichaDeGrupo }`.
+   */
+  categorize: CategorizeView | null;
+  /**
+   * cloze: el texto en trozos con un token por hueco y, según el modo, las
+   * palabras del banco o las opciones de cada hueco (revueltas); NUNCA las
+   * variantes aceptadas ni cuál opción es la correcta. Respuesta:
+   * `{ fichaDeHueco: texto | fichaDePalabra | fichaDeOpción }`.
+   */
+  cloze: ClozeView | null;
 };
 
 export type AttemptDto = {
@@ -291,4 +314,6 @@ export type ReviewEntry = {
   correctAnswer: string | null;
   /** Preguntas sobre imagen: lo que puso el alumno y la solución, para dibujarlos. */
   board?: ReviewBoard;
+  /** Clasificar y completar: lo que puso el alumno, si acertó y la solución. */
+  answerBoard?: AnswerBoard;
 };

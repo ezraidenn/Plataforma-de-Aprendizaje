@@ -26,12 +26,15 @@ import {
   imageDragScore,
   parseClickAnswer,
   parseDragAnswer,
+  parseMapAnswer,
   readImageClick,
   readImageDrag,
   zoneKey,
   type ImageDragConfig,
   type ImageZone,
 } from "@/lib/image-questions";
+import { categorizeScore, readCategorize, type CategorizeConfig } from "@/lib/categorize";
+import { clozeBankWords, clozeOptions, clozeScore, parseCloze, readCloze, type ClozeConfig } from "@/lib/cloze";
 
 export { listAttempts, computeFinalScorePercent };
 
@@ -121,6 +124,95 @@ export function imageDragPlacement(
   return placed;
 }
 
+/**
+ * Fichas opacas de «Clasificar en grupos»: una por tarjeta y una por grupo,
+ * por su id (no por su posición): el maestro puede reordenar o quitar tarjetas
+ * con un intento en curso y las demás respuestas siguen valiendo.
+ */
+export function categorizeCardToken(attemptId: string, questionId: string, cardId: string): string {
+  return opaqueToken("catcard", attemptId, questionId, cardId);
+}
+
+export function categorizeGroupToken(attemptId: string, questionId: string, groupId: string): string {
+  return opaqueToken("catgroup", attemptId, questionId, groupId);
+}
+
+/**
+ * Fichas opacas de «Completar el texto». Los huecos y sus opciones van por
+ * índice (como relacionar y ordenar: editar el texto con intentos abiertos
+ * puede mover respuestas). `key` de una palabra del banco: `b{i}` la del hueco
+ * i, `d{j}` el distractor j (ver `clozeBankWords`); `k` de una opción: su
+ * índice en [canónica, …incorrectas] (ver `clozeOptions`).
+ */
+export function clozeBlankToken(attemptId: string, questionId: string, index: number): string {
+  return opaqueToken("clzblank", attemptId, questionId, index);
+}
+
+export function clozeWordToken(attemptId: string, questionId: string, key: string): string {
+  return opaqueToken("clzword", attemptId, questionId, key);
+}
+
+export function clozeOptionToken(attemptId: string, questionId: string, blank: number, k: number): string {
+  return opaqueToken("clzopt", attemptId, questionId, blank, k);
+}
+
+/**
+ * Respuesta de clasificar ({fichaDeTarjeta: fichaDeGrupo}) → id del grupo
+ * donde quedó cada tarjeta (id de tarjeta → id de grupo; las que no se
+ * pusieron, o con fichas que no son de esta pregunta, no aparecen). Lo usan la
+ * calificación y la revisión, así ambas leen la respuesta igual.
+ */
+export function categorizePlacement(
+  config: CategorizeConfig,
+  answerText: string | null | undefined,
+  attemptId: string,
+  questionId: string
+): Record<string, string> {
+  const answer = parseMapAnswer(answerText);
+  const groupOf = new Map(config.groups.map((g) => [categorizeGroupToken(attemptId, questionId, g.id), g.id]));
+  // Sin prototipo: un id de tarjeta nunca choca con algo heredado
+  const placed: Record<string, string> = Object.create(null);
+  for (const card of config.cards) {
+    const group = groupOf.get(answer[categorizeCardToken(attemptId, questionId, card.id)]);
+    if (group !== undefined) placed[card.id] = group;
+  }
+  return placed;
+}
+
+/**
+ * Respuesta de completar ({fichaDeHueco: texto | fichaDePalabra | fichaDeOpción})
+ * → lo puesto en cada hueco como texto, en orden de huecos (undefined = vacío).
+ * Escribir: lo escrito. Banco: el texto de la palabra, y cada ficha vale una
+ * sola vez (la misma en dos huecos cuenta en el primero). Lista: el texto de la
+ * opción, solo si es de ese hueco. Lo usan la calificación y la revisión.
+ */
+export function clozePlacement(
+  config: ClozeConfig,
+  answerText: string | null | undefined,
+  attemptId: string,
+  questionId: string
+): (string | undefined)[] {
+  const answer = parseMapAnswer(answerText);
+  const { blanks } = parseCloze(config.text);
+  const words =
+    config.mode === "bank"
+      ? new Map(clozeBankWords(config).map((w) => [clozeWordToken(attemptId, questionId, w.key), w.text]))
+      : null;
+  const used = new Set<string>();
+  return blanks.map((b, i) => {
+    const v = answer[clozeBlankToken(attemptId, questionId, i)];
+    if (typeof v !== "string") return undefined;
+    if (config.mode === "write") return v.trim() || undefined;
+    if (words) {
+      const text = words.get(v);
+      if (text === undefined || used.has(v)) return undefined;
+      used.add(v);
+      return text;
+    }
+    return clozeOptions(b).find((_, k) => clozeOptionToken(attemptId, questionId, i, k) === v);
+  });
+}
+
 // ─── Configuración del examen (maestro) ──────────────────────────────────────
 
 export function getExam(itemId: string): Exam | null {
@@ -182,7 +274,8 @@ export type QuestionInput = {
   promptMd: string;
   points: number;
   // short_text: {accepted: string[]} · matching: {pairs: [{left, right}]} · ordering: {steps: string[]} ·
-  // image_drag: ImageDragConfig · image_click: ImageClickConfig (src/lib/image-questions.ts)
+  // image_drag: ImageDragConfig · image_click: ImageClickConfig (src/lib/image-questions.ts) ·
+  // categorize: CategorizeConfig (src/lib/categorize.ts) · cloze: ClozeConfig (src/lib/cloze.ts)
   config?: unknown;
   options?: { textMd: string; isCorrect: boolean }[];
   /** Foto de fondo de image_drag/image_click; los demás tipos, null. */
@@ -194,22 +287,28 @@ export function validateQuestion(input: QuestionInput) {
   if (problem) throw new Error(problem);
 }
 
-/** Ids de archivo de una pregunta sobre imagen: la foto y los íconos de sus elementos. */
+/**
+ * Ids de archivo de una pregunta: la foto (preguntas sobre imagen) y los
+ * íconos de sus elementos (arrastrar a la imagen) o de sus tarjetas (clasificar).
+ */
 function imageQuestionFileIds(imageFileId: string | null | undefined, config: unknown): string[] {
-  const elements = (config as { elements?: unknown } | null)?.elements;
-  const icons = Array.isArray(elements)
-    ? elements.map((e) => (e as { fileId?: unknown } | null)?.fileId).filter((f): f is string => typeof f === "string" && !!f)
-    : [];
+  const c = config as { elements?: unknown; cards?: unknown } | null;
+  const icons = [c?.elements, c?.cards].flatMap((list) =>
+    Array.isArray(list)
+      ? list.map((e) => (e as { fileId?: unknown } | null)?.fileId).filter((f): f is string => typeof f === "string" && !!f)
+      : []
+  );
   return [...new Set([...(imageFileId ? [imageFileId] : []), ...icons])];
 }
 
 /**
- * La foto y los íconos deben existir, ser imágenes del editor y haberlas
- * subido este usuario (el admin, cualquiera). Si no, un maestro podría poner
- * de «foto» el id de un archivo ajeno (una entrega, un certificado) y abrirlo
- * por la regla que le deja ver las imágenes de sus preguntas. Al editar, los
- * archivos que la pregunta ya tenía siguen valiendo (p. ej. un curso que
- * cambió de dueño). null = todo bien.
+ * La foto y los íconos (de arrastrar a la imagen o de las tarjetas de
+ * clasificar) deben existir, ser imágenes del editor y haberlas subido este
+ * usuario (el admin, cualquiera). Si no, un maestro podría poner de «foto» el
+ * id de un archivo ajeno (una entrega, un certificado) y abrirlo por la regla
+ * que le deja ver las imágenes de sus preguntas. Al editar, los archivos que
+ * la pregunta ya tenía siguen valiendo (p. ej. un curso que cambió de dueño).
+ * null = todo bien (también si la pregunta no tiene archivos).
  */
 export function imageQuestionFilesProblem(
   user: { id: string; role: string },
@@ -599,6 +698,19 @@ function gradeAnswer(
       if (!click) return 0;
       const marks = parseClickAnswer(answerText, click.config.spots.length);
       return Math.round(imageClickScore(click.config, marks) * q.points * 100) / 100;
+    }
+    case "categorize": {
+      // Igual que las de imagen: incompleta vale cero sin tumbar el envío
+      const cat = readCategorize(q);
+      if (!cat) return 0;
+      const placed = categorizePlacement(cat, answerText, attemptId, q.id);
+      return Math.round(categorizeScore(cat, placed) * q.points * 100) / 100;
+    }
+    case "cloze": {
+      const cloze = readCloze(q);
+      if (!cloze) return 0;
+      const given = clozePlacement(cloze, answerText, attemptId, q.id);
+      return Math.round(clozeScore(cloze, given) * q.points * 100) / 100;
     }
     case "open_text":
       return null; // calificación manual (Fase 3)

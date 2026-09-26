@@ -404,8 +404,11 @@ export function nearestZone(zones: Point[], p: Point, aspect: number, radius = S
   return best;
 }
 
-/** `{ fichaDeLugar: fichaDeElemento }`; lo ilegible se descarta. */
-export function parseDragAnswer(text: string | null | undefined): Record<string, string> {
+/**
+ * Respuesta en forma de mapa `{ ficha: ficha o texto }` (arrastrar a la
+ * imagen, clasificar, completar); lo ilegible se descarta.
+ */
+export function parseMapAnswer(text: string | null | undefined): Record<string, string> {
   try {
     const raw = JSON.parse(text ?? "{}") as unknown;
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
@@ -414,6 +417,9 @@ export function parseDragAnswer(text: string | null | undefined): Record<string,
     return {};
   }
 }
+
+/** `{ fichaDeLugar: fichaDeElemento }`; lo ilegible se descarta. */
+export const parseDragAnswer = parseMapAnswer;
 
 /** Marcas válidas (0–1), como mucho `max`. */
 export function parseClickAnswer(text: string | null | undefined, max: number): Point[] {

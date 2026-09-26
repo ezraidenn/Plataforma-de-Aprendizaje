@@ -375,13 +375,16 @@ export const questions = sqliteTable(
         "open_text",
         "image_drag",
         "image_click",
+        "categorize",
+        "cloze",
       ],
     }).notNull(),
     promptMd: text("prompt_md").notNull(),
     points: real("points").notNull().default(1),
     imageFileId: text("image_file_id").references(() => files.id),
     // short_text: variantes aceptadas; matching: pares [{left, right}]; ordering: pasos en orden;
-    // image_drag: ImageDragConfig · image_click: ImageClickConfig (src/lib/image-questions.ts)
+    // image_drag: ImageDragConfig · image_click: ImageClickConfig (src/lib/image-questions.ts);
+    // categorize: CategorizeConfig (src/lib/categorize.ts) · cloze: ClozeConfig (src/lib/cloze.ts)
     config: text("config", { mode: "json" }),
     ...timestamps,
   },
