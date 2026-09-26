@@ -64,6 +64,7 @@ export function QuestionList({
   drawCount = null,
   hasAttempts = false,
   answeredInProgress = [],
+  clozeAnswered = [],
 }: {
   courseId: string;
   itemId: string;
@@ -72,8 +73,10 @@ export function QuestionList({
   drawCount?: number | null;
   /** El examen ya tiene intentos enviados: cambiar, recortar o girar la foto de una pregunta pide confirmación. */
   hasAttempts?: boolean;
-  /** Preguntas con respuestas guardadas en intentos en curso: cambiar su foto también pide confirmación (y en completar, cambiar la forma de contestar avisa). */
+  /** Preguntas con respuestas guardadas en intentos en curso: cambiar su foto también pide confirmación. */
   answeredInProgress?: string[];
+  /** Preguntas de completar con alguna respuesta guardada (en cualquier intento): su forma de contestar ya no se puede cambiar. */
+  clozeAnswered?: string[];
 }) {
   const router = useRouter();
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -148,6 +151,7 @@ export function QuestionList({
                   type={question.type}
                   initial={question}
                   answered={hasAttempts ? "attempts" : answeredInProgress.includes(question.id) ? "in_progress" : null}
+                  clozeHasAnswers={clozeAnswered.includes(question.id)}
                   onCancel={() => setEditingId(null)}
                   onSave={async (input) => {
                     const result = await updateQuestionAction(courseId, itemId, question.id, input);

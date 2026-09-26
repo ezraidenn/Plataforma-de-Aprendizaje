@@ -27,7 +27,6 @@ import {
 import { cn } from "@/lib/utils";
 import { ChipField } from "./cloze-chips";
 import { HistoryButtons } from "./image-canvas-toolbar";
-import type { Answered } from "./image-photo-tools";
 import { Segmented } from "./segmented";
 import { isTypingTarget, isUndoKey, useEditorHistory } from "./use-editor-history";
 import { usePendingDrafts, type ReportDraft } from "./use-pending-drafts";
@@ -42,7 +41,7 @@ import { usePendingDrafts, type ReportDraft } from "./use-pending-drafts";
  * aparte. Cada cambio es un paso de Deshacer (lo que se escribe seguido, uno
  * solo); en el texto, Ctrl+Z deshace lo escrito y, si lo último fue otra cosa
  * (un hueco, una ficha), ese paso. Abajo, lo que impediría guardar, en vivo;
- * cambiar la forma de una pregunta que ya tiene respuestas, además, no se guarda.
+ * cambiar la forma de una pregunta que ya tiene respuestas guardadas no se guarda.
  */
 
 const MODES: [ClozeMode, string][] = [
@@ -61,15 +60,15 @@ export function ClozeEditor({
   value,
   onChange,
   savedMode = null,
-  answered = null,
+  hasAnswers = false,
   onPendingChange,
 }: {
   value: ClozeEditorValue;
   onChange: (value: ClozeEditorValue) => void;
   /** La forma de contestar guardada (null: pregunta nueva). */
   savedMode?: ClozeMode | null;
-  /** El examen ya tiene intentos, o esta pregunta respuestas en uno en curso: no se puede guardar con otra forma de contestar. */
-  answered?: Answered;
+  /** La pregunta ya tiene respuestas guardadas (en cualquier intento): no se puede guardar con otra forma de contestar. */
+  hasAnswers?: boolean;
   /** Lo escrito en una ficha sin agregar (null: nada): mientras tanto no se guarda. */
   onPendingChange?: (text: string | null) => void;
 }) {
@@ -87,7 +86,7 @@ export function ClozeEditor({
   const { live, announce } = useAnnouncer();
   const report = usePendingDrafts(onPendingChange);
   const { blanks } = parseCloze(value.text);
-  const lock = clozeModeLock(answered, savedMode, value.mode);
+  const lock = clozeModeLock(hasAnswers, savedMode, value.mode);
   const problem = clozeProblem(clozeConfigOf(value));
 
   useLayoutEffect(() => {

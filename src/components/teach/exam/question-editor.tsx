@@ -85,6 +85,7 @@ export function QuestionEditor({
   onCancel,
   onSave,
   answered = null,
+  clozeHasAnswers = false,
 }: {
   type: QuestionType;
   initial: QuestionData | null;
@@ -94,10 +95,11 @@ export function QuestionEditor({
   /**
    * El examen ya tiene intentos enviados («attempts») o esta pregunta,
    * respuestas guardadas en un intento en curso («in_progress»): cambiar,
-   * recortar o girar su foto pide confirmación, y cambiar la forma de
-   * contestar de «completar» avisa que no se podrá guardar.
+   * recortar o girar su foto pide confirmación.
    */
   answered?: Answered;
+  /** Completar: la pregunta ya tiene respuestas guardadas (en cualquier intento): no se puede cambiar su forma de contestar. */
+  clozeHasAnswers?: boolean;
 }) {
   const [promptMd, setPromptMd] = useState(initial?.promptMd ?? "");
   const [points, setPoints] = useState(String(initial?.points ?? 1));
@@ -159,7 +161,7 @@ export function QuestionEditor({
   const boardConfig = type === "categorize" ? categorize : type === "cloze" ? clozeConfigOf(cloze) : null;
   // Completar con respuestas guardadas: otra forma de contestar no se guarda (el editor dice por qué)
   const savedClozeMode = type === "cloze" && initial ? initialClozeValue(initial.config).mode : null;
-  const clozeLock = type === "cloze" ? clozeModeLock(answered, savedClozeMode, cloze.mode) : null;
+  const clozeLock = type === "cloze" ? clozeModeLock(clozeHasAnswers, savedClozeMode, cloze.mode) : null;
 
   function addVariant() {
     const value = newVariant.trim();
@@ -352,7 +354,7 @@ export function QuestionEditor({
         <CategorizeEditor value={categorize} onChange={changeCategorize} onBusyChange={setUploading} onPendingChange={setPending} />
       )}
       {type === "cloze" && (
-        <ClozeEditor value={cloze} onChange={changeCloze} savedMode={savedClozeMode} answered={answered} onPendingChange={setPending} />
+        <ClozeEditor value={cloze} onChange={changeCloze} savedMode={savedClozeMode} hasAnswers={clozeHasAnswers} onPendingChange={setPending} />
       )}
 
       {error && (

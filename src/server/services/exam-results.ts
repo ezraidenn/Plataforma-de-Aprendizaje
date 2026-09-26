@@ -18,11 +18,10 @@ export function studentsWithAttempts(itemId: string): number {
 }
 
 /**
- * Preguntas sobre imagen y de completar del examen con respuestas ya guardadas
- * en intentos EN CURSO (los enviados los cuenta `studentsWithAttempts`): en el
- * editor, cambiar, recortar o girar su foto pide confirmación, y en completar,
- * cambiar la forma de contestar avisa que no se podrá guardar. Las de otros
- * tipos no se cuentan.
+ * Preguntas sobre imagen del examen con respuestas ya guardadas en intentos EN
+ * CURSO (los enviados los cuenta `studentsWithAttempts`): en el editor,
+ * cambiar, recortar o girar su foto pide confirmación. Las de otros tipos no
+ * tienen foto: no se cuentan.
  */
 export function questionsAnsweredInProgress(itemId: string): string[] {
   return db
@@ -34,9 +33,26 @@ export function questionsAnsweredInProgress(itemId: string): string[] {
       and(
         eq(examAttempts.examItemId, itemId),
         eq(examAttempts.status, "in_progress"),
-        inArray(questions.type, [...IMAGE_QUESTION_TYPES, "cloze"])
+        inArray(questions.type, [...IMAGE_QUESTION_TYPES])
       )
     )
+    .all()
+    .map((r) => r.id);
+}
+
+/**
+ * Preguntas de «Completar el texto» del examen con alguna respuesta guardada,
+ * en cualquier intento (enviado o en curso): el mismo criterio con que el
+ * servidor rechaza cambiarles la forma de contestar (`clozeModeProblem`). El
+ * editor las bloquea antes; las demás (sin respuestas, como una copia recién
+ * hecha) sí pueden cambiar de forma.
+ */
+export function clozeQuestionsWithAnswers(itemId: string): string[] {
+  return db
+    .selectDistinct({ id: attemptAnswers.questionId })
+    .from(attemptAnswers)
+    .innerJoin(questions, eq(questions.id, attemptAnswers.questionId))
+    .where(and(eq(questions.examItemId, itemId), eq(questions.type, "cloze")))
     .all()
     .map((r) => r.id);
 }

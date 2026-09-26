@@ -49,7 +49,8 @@ export function ChipField({
   const problemId = useId();
   const full = max !== undefined && items.length >= max;
   const problem = draft?.trim() ? problemOf(draft) : null;
-  useReportDraft(report, `${noun} ${context}`, draft);
+  // Con el tope lleno no hay campo a la vista: nada pendiente que trabe «Guardar»
+  useReportDraft(report, `${noun} ${context}`, full ? null : draft);
 
   useEffect(() => {
     const target = refocus.current;

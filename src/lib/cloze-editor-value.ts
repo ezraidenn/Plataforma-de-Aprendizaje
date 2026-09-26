@@ -55,19 +55,13 @@ export const CLOZE_MODE_LOCKED =
 
 /**
  * Por qué no se puede guardar con la forma `mode` una pregunta guardada con
- * `savedMode` (null: sí se puede). `answered`: «in_progress», esta pregunta
- * tiene respuestas en un intento en curso; «attempts», el examen ya tiene
- * intentos enviados (casi siempre con respuestas de esta pregunta).
+ * `savedMode` (null: sí se puede). `hasAnswers`: la pregunta tiene alguna
+ * respuesta guardada, en cualquier intento (`clozeQuestionsWithAnswers`, el
+ * mismo criterio del servidor). Sin respuestas (una agregada después, una que
+ * no salió en el sorteo, la copia recién hecha) sí puede cambiar de forma.
  */
-export function clozeModeLock(
-  answered: "attempts" | "in_progress" | null,
-  savedMode: ClozeMode | null,
-  mode: ClozeMode
-): string | null {
-  if (answered === null || savedMode === null || mode === savedMode) return null;
-  return answered === "in_progress"
-    ? CLOZE_MODE_LOCKED
-    : "El examen ya tiene intentos: no se puede cambiar la forma de contestar. Duplica la pregunta y cámbiala en la copia.";
+export function clozeModeLock(hasAnswers: boolean, savedMode: ClozeMode | null, mode: ClozeMode): string | null {
+  return hasAnswers && savedMode !== null && mode !== savedMode ? CLOZE_MODE_LOCKED : null;
 }
 
 /** Lo que se guarda (y se valida y se previsualiza): solo lo de la forma elegida. */
@@ -137,6 +131,9 @@ export function blankPartProblem(
     if (blank.answers.includes(v)) return "Ya está en el hueco";
     const n = normalizeAnswer(v, opts);
     if (!blank.answers.some((a) => normalizeAnswer(a, opts) === n)) return null;
+    // Igual salvo espacios (dentro, dos seguidos: se juntan al comparar)
+    const strict = { matchCase: true, matchAccents: true };
+    if (blank.answers.some((a) => normalizeAnswer(a, strict) === normalizeAnswer(v, strict))) return "Ya se acepta (solo cambian los espacios)";
     const loose = [!opts.matchCase && "mayúsculas", !opts.matchAccents && "acentos"].filter(Boolean);
     return `Ya se acepta: no se distinguen ${loose.join(" ni ")}`;
   }

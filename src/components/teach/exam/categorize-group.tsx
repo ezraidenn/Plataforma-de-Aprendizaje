@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
-import { ArrowRightLeft, ChevronDown, Loader2, Pencil, Plus, X } from "lucide-react";
+import { ArrowRightLeft, ChevronDown, Pencil, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -16,17 +16,17 @@ import {
 import { DropVeil, useFileDrop } from "@/components/exam/image-dnd";
 import { ChipFace, chipLook } from "@/components/student/place-kit";
 import { MAX_CARD_TEXT, MAX_GROUP_NAME, type CategorizeCard, type CategorizeGroup } from "@/lib/categorize";
-import { EDITOR_IMAGE_ACCEPT } from "@/lib/upload-client";
 import { cn } from "@/lib/utils";
-import { useReportDraft, type ReportDraft } from "./use-pending-drafts";
+import { CardAdder } from "./categorize-card-adder";
+import type { ReportDraft } from "./use-pending-drafts";
 
 /**
  * Una columna del editor de «Clasificar en grupos»: el nombre del grupo (se
  * escribe ahí mismo), sus tarjetas y los botones para agregarle un texto o un
  * ícono (también se puede soltar el archivo sobre la columna). Cada tarjeta se
  * arrastra a otro grupo tomándola por su texto o dibujo, o se mueve con su menú
- * (▾), que además cambia el texto; la × la quita. Lo escrito en «+ Texto» sin
- * agregar se avisa al editor (`report`): así «Guardar» no lo pierde en silencio.
+ * (▾), que además cambia el texto; la × la quita. «+ Texto» y «+ Ícono» viven
+ * en `categorize-card-adder.tsx`.
  */
 
 /** Ids del arrastre: las tarjetas y los grupos no se confunden aunque compartan clave. */
@@ -335,152 +335,5 @@ function CardTextEdit({
         </span>
       )}
     </span>
-  );
-}
-
-/**
- * Bajo las tarjetas de un grupo: «+ Texto» (un campo en línea) y «+ Ícono» (el
- * selector de archivos). Con la última tarjeta que cabe, el campo se cierra.
- */
-function CardAdder({
-  groupId,
-  label,
-  uploading,
-  busy,
-  left,
-  report,
-  problemOf,
-  onAddText,
-  onIconFile,
-}: {
-  groupId: string;
-  label: string;
-  uploading: boolean;
-  busy: boolean;
-  left: number;
-  report?: ReportDraft;
-  problemOf: (text: string) => string | null;
-  onAddText: (text: string) => void;
-  onIconFile: (file: File) => void;
-}) {
-  const rootRef = useRef<HTMLDivElement>(null);
-  const iconInput = useRef<HTMLInputElement>(null);
-  const textButton = useRef<HTMLButtonElement>(null);
-  /** Texto nuevo que se escribe; null = cerrado. */
-  const [draft, setDraft] = useState<string | null>(null);
-  /** Al cerrar el campo, el foco vuelve a «Texto». */
-  const refocus = useRef(false);
-  const problemId = useId();
-  const full = left <= 0;
-  const problem = draft?.trim() ? problemOf(draft) : null;
-  useReportDraft(report, `text:${groupId}`, draft);
-
-  useEffect(() => {
-    if (draft !== null || !refocus.current) return;
-    refocus.current = false;
-    textButton.current?.focus();
-  }, [draft]);
-
-  function add() {
-    const text = (draft ?? "").trim();
-    if (!text || problem || full) return;
-    onAddText(text);
-    if (left > 1) {
-      setDraft("");
-      return;
-    }
-    // Era la última que cabía: el campo se cierra y el foco va a la tarjeta nueva
-    setDraft(null);
-    requestAnimationFrame(() => {
-      const removes = rootRef.current?.closest("[data-group-col]")?.querySelectorAll<HTMLElement>("[data-card-remove]");
-      removes?.[removes.length - 1]?.focus();
-    });
-  }
-
-  function close() {
-    refocus.current = true;
-    setDraft(null);
-  }
-
-  return (
-    // Al pie de la columna: los botones quedan a la misma altura en todos los grupos
-    <div ref={rootRef} className="mt-auto">
-      <input
-        ref={iconInput}
-        type="file"
-        accept={EDITOR_IMAGE_ACCEPT}
-        className="hidden"
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          e.target.value = "";
-          if (file) onIconFile(file);
-        }}
-      />
-      {draft !== null ? (
-        <div className="space-y-1">
-          <div className="flex gap-1">
-            <Input
-              autoFocus
-              value={draft}
-              maxLength={MAX_CARD_TEXT}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  add();
-                } else if (e.key === "Escape") {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  close();
-                }
-              }}
-              placeholder="Texto y Enter"
-              aria-label={`Texto de la tarjeta nueva de ${label}`}
-              aria-invalid={problem ? true : undefined}
-              aria-describedby={problem ? problemId : undefined}
-              className="h-8 text-sm"
-            />
-            <Button type="button" size="icon-sm" variant="ghost" className="size-8 shrink-0" aria-label="Cerrar sin agregar" onClick={close}>
-              <X aria-hidden />
-            </Button>
-          </div>
-          {problem && (
-            <p id={problemId} role="status" className="text-xs text-amber-700 dark:text-warning">
-              {problem}
-            </p>
-          )}
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 gap-1">
-          <Button
-            ref={textButton}
-            type="button"
-            size="sm"
-            variant="outline"
-            data-add-text={groupId}
-            aria-label={`Agregar tarjeta de texto a ${label}`}
-            disabled={full}
-            onClick={() => setDraft("")}
-          >
-            <Plus aria-hidden />
-            Texto
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            aria-label={`Agregar tarjeta con ícono a ${label}`}
-            disabled={full}
-            // Mientras sube no se deshabilita del todo: así el foco no se pierde
-            aria-disabled={busy}
-            className="aria-disabled:opacity-60"
-            onClick={() => !busy && iconInput.current?.click()}
-          >
-            {uploading ? <Loader2 className="animate-spin" aria-hidden /> : <Plus aria-hidden />}
-            {uploading ? "Subiendo…" : "Ícono"}
-          </Button>
-        </div>
-      )}
-    </div>
   );
 }

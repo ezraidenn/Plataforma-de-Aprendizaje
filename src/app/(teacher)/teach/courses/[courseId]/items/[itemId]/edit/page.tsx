@@ -6,7 +6,7 @@ import { requireTeacher } from "@/server/auth/guards";
 import { getOwnedCourse } from "@/server/services/courses";
 import { getItem } from "@/server/services/tree";
 import { getExam, listQuestions } from "@/server/services/exams";
-import { questionsAnsweredInProgress, studentsWithAttempts } from "@/server/services/exam-results";
+import { clozeQuestionsWithAnswers, questionsAnsweredInProgress, studentsWithAttempts } from "@/server/services/exam-results";
 import { isImageQuestionType } from "@/lib/image-questions";
 import { csvRepresentable } from "@/lib/csv-fit";
 import { ExamSettingsCard } from "@/components/teach/exam/exam-settings-card";
@@ -63,11 +63,10 @@ export default async function ExamEditPage({
   const notInCsvCount = rawQuestions.filter((q) => !csvRepresentable(q)).length;
   // Alumnos con un intento enviado: la publicación de resultados y el editor de fotos (cambiar una foto cambia sus revisiones)
   const attempted = studentsWithAttempts(itemId);
-  // Y las preguntas sobre imagen o de completar que alguien ya respondió en un intento en curso (su foto
-  // también pide confirmación; la forma de contestar de completar ya no se puede cambiar)
-  const answeredInProgress = rawQuestions.some((q) => isImageQuestionType(q.type) || q.type === "cloze")
-    ? questionsAnsweredInProgress(itemId)
-    : [];
+  // Y las preguntas sobre imagen que alguien ya respondió en un intento en curso (su foto también pide confirmación)
+  const answeredInProgress = rawQuestions.some((q) => isImageQuestionType(q.type)) ? questionsAnsweredInProgress(itemId) : [];
+  // Las de completar con alguna respuesta guardada, en cualquier intento: su forma de contestar ya no se puede cambiar
+  const clozeAnswered = rawQuestions.some((q) => q.type === "cloze") ? clozeQuestionsWithAnswers(itemId) : [];
 
   return (
     <div className="space-y-4">
@@ -141,6 +140,7 @@ export default async function ExamEditPage({
         drawCount={exam.drawCount}
         hasAttempts={attempted > 0}
         answeredInProgress={answeredInProgress}
+        clozeAnswered={clozeAnswered}
       />
     </div>
   );

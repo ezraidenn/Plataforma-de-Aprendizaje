@@ -13,6 +13,7 @@ import * as courses from "../src/server/services/courses";
 import * as tree from "../src/server/services/tree";
 import * as examsSvc from "../src/server/services/exams";
 import * as answers from "../src/server/services/exam-answers";
+import { clozeQuestionsWithAnswers } from "../src/server/services/exam-results";
 import { boardAnswerSummary, buildReview } from "../src/server/services/exam-review";
 import { buildRunnerQuestions } from "../src/components/student/lesson-data";
 import { questionsToPreview } from "../src/lib/preview-question";
@@ -179,12 +180,17 @@ function pureChecks() {
       blankPartProblem("PARIS", b0, "variant", { matchAccents: true }) === "Ya se acepta: no se distinguen mayúsculas" &&
       blankPartProblem("PARIS", b0, "variant", { matchCase: true }) === null,
     blankPartProblem("PARIS", b0, "variant"));
+  const ny = { answers: ["Nueva York"], wrong: [] };
+  check("Variante igual salvo los espacios: lo dice (también si se distingue todo)",
+    blankPartProblem("Nueva  York", ny, "variant") === "Ya se acepta (solo cambian los espacios)" &&
+      blankPartProblem("Nueva  York", ny, "variant", { matchCase: true, matchAccents: true }) === "Ya se acepta (solo cambian los espacios)",
+    blankPartProblem("Nueva  York", ny, "variant", { matchCase: true, matchAccents: true }));
   check("Incorrecta: ni la respuesta ni repetida", blankPartProblem("paris", b0, "wrong") === "Es la respuesta correcta" && blankPartProblem("londres", b0, "wrong") === "Ya está en la lista" && blankPartProblem("Berlín", b0, "wrong") === null);
   check("Distractor: ni repetido ni una respuesta, sin «|»", distractorProblem("madrid", ["Madrid"], ["Roma"]) !== null && distractorProblem("roma", [], ["Roma"]) !== null && distractorProblem("a|b", [], []) !== null && distractorProblem("Lisboa", ["Madrid"], ["Roma"]) === null);
   check("Abrir: los saltos de línea de Windows quedan en «\\n»", initialClozeValue({ text: "a\r\n[[b]]\rc", mode: "write" }).text === "a\n[[b]]\nc");
-  check("Forma de contestar: bloqueada con respuestas, libre sin ellas o sin cambiarla",
-    clozeModeLock("in_progress", "write", "bank") === CLOZE_MODE_LOCKED && clozeModeLock("attempts", "write", "bank")?.includes("Duplica la pregunta") === true &&
-      clozeModeLock(null, "write", "bank") === null && clozeModeLock("in_progress", "write", "write") === null && clozeModeLock("attempts", null, "bank") === null);
+  check("Forma de contestar: bloqueada solo si la pregunta tiene respuestas y cambia de forma",
+    clozeModeLock(true, "write", "bank") === CLOZE_MODE_LOCKED && clozeModeLock(false, "write", "bank") === null &&
+      clozeModeLock(true, "write", "write") === null && clozeModeLock(true, null, "bank") === null);
   check("El servidor usa el mismo mensaje", examsSvc.CLOZE_MODE_LOCKED === CLOZE_MODE_LOCKED);
   const opened = initialClozeValue({ text: "[[a]]", mode: "bank", distractors: ["b"], matchCase: true });
   check("Abrir: todo lo guardado; sin nada, escribir", opened.mode === "bank" && opened.distractors[0] === "b" && opened.matchCase && initialClozeValue(null).mode === "write" && initialClozeValue(null).text === "");
@@ -414,6 +420,10 @@ async function endToEnd() {
     // Sin respuestas guardadas (su copia), el modo se cambia
     const qCopy = examsSvc.duplicateQuestion(exam.id, qB);
     check("Sin respuestas guardadas (la copia), el modo sí cambia", tryUpdate(qCopy, { ...BANK, mode: "write" }) === null && modeOf(qCopy) === "write", modeOf(qCopy));
+    // Lo que el editor bloquea antes: el mismo criterio que el servidor
+    const withAnswers = clozeQuestionsWithAnswers(exam.id);
+    check("Las de completar con respuestas (el editor las bloquea): las respondidas sí, la copia sin respuestas no",
+      withAnswers.includes(qB) && withAnswers.includes(qS) && !withAnswers.includes(qCopy), withAnswers);
 
     // ─── Config inválida: vale 0 sin tumbar el envío ──────────────────────────
     // En su propio curso: con la secuencia obligatoria, un segundo examen aquí quedaría bloqueado
