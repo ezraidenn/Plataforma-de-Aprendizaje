@@ -301,6 +301,18 @@ const point = (v: unknown) => {
 };
 
 /**
+ * Archivos que nombra una config de «arrastrar a la imagen»: los de sus íconos
+ * (la foto de fondo va aparte, en `imageFileId`). Acepta cualquier cosa: se
+ * lee también de lo ya guardado, sin validar.
+ */
+export function imageDragFileIds(config: unknown): string[] {
+  return list(record(config).elements).flatMap((e) => {
+    const f = record(e).fileId;
+    return typeof f === "string" && f ? [f] : [];
+  });
+}
+
+/**
  * Config que llega del navegador → solo los campos conocidos, con su tipo
  * (íconos sin texto, etiquetas sin archivo, ids cortos, números finitos). Lo
  * que no cuadra se omite y lo señala la validación; aquí no se decide si la
@@ -418,7 +430,10 @@ export function parseMapAnswer(text: string | null | undefined): Record<string, 
   }
 }
 
-/** `{ fichaDeLugar: fichaDeElemento }`; lo ilegible se descarta. */
+/**
+ * `{ fichaDeLugar: fichaDeElemento }`; lo ilegible se descarta.
+ * @deprecated Usa `parseMapAnswer`: es la misma lectura para todos los tipos con respuesta en mapa.
+ */
 export const parseDragAnswer = parseMapAnswer;
 
 /** Marcas válidas (0–1), como mucho `max`. */

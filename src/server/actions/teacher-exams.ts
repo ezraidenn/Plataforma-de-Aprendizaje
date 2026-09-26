@@ -18,7 +18,7 @@ import {
   duplicateQuestion,
   moveQuestion,
   updateExamSettings,
-  imageQuestionFilesProblem,
+  questionFilesProblem,
   type QuestionInput,
 } from "@/server/services/exams";
 import { setExamResultsPublished } from "@/server/services/exam-results";
@@ -261,14 +261,14 @@ function ownsQuestion(itemId: string, questionId: string): boolean {
 /**
  * Preguntas con imágenes (sobre imagen, y clasificar con tarjetas de ícono): la
  * foto y los íconos deben ser imágenes que subió este usuario. Las demás no
- * traen archivos (su config saneada no tiene de dónde sacarlos).
+ * traen archivos (`questionFilesProblem` sabe cuáles usa cada tipo).
  */
-function imageFilesError(
+function questionFilesError(
   user: { id: string; role: string },
   input: QuestionInput,
   questionId?: string
 ): { error: string } | null {
-  const problem = imageQuestionFilesProblem(user, input.imageFileId, input.config, questionId);
+  const problem = questionFilesProblem(user, input, questionId);
   return problem ? { error: problem } : null;
 }
 
@@ -290,7 +290,7 @@ export async function createQuestionAction(
   if (problem) return { error: problem };
 
   try {
-    const filesError = imageFilesError(user, serviceInput);
+    const filesError = questionFilesError(user, serviceInput);
     if (filesError) return filesError;
     const questionId = createQuestion(itemId, serviceInput);
     revalidateExam(courseId, itemId);
@@ -317,7 +317,7 @@ export async function updateQuestionAction(
   if (problem) return { error: problem };
 
   try {
-    const filesError = imageFilesError(user, serviceInput, questionId);
+    const filesError = questionFilesError(user, serviceInput, questionId);
     if (filesError) return filesError;
     updateQuestion(questionId, serviceInput);
     revalidateExam(courseId, itemId);

@@ -14,11 +14,14 @@ import { auditLog, courses as coursesTable, files, notifications, questions, use
 import * as courses from "../src/server/services/courses";
 import * as tree from "../src/server/services/tree";
 import * as examsSvc from "../src/server/services/exams";
+import * as answers from "../src/server/services/exam-answers";
 import { boardAnswerSummary, buildReview } from "../src/server/services/exam-review";
 import { countImageQuestions, exportExamCsv } from "../src/server/services/exam-csv";
 import { importQuestionInputs } from "../src/server/services/exam-import";
 import { parseCsv } from "../src/server/services/csv-core";
-import { deleteFile, saveStream } from "../src/server/services/storage";
+import { deleteFile, getFileRecord, saveStream } from "../src/server/services/storage";
+import { contentDisposition } from "../src/lib/inline-mime";
+import { neutralImageName } from "../src/lib/image-processing";
 import { buildRunnerQuestions } from "../src/components/student/lesson-data";
 import { questionsToPreview } from "../src/lib/preview-question";
 import { questionProblem } from "../src/lib/question-validation";
@@ -28,6 +31,8 @@ import {
   categorizeBoard,
   categorizeCardView,
   categorizeCsvRepresentable,
+  categorizeFileIds,
+  categorizeHits,
   categorizeProblem,
   categorizeScore,
   categorizeSolutionText,
@@ -78,6 +83,7 @@ function pureChecks() {
   check("Todo bien: 1", categorizeScore(C, { c1: "g1", c2: "g1", c3: "g2", c4: "g2" }) === 1);
   check("Parcial por tarjeta", categorizeScore(C, { c1: "g1", c2: "g2", c3: "g2" }) === 0.5);
   check("Nada puesto: 0", categorizeScore(C, {}) === 0);
+  check("Aciertos por tarjeta, en su orden", categorizeHits(C, { c1: "g1", c2: "g2", c3: "g2" }).join() === "true,false,true,false");
 
   console.log("\n— CSV");
   check("Solo texto cabe en el CSV", !categorizeCsvRepresentable(C) && categorizeCsvRepresentable({ ...C, cards: C.cards.slice(0, 3) }));
@@ -206,16 +212,34 @@ async function endToEnd() {
     const saved = sanitizeCategorize(raw);
     check("Guardar: el saneo deja la config limpia y válida", JSON.stringify(saved) === JSON.stringify(config) && questionProblem({ type: "categorize", promptMd: "¿?", points: 1, config: saved }) === null, saved);
     const u = { id: teacher, role: "teacher" };
-    check("Archivos: los íconos propios valen", examsSvc.imageQuestionFilesProblem(u, null, config) === null);
-    check("Archivos: un ícono de otro maestro no", examsSvc.imageQuestionFilesProblem(u, null, withIcon(otherIcon)) === "Una de las imágenes no es válida; vuelve a subirla.");
-    check("Archivos: un archivo que no es imagen del editor no", examsSvc.imageQuestionFilesProblem(u, null, withIcon(notEditor)) !== null);
-    check("Archivos: un id inventado no", examsSvc.imageQuestionFilesProblem(u, null, withIcon("no-existe")) !== null);
-    check("Archivos: el admin puede usar cualquiera", examsSvc.imageQuestionFilesProblem({ id: "admin", role: "admin" }, null, withIcon(otherIcon)) === null);
-    check("Archivos: solo texto, nada que revisar", examsSvc.imageQuestionFilesProblem({ id: "nadie", role: "teacher" }, null, { ...config, cards: config.cards.slice(0, 3) }) === null);
+    const filesProblem = (user: { id: string; role: string }, cfg: CategorizeConfig, questionId?: string) =>
+      examsSvc.questionFilesProblem(user, { type: "categorize", imageFileId: null, config: cfg }, questionId);
+    check("Archivos: cada tarjeta de ícono nombra su archivo", JSON.stringify(categorizeFileIds(config)) === JSON.stringify([iconApio]) && categorizeFileIds(null).length === 0);
+    check("Archivos: los íconos propios valen", filesProblem(u, config) === null);
+    check("Archivos: un ícono de otro maestro no", filesProblem(u, withIcon(otherIcon)) === "Una de las imágenes no es válida; vuelve a subirla.");
+    check("Archivos: un archivo que no es imagen del editor no", filesProblem(u, withIcon(notEditor)) !== null);
+    check("Archivos: un id inventado no", filesProblem(u, withIcon("no-existe")) !== null);
+    check("Archivos: el admin puede usar cualquiera", filesProblem({ id: "admin", role: "admin" }, withIcon(otherIcon)) === null);
+    check("Archivos: solo texto, nada que revisar", filesProblem({ id: "nadie", role: "teacher" }, { ...config, cards: config.cards.slice(0, 3) }) === null);
+    check("Archivos: cada tipo revisa lo que usa su config (completar no tiene archivos)",
+      examsSvc.questionFilesProblem(u, { type: "cloze", config: withIcon(otherIcon) }) === null);
+
+    // Servir un ícono: el alumno conoce su id, así que su nombre original («zcat-apio.png») no debe salir
+    const iconRecord = getFileRecord(iconApio)!;
+    const attachmentRecord = getFileRecord(notEditor)!;
+    check("Servir: el ícono se ve sin su nombre original",
+      iconRecord.kind === "editor_image" && contentDisposition(iconRecord, true) === 'inline; filename="imagen.png"', contentDisposition(iconRecord, true));
+    check("Servir: …y al descargarlo tampoco", contentDisposition(iconRecord, false) === 'attachment; filename="imagen.png"' && !contentDisposition(iconRecord, false).includes("apio"));
+    check("Servir: una imagen del editor de tipo raro, sin nombre", contentDisposition({ ...iconRecord, mimeType: "application/octet-stream" }, false) === "attachment");
+    check("Servir: los demás archivos conservan su nombre", contentDisposition(attachmentRecord, false) === `attachment; filename*=UTF-8''${encodeURIComponent(`${P}-adjunto.png`)}`, contentDisposition(attachmentRecord, false));
+    const neutral = [neutralImageName("icono", "image/png"), neutralImageName("icono", "image/jpeg"), neutralImageName("foto", "", "verduras-apio.WEBP")];
+    check("Subir: los íconos y fotos del editor llevan un nombre neutro",
+      /^icono-[a-z0-9]+\.png$/.test(neutral[0]) && /^icono-[a-z0-9]+\.jpg$/.test(neutral[1]) && /^foto-[a-z0-9]+\.webp$/.test(neutral[2]) && neutral[0] !== neutralImageName("icono", "image/png"),
+      neutral);
 
     const main = examWith(teacher, student, "Clasificar", config, 3);
-    check("Al editar, los íconos que la pregunta ya tenía siguen valiendo", examsSvc.imageQuestionFilesProblem({ id: other, role: "teacher" }, null, config, main.qId) === null);
-    check("…sin la pregunta, no", examsSvc.imageQuestionFilesProblem({ id: other, role: "teacher" }, null, config) !== null);
+    check("Al editar, los íconos que la pregunta ya tenía siguen valiendo", filesProblem({ id: other, role: "teacher" }, config, main.qId) === null);
+    check("…sin la pregunta, no", filesProblem({ id: other, role: "teacher" }, config) !== null);
     let invalid = "";
     try {
       examsSvc.createQuestion(main.exam.id, { type: "categorize", promptMd: "Mal", points: 1, config: { ...config, groups: [config.groups[0]] } });
@@ -251,16 +275,16 @@ async function endToEnd() {
     check("Las demás claves quedan en null", rq.cloze === null && rq.imageDrag === null && rq.imageClick === null && rq.matching === null && rq.ordering === null && rq.image === null);
 
     // ─── Calificar: mitad bien ─────────────────────────────────────────────────
-    const card = (id: string) => examsSvc.categorizeCardToken(attempt.id, main.qId, id);
-    const group = (id: string) => examsSvc.categorizeGroupToken(attempt.id, main.qId, id);
+    const card = (id: string) => answers.categorizeCardToken(attempt.id, main.qId, id);
+    const group = (id: string) => answers.categorizeGroupToken(attempt.id, main.qId, id);
     check("Las fichas calculadas son las que recibió el alumno",
       Object.values(K).every((id) => rq.categorize!.cards.some((k) => k.token === card(id))) && Object.values(G).every((id) => rq.categorize!.groups.some((g) => g.token === group(id))));
     // Manzana y Zanahoria bien; Pera en Verduras (mal); Apio sin poner; una ficha inventada y un id de grupo no cuentan
     const answer = { [card(K.man)]: group(G.fr), [card(K.per)]: group(G.ve), [card(K.zan)]: group(G.ve), "0123456789abcdef": group(G.fr) };
-    const placed = examsSvc.categorizePlacement(config, JSON.stringify({ ...answer, [card(K.api)]: G.ve }), attempt.id, main.qId);
+    const placed = answers.categorizePlacement(config, JSON.stringify({ ...answer, [card(K.api)]: G.ve }), attempt.id, main.qId);
     check("Colocación: por cada tarjeta, su grupo; lo inventado no cuenta",
       JSON.stringify({ ...placed }) === JSON.stringify({ [K.man]: G.fr, [K.per]: G.ve, [K.zan]: G.ve }), placed);
-    check("Colocación: una respuesta ilegible no pone nada", Object.keys(examsSvc.categorizePlacement(config, "{no json", attempt.id, main.qId)).length === 0);
+    check("Colocación: una respuesta ilegible no pone nada", Object.keys(answers.categorizePlacement(config, "{no json", attempt.id, main.qId)).length === 0);
     examsSvc.saveAnswer({ studentId: student, attemptId: attempt.id, questionId: main.qId, answerText: JSON.stringify(answer) });
     const graded = examsSvc.submitAttempt({ courseId: main.course.id, studentId: student, attemptId: attempt.id });
     check("Calificado: 2 de 4 tarjetas de 3 puntos = 1.5", graded.status === "graded" && graded.finalScore === 1.5, { status: graded.status, score: graded.finalScore });
@@ -294,8 +318,8 @@ async function endToEnd() {
     // ─── Config inválida: vale 0 sin tumbar el envío ──────────────────────────
     const broken = examWith(teacher, student, "Rota", config, 2);
     const brokenAttempt = examsSvc.startAttempt({ courseId: broken.course.id, studentId: student, examItemId: broken.exam.id });
-    const brokenCard = (id: string) => examsSvc.categorizeCardToken(brokenAttempt.id, broken.qId, id);
-    const brokenGroup = (id: string) => examsSvc.categorizeGroupToken(brokenAttempt.id, broken.qId, id);
+    const brokenCard = (id: string) => answers.categorizeCardToken(brokenAttempt.id, broken.qId, id);
+    const brokenGroup = (id: string) => answers.categorizeGroupToken(brokenAttempt.id, broken.qId, id);
     examsSvc.saveAnswer({ studentId: student, attemptId: brokenAttempt.id, questionId: broken.qId, answerText: JSON.stringify({ [brokenCard(K.man)]: brokenGroup(G.fr) }) });
     // Algo guardado mal (a mano, fuera del editor): sin grupos
     db.update(questions).set({ config: { ...config, groups: [] } }).where(eq(questions.id, broken.qId)).run();

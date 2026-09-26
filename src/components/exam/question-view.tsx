@@ -16,7 +16,7 @@ import { ImageClickControl } from "@/components/student/image-click-control";
 import { ImageDragControl } from "@/components/student/image-drag-control";
 import { OrderingControl } from "@/components/student/ordering-control";
 import type { RunnerQuestion } from "@/components/student/types";
-import { parseClickAnswer, parseDragAnswer, parseMapAnswer } from "@/lib/image-questions";
+import { parseClickAnswer, parseMapAnswer } from "@/lib/image-questions";
 
 /**
  * Una pregunta tal como la ve el alumno: enunciado, puntos y el control de su
@@ -81,7 +81,7 @@ export function isAnswered(q: RunnerQuestion, a: AnswerState | undefined): boole
       // Todos los lugares con una ficha que existe, cada ficha en un solo lugar
       const drag = q.imageDrag;
       if (!drag || drag.zones.length === 0) return false;
-      const map = parseDragAnswer(a.answerText);
+      const map = parseMapAnswer(a.answerText);
       const valid = new Set(drag.items.map((it) => it.token));
       const used = new Set<string>();
       return drag.zones.every((z) => {

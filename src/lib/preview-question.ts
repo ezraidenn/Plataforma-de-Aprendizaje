@@ -1,4 +1,5 @@
-import type { AnswerBoard, QuestionKind, RunnerQuestion } from "@/components/student/types";
+import type { QuestionKind, RunnerQuestion } from "@/components/student/types";
+import type { AnswerBoard } from "./answer-boards";
 import type { QuestionDraft } from "./question-draft";
 import { shuffledOrder } from "./ordering";
 import { clickReviewBoard, dragReviewBoard, type ReviewBoard } from "./image-boards";

@@ -15,6 +15,9 @@ import {
   listQuestions,
   listAttempts,
   examWindowState,
+  type ExamAttempt,
+} from "@/server/services/exams";
+import {
   categorizeCardToken,
   categorizeGroupToken,
   clozeBlankToken,
@@ -24,8 +27,7 @@ import {
   imageZoneToken,
   matchingToken,
   orderingToken,
-  type ExamAttempt,
-} from "@/server/services/exams";
+} from "@/server/services/exam-answers";
 import { getVideoDetail, getVideoProgress } from "@/server/services/video";
 import { resultsVisible } from "@/lib/exam-results";
 import { shuffledOrder } from "@/lib/ordering";

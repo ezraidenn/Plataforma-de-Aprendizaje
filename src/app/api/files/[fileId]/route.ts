@@ -10,7 +10,7 @@ import { canAccess } from "@/server/services/progress";
 import { resourceItemForFile, markResourceDownloaded } from "@/server/services/resources";
 import { attachmentItemForFile } from "@/server/services/assignments";
 import { teacherCanAccessFile } from "@/server/services/file-access";
-import { inlineAllowed } from "@/lib/inline-mime";
+import { contentDisposition, inlineAllowed } from "@/lib/inline-mime";
 
 export const runtime = "nodejs";
 
@@ -111,7 +111,8 @@ export async function GET(
     "Cache-Control": "private, max-age=3600",
     // El navegador no adivina el tipo: nunca interpreta un archivo como HTML o script
     "X-Content-Type-Options": "nosniff",
-    "Content-Disposition": `${inline ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(record.originalName)}`,
+    // Las imágenes del editor, sin su nombre original: delataría la respuesta de un ícono
+    "Content-Disposition": contentDisposition(record, inline),
   };
 
   if (rangeHeader) {

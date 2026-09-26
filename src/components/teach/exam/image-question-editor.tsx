@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { useFileDrop } from "@/components/exam/image-dnd";
 import { LiveRegion, useAnnouncer } from "@/components/exam/live-region";
 import { imagePreview, type PreviewQuestion } from "@/lib/preview-question";
+import { neutralImageName } from "@/lib/image-processing";
 import { EDITOR_IMAGE_ACCEPT, uploadFile } from "@/lib/upload-client";
 import { EDITOR_IMAGE_MAX_BYTES } from "@/lib/upload-types";
 import {
@@ -152,7 +153,8 @@ export function ImageQuestionEditor({
     }
     const hadPhoto = !!imageFileId;
     try {
-      const fileId = await uploadFile(file, "editor_image");
+      // Con un nombre neutro: el del archivo del maestro podría delatar la respuesta
+      const fileId = await uploadFile(new File([file], neutralImageName("foto", file.type, file.name), { type: file.type }), "editor_image");
       record((prev) => ({ imageFileId: fileId, config: { ...shaped(type, prev).config, aspect } }));
       announce(hadPhoto ? "Foto cambiada; los lugares y puntos se conservan" : "Foto lista");
     } catch (err) {

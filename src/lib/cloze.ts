@@ -25,6 +25,8 @@ export const MAX_BLANKS = 20;
 export const MAX_CLOZE_TEXT = 3000;
 export const MAX_BLANK_TEXT = 60;
 export const MAX_DISTRACTORS = 10;
+/** Modo lista: opciones incorrectas por hueco (con la correcta, a lo más siete en la lista). */
+export const MAX_WRONG_OPTIONS = 6;
 
 const BLANK_RE = /\[\[([^[\]]*?)\]\]/g;
 
@@ -98,6 +100,7 @@ export function clozeProblem(config: unknown): string | null {
     }
     if (c.mode === "select") {
       if (b.wrong.length === 0) return `Al hueco ${n} le falta al menos una opción incorrecta (!opción)`;
+      if (b.wrong.length > MAX_WRONG_OPTIONS) return `Usa como máximo ${MAX_WRONG_OPTIONS} opciones incorrectas por hueco`;
       const right = normalizeAnswer(b.answers[0], {});
       if (b.wrong.some((w) => normalizeAnswer(w, {}) === right)) {
         return `En el hueco ${n} una opción incorrecta es igual a la respuesta`;

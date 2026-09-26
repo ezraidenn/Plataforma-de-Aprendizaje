@@ -2,18 +2,13 @@
 
 import type { ElementView } from "@/lib/image-layout";
 import type { ReviewBoard } from "@/lib/image-boards";
-import type { CategorizeBoard, CategorizeView } from "@/lib/categorize";
-import type { ClozeBoard, ClozeView } from "@/lib/cloze";
+import type { AnswerBoard } from "@/lib/answer-boards";
+import type { CategorizeView } from "@/lib/categorize";
+import type { ClozeView } from "@/lib/cloze";
 
-// Vive en src/lib (la usan también la revisión y la vista previa, sin UI);
-// se reexporta para quien ya la importa de aquí
-export type { ReviewBoard };
-
-/**
- * Tablero de revisión de clasificar y completar: hermano de `ReviewBoard`
- * (que es de las preguntas sobre imagen), para no mezclarlo con sus dibujos.
- */
-export type AnswerBoard = CategorizeBoard | ClozeBoard;
+// Viven en src/lib (las usan también la revisión y la vista previa, sin UI);
+// se reexportan para quien las importa de aquí
+export type { AnswerBoard, ReviewBoard };
 
 export type StudentItemStatus = "completed" | "in_progress" | "available" | "locked";
 

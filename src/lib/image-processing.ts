@@ -22,6 +22,23 @@ const INSPECT_SIDE = 256;
 /** Un ícono opaco que en PNG pesa más que esto (una foto, no una señal) se prueba también en JPEG. */
 const PNG_HEAVY_BYTES = 150 * 1024;
 
+/** Extensión de una imagen del editor según su tipo. */
+const IMAGE_EXT: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif" };
+
+/**
+ * Nombre neutro con que se sube una imagen del editor, nunca el del archivo
+ * del maestro: «verduras-apio.png» diría a qué grupo va una tarjeta. El
+ * servidor tampoco lo sirve (ver `contentDisposition`), pero así no queda ni en
+ * la base ni en el disco. El sufijo al azar evita que todas se llamen igual en
+ * la carpeta (cada nombre repetido suma « (2)», « (3)»… y tiene un tope).
+ * La extensión sale del tipo; si el navegador no lo dio, de la extensión de
+ * `fromName` (el servidor adivina el tipo por ella).
+ */
+export function neutralImageName(prefix: "icono" | "foto", type: string, fromName?: string): string {
+  const ext = IMAGE_EXT[type] ?? fromName?.match(/\.([a-z0-9]{1,5})$/i)?.[1].toLowerCase() ?? "png";
+  return `${prefix}-${Math.random().toString(36).slice(2, 10)}.${ext}`;
+}
+
 /** Un ícono listo para subir. `trimmed`: se le quitó margen transparente. */
 export type PreparedIcon = { blob: Blob; ratio: number; name: string; trimmed: boolean };
 /** Lo que se sabe de un ícono ya subido: su proporción y si le sobra margen transparente. */
@@ -143,12 +160,11 @@ export async function prepareIcon(file: File): Promise<PreparedIcon | null> {
         jpeg = true;
       }
     }
-    const base = file.name.replace(/\.[^.]+$/, "") || "icono";
     const kept = paddedSize(crop.w, crop.h);
     return {
       blob,
       ratio: round4(out.height / out.width),
-      name: `${base}.${jpeg ? "jpg" : "png"}`,
+      name: neutralImageName("icono", jpeg ? "image/jpeg" : "image/png"),
       trimmed: kept.w < width || kept.h < height,
     };
   } finally {
@@ -216,8 +232,8 @@ export class PhotoError extends Error {}
  * (un plano o un diagrama no se ensucia); si no, JPEG 0.9, salvo que tenga
  * transparencia (PNG). Si pasa de EDITOR_IMAGE_MAX_BYTES: JPEG 0.8 (sin
  * transparencia) y luego cada vez al 85 % hasta que quepa, el alto calculado
- * desde el ancho (`scaledSize`). El nombre es el de la foto con «-recorte» o
- * «-girada». `aspect`: la proporción con la que se ve en el editor; si la
+ * desde el ancho (`scaledSize`). El nombre es neutro (`neutralImageName`),
+ * nunca el de la foto. `aspect`: la proporción con la que se ve en el editor; si la
  * foto leída no cuadra con ella (más de un 1 %: orientación EXIF que el
  * navegador no aplicó), no se toca. Lanza PhotoError con un mensaje para el
  * maestro, o Error si el navegador no la puede leer o exportar.
@@ -225,7 +241,7 @@ export class PhotoError extends Error {}
 export async function transformPhoto(
   src: Blob,
   op: PhotoOp,
-  { name = src instanceof File ? src.name : "foto", aspect }: { name?: string; aspect?: number } = {}
+  { aspect }: { aspect?: number } = {}
 ): Promise<TransformedPhoto> {
   const bitmap = await decodeOriented(src);
   const canvas = document.createElement("canvas");
@@ -282,11 +298,10 @@ export async function transformPhoto(
       out = smaller;
       blob = await encode(smaller, type, quality);
     }
-    const base = name.replace(/\.[^.]+$/, "").replace(/-(recorte|girada)$/, "") || "foto";
     return {
       blob,
       aspect: round4(out.height / out.width),
-      name: `${base}-${turn ? "girada" : "recorte"}.${type === "image/png" ? "png" : "jpg"}`,
+      name: neutralImageName("foto", type),
       ...(turn ? {} : { crop: { x: rect.x / W, y: rect.y / H, w: rect.w / W, h: rect.h / H } }),
     };
   } finally {

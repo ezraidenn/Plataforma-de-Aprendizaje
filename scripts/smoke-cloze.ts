@@ -12,6 +12,7 @@ import { auditLog, courses as coursesTable, notifications, questions, users } fr
 import * as courses from "../src/server/services/courses";
 import * as tree from "../src/server/services/tree";
 import * as examsSvc from "../src/server/services/exams";
+import * as answers from "../src/server/services/exam-answers";
 import { boardAnswerSummary, buildReview } from "../src/server/services/exam-review";
 import { buildRunnerQuestions } from "../src/components/student/lesson-data";
 import { questionsToPreview } from "../src/lib/preview-question";
@@ -19,6 +20,7 @@ import { questionProblem } from "../src/lib/question-validation";
 import { cleanupSmokeNotifications } from "./lib/smoke-cleanup";
 import {
   MAX_BLANKS,
+  MAX_WRONG_OPTIONS,
   blankCorrect,
   clozeBankWords,
   clozeBoard,
@@ -87,6 +89,10 @@ function pureChecks() {
   check("Hueco sin respuesta", clozeProblem({ text: "a [[!b]] c", mode: "write" }) === "El hueco 1 no tiene respuesta");
   check("Lista sin incorrectas", clozeProblem({ text: "[[a]]", mode: "select" }) === "Al hueco 1 le falta al menos una opción incorrecta (!opción)");
   check("Lista con incorrecta igual a la respuesta", clozeProblem({ text: "[[París|!paris]]", mode: "select" }) === "En el hueco 1 una opción incorrecta es igual a la respuesta");
+  const wrongs = (n: number) => Array.from({ length: n }, (_, i) => `!x${i}`).join("|");
+  check("Lista: hasta 6 incorrectas por hueco", clozeProblem({ text: `[[a|${wrongs(MAX_WRONG_OPTIONS)}]]`, mode: "select" }) === null);
+  check("Lista: más de 6 incorrectas en un hueco, no",
+    clozeProblem({ text: `[[a|!b]] y [[a|${wrongs(MAX_WRONG_OPTIONS + 1)}]]`, mode: "select" }) === "Usa como máximo 6 opciones incorrectas por hueco");
   check("Demasiados huecos", clozeProblem({ text: Array.from({ length: MAX_BLANKS + 1 }, (_, i) => `[[p${i}]]`).join(" "), mode: "write" }) === `Usa como máximo ${MAX_BLANKS} huecos`);
   check("Respuesta demasiado larga", clozeProblem({ text: `[[${"x".repeat(61)}]]`, mode: "write" }) === "El hueco 1 es demasiado largo (máximo 60 caracteres)");
   check("Distractores repetidos", clozeProblem({ ...B, distractors: ["Madrid", "madrid"] }) === "Hay distractores repetidos");
@@ -239,9 +245,9 @@ async function endToEnd() {
     check("Las demás claves quedan en null", runner.every((q) => q.categorize === null && q.imageDrag === null && q.matching === null && q.ordering === null));
 
     // ─── Calificar: mitad bien en cada modo ────────────────────────────────────
-    const blank = (q: string, i: number) => examsSvc.clozeBlankToken(attempt.id, q, i);
-    const word = (key: string) => examsSvc.clozeWordToken(attempt.id, qB, key);
-    const option = (i: number, k: number) => examsSvc.clozeOptionToken(attempt.id, qS, i, k);
+    const blank = (q: string, i: number) => answers.clozeBlankToken(attempt.id, q, i);
+    const word = (key: string) => answers.clozeWordToken(attempt.id, qB, key);
+    const option = (i: number, k: number) => answers.clozeOptionToken(attempt.id, qS, i, k);
     check("Las fichas calculadas son las que recibió el alumno",
       [0, 1].every((i) => rw.cloze!.pieces.some((p) => p.kind === "blank" && p.token === blank(qW, i))) &&
         ["b0", "b1", "b2", "b3", "d0", "d1"].every((k) => rb.cloze!.words!.some((w) => w.token === word(k))) &&
@@ -252,17 +258,17 @@ async function endToEnd() {
     // MISMA ficha otra vez en el hueco 1 no cuenta; un distractor en el 2, mal; «tres» en el 3, bien
     const bankAnswer = { [blank(qB, 0)]: word("b1"), [blank(qB, 1)]: word("b1"), [blank(qB, 2)]: word("d0"), [blank(qB, 3)]: word("b3") };
     // Lista: la canónica en el primero; en el segundo, una incorrecta
-    const selectAnswer = { [blank(qS, 0)]: option(0, 0), [blank(qS, 1)]: examsSvc.clozeOptionToken(attempt.id, qS, 1, 2) };
-    check("Escribir: lo puesto en cada hueco", JSON.stringify(examsSvc.clozePlacement(WRITE, JSON.stringify(writeAnswer), attempt.id, qW)) === '["paris","Milán"]');
-    const bankGiven = examsSvc.clozePlacement(BANK, JSON.stringify(bankAnswer), attempt.id, qB);
+    const selectAnswer = { [blank(qS, 0)]: option(0, 0), [blank(qS, 1)]: answers.clozeOptionToken(attempt.id, qS, 1, 2) };
+    check("Escribir: lo puesto en cada hueco", JSON.stringify(answers.clozePlacement(WRITE, JSON.stringify(writeAnswer), attempt.id, qW)) === '["paris","Milán"]');
+    const bankGiven = answers.clozePlacement(BANK, JSON.stringify(bankAnswer), attempt.id, qB);
     check("Banco: una misma ficha usada en dos huecos cuenta una vez (en el primero)", JSON.stringify(bankGiven) === '["uno",null,"cinco","tres"]', bankGiven);
     check("Banco: dos palabras iguales son intercambiables", clozeScore(BANK, bankGiven) === 0.5);
     check("Banco: fichas inventadas o de otro intento no cuentan",
-      examsSvc.clozePlacement(BANK, JSON.stringify({ [blank(qB, 0)]: "0123456789abcdef", [blank(qB, 1)]: examsSvc.clozeWordToken("otro", qB, "b1"), [blank(qB, 2)]: "dos" }), attempt.id, qB).every((g) => g === undefined));
+      answers.clozePlacement(BANK, JSON.stringify({ [blank(qB, 0)]: "0123456789abcdef", [blank(qB, 1)]: answers.clozeWordToken("otro", qB, "b1"), [blank(qB, 2)]: "dos" }), attempt.id, qB).every((g) => g === undefined));
     check("Lista: una opción de otro hueco no cuenta",
-      examsSvc.clozePlacement(SELECT, JSON.stringify({ [blank(qS, 1)]: option(0, 0) }), attempt.id, qS).every((g) => g === undefined));
+      answers.clozePlacement(SELECT, JSON.stringify({ [blank(qS, 1)]: option(0, 0) }), attempt.id, qS).every((g) => g === undefined));
     check("Escribir: lo vacío o no escrito como texto no cuenta",
-      examsSvc.clozePlacement(WRITE, JSON.stringify({ [blank(qW, 0)]: "   ", [blank(qW, 1)]: 3 }), attempt.id, qW).every((g) => g === undefined));
+      answers.clozePlacement(WRITE, JSON.stringify({ [blank(qW, 0)]: "   ", [blank(qW, 1)]: 3 }), attempt.id, qW).every((g) => g === undefined));
     examsSvc.saveAnswer({ studentId: student, attemptId: attempt.id, questionId: qW, answerText: JSON.stringify(writeAnswer) });
     examsSvc.saveAnswer({ studentId: student, attemptId: attempt.id, questionId: qB, answerText: JSON.stringify(bankAnswer) });
     examsSvc.saveAnswer({ studentId: student, attemptId: attempt.id, questionId: qS, answerText: JSON.stringify(selectAnswer) });
@@ -313,7 +319,7 @@ async function endToEnd() {
       studentId: student,
       attemptId: brokenAttempt.id,
       questionId: qBroken,
-      answerText: JSON.stringify({ [examsSvc.clozeBlankToken(brokenAttempt.id, qBroken, 0)]: "París" }),
+      answerText: JSON.stringify({ [answers.clozeBlankToken(brokenAttempt.id, qBroken, 0)]: "París" }),
     });
     // Algo guardado mal (a mano, fuera del editor): sin huecos
     db.update(questions).set({ config: { text: "Sin huecos", mode: "write" } }).where(eq(questions.id, qBroken)).run();

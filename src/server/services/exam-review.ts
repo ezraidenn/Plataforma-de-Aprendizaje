@@ -2,22 +2,14 @@ import "server-only";
 import { eq } from "drizzle-orm";
 import { db } from "@/server/db";
 import { attemptAnswers } from "@/server/db/schema";
-import {
-  categorizePlacement,
-  clozePlacement,
-  imageDragPlacement,
-  listQuestions,
-  matchingToken,
-  orderingToken,
-  type ExamAttempt,
-  type Question,
-  type QuestionOption,
-} from "./exams";
+import { listQuestions, type ExamAttempt, type Question, type QuestionOption } from "./exams";
+import { categorizePlacement, clozePlacement, imageDragPlacement, matchingToken, orderingToken } from "./exam-answers";
 import { parseClickAnswer, readImageClick, readImageDrag } from "@/lib/image-questions";
 import { clickReviewBoard, dragReviewBoard, type ReviewBoard } from "@/lib/image-boards";
-import { categorizeBoard, categorizeSolutionText, readCategorize } from "@/lib/categorize";
+import type { AnswerBoard } from "@/lib/answer-boards";
+import { categorizeBoard, categorizeHits, categorizeSolutionText, readCategorize } from "@/lib/categorize";
 import { clozeBoard, clozeHits, clozeSolutionText, readCloze } from "@/lib/cloze";
-import type { AnswerBoard, ReviewEntry, ReviewResult } from "@/components/student/types";
+import type { ReviewEntry, ReviewResult } from "@/components/student/types";
 
 /**
  * Desglose por pregunta de un intento calificado. Lleva la solución: quien lo
@@ -112,9 +104,9 @@ function boardAnswer(
   const cat = q.type === "categorize" ? readCategorize(q) : null;
   if (cat) {
     const placed = categorizePlacement(cat, answerText, attemptId, q.id);
-    const right = cat.cards.filter((k) => placed[k.id] === k.groupId).length;
+    const hits = categorizeHits(cat, placed);
     return {
-      summary: Object.keys(placed).length > 0 ? `${right} de ${cat.cards.length} tarjetas bien` : NO_ANSWER,
+      summary: Object.keys(placed).length > 0 ? `${hits.filter(Boolean).length} de ${hits.length} tarjetas bien` : NO_ANSWER,
       solution: categorizeSolutionText(cat),
       board: categorizeBoard(cat, placed),
     };

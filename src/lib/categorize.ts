@@ -111,11 +111,28 @@ export function categorizeView(
   };
 }
 
-/** Fracción 0–1 de tarjetas en su grupo. `placed[idTarjeta]` = id del grupo donde quedó. */
+/** Qué tarjetas quedaron en su grupo, en el orden de `config.cards`. `placed[idTarjeta]` = id del grupo donde quedó. */
+export function categorizeHits(config: CategorizeConfig, placed: Record<string, string | undefined>): boolean[] {
+  return config.cards.map((k) => placed[k.id] === k.groupId);
+}
+
+/** Fracción 0–1 de tarjetas en su grupo. */
 export function categorizeScore(config: CategorizeConfig, placed: Record<string, string | undefined>): number {
-  if (config.cards.length === 0) return 0;
-  const hits = config.cards.filter((k) => placed[k.id] === k.groupId).length;
-  return hits / config.cards.length;
+  const hits = categorizeHits(config, placed);
+  return hits.length === 0 ? 0 : hits.filter(Boolean).length / hits.length;
+}
+
+/**
+ * Archivos que nombra una config de clasificar: los de sus tarjetas de ícono.
+ * Acepta cualquier cosa: se lee también de lo ya guardado, sin validar.
+ */
+export function categorizeFileIds(config: unknown): string[] {
+  const cards = (config as { cards?: unknown } | null)?.cards;
+  if (!Array.isArray(cards)) return [];
+  return cards.flatMap((k) => {
+    const f = (k as { fileId?: unknown } | null)?.fileId;
+    return typeof f === "string" && f ? [f] : [];
+  });
 }
 
 /**

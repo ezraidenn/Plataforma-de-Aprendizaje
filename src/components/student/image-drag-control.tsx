@@ -15,7 +15,7 @@ import {
   iconNumbers,
   imageItemName,
   nearestZone,
-  parseDragAnswer,
+  parseMapAnswer,
   readingOrder,
   type Point,
 } from "@/lib/image-questions";
@@ -84,7 +84,7 @@ export function ImageDragControl({
     const zoneTokens = new Set(config.zones.map((z) => z.token));
     const used = new Set<string>();
     const out: Record<string, string> = {};
-    for (const [zone, item] of Object.entries(parseDragAnswer(answerText))) {
+    for (const [zone, item] of Object.entries(parseMapAnswer(answerText))) {
       if (!zoneTokens.has(zone) || !items.has(item) || used.has(item)) continue;
       used.add(item);
       out[zone] = item;
