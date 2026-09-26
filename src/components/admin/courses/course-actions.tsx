@@ -278,10 +278,7 @@ export function CourseActions({
           <AdminWarningBanner />
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-white hover:bg-destructive/90"
-              onClick={archive}
-            >
+            <AlertDialogAction variant="destructive" onClick={archive}>
               Archivar
             </AlertDialogAction>
           </AlertDialogFooter>

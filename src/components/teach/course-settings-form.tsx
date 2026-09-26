@@ -333,10 +333,7 @@ export function CourseSettingsForm({
                 </AlertDialogHeader>
                 <AlertDialogFooter>
                   <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                  <AlertDialogAction
-                    className="bg-destructive text-white hover:bg-destructive/90"
-                    onClick={() => setArchived(true)}
-                  >
+                  <AlertDialogAction variant="destructive" onClick={() => setArchived(true)}>
                     Archivar
                   </AlertDialogAction>
                 </AlertDialogFooter>

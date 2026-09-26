@@ -499,11 +499,8 @@ export function UserActions({
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <AlertDialogAction
-              className={
-                user.active
-                  ? "bg-destructive text-white hover:bg-destructive/90"
-                  : "bg-cta text-cta-foreground hover:bg-cta/90"
-              }
+              variant={user.active ? "destructive" : "default"}
+              className={user.active ? undefined : "bg-cta text-cta-foreground hover:bg-cta/90"}
               onClick={toggleActive}
             >
               {user.active ? "Desactivar" : "Activar"}
