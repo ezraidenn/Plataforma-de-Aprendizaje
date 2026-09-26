@@ -76,7 +76,7 @@ export function ImageQuestionEditor({
   onChange: SetValue;
   /** Hay una subida en curso: mientras tanto no se guarda. */
   onBusyChange?: (busy: boolean) => void;
-  /** El examen ya tiene intentos enviados: recortar o girar la foto pide confirmación. */
+  /** El examen ya tiene intentos (o la pregunta, respuestas en uno en curso): cambiar, recortar o girar la foto pide confirmación. */
   hasAttempts?: boolean;
 }) {
   const [uploading, setUploading] = useState<"photo" | "icon" | null>(null);
@@ -187,6 +187,7 @@ export function ImageQuestionEditor({
     announce,
     rootRef,
     onPickPhoto: () => photoInput.current?.click(),
+    onPhotoFile: (file) => void uploadPhoto(file),
   });
 
   /** Deshacer o rehacer; si lo que tenía el foco desaparece, el foco se queda en el editor (en el de lugares o puntos, si lo hay). */
@@ -285,7 +286,7 @@ export function ImageQuestionEditor({
               setError={setError}
               setNotice={setNotice}
               announce={announce}
-              onPhotoFile={uploadPhoto}
+              onPhotoFile={photo.dropPhoto}
             />
           ) : (
             <ClickEditor
@@ -298,7 +299,7 @@ export function ImageQuestionEditor({
               uploading={uploading !== null}
               setNotice={setNotice}
               announce={announce}
-              onPhotoFile={uploadPhoto}
+              onPhotoFile={photo.dropPhoto}
             />
           )}
         </>

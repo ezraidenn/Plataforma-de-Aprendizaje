@@ -1,7 +1,7 @@
 import "server-only";
 import { and, eq, inArray, isNull, lte, sql } from "drizzle-orm";
 import { db } from "@/server/db";
-import { courseItems, courses, examAttempts, exams, notifications } from "@/server/db/schema";
+import { attemptAnswers, courseItems, courses, examAttempts, exams, notifications } from "@/server/db/schema";
 import { resultsVisible } from "@/lib/exam-results";
 import { notify } from "./notifications";
 
@@ -14,6 +14,21 @@ export function studentsWithAttempts(itemId: string): number {
       .where(and(eq(examAttempts.examItemId, itemId), inArray(examAttempts.status, ["submitted", "graded"])))
       .get()?.n ?? 0
   );
+}
+
+/**
+ * Preguntas del examen con respuestas ya guardadas en intentos EN CURSO (los
+ * enviados los cuenta `studentsWithAttempts`): cambiar su foto descuadraría lo
+ * que el alumno ya respondió sobre ella.
+ */
+export function questionsAnsweredInProgress(itemId: string): string[] {
+  return db
+    .selectDistinct({ id: attemptAnswers.questionId })
+    .from(attemptAnswers)
+    .innerJoin(examAttempts, eq(examAttempts.id, attemptAnswers.attemptId))
+    .where(and(eq(examAttempts.examItemId, itemId), eq(examAttempts.status, "in_progress")))
+    .all()
+    .map((r) => r.id);
 }
 
 /**

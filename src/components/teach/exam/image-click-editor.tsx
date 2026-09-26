@@ -20,7 +20,7 @@ import { ImageCanvas } from "./image-canvas";
 import { CanvasToolbar, useCanvasPrefs } from "./image-canvas-toolbar";
 import { CROP_HINT, type PhotoTools } from "./image-photo-tools";
 import { crosshairKeys, revealSoon, useCanvasZoom } from "./use-canvas-zoom";
-import type { HistoryOptions } from "./use-editor-history";
+import { blockEditorShortcut, type HistoryOptions } from "./use-editor-history";
 import { useSpotDrag } from "./use-spot-drag";
 
 /**
@@ -158,6 +158,8 @@ export function ClickEditor({
       role="group"
       aria-label="Puntos en la foto"
       data-click-editor=""
+      // Mientras se recorta la foto, Ctrl+A y Ctrl+D tampoco son del navegador (como en «arrastrar»)
+      onKeyDown={photo.crop ? blockEditorShortcut : undefined}
       className="min-w-0 space-y-2 outline-none"
     >
       <CanvasToolbar

@@ -136,6 +136,20 @@ export const PlacedZone = memo(function PlacedZone({
 });
 
 /**
+ * Ctrl+rueda sobre el fantasma (a medio arrastre desde la lista, con el
+ * puntero fuera del lienzo): ni el zoom del navegador ni desplazar la página.
+ * Nativo y no pasivo (el `onWheel` de React es pasivo), solo sobre él.
+ */
+function blockCtrlWheel(node: HTMLDivElement | null) {
+  if (!node) return;
+  const onWheel = (e: WheelEvent) => {
+    if (e.ctrlKey) e.preventDefault();
+  };
+  node.addEventListener("wheel", onWheel, { passive: false });
+  return () => node.removeEventListener("wheel", onWheel);
+}
+
+/**
  * El fantasma de lo que va en la mano (un elemento de la lista o un lugar
  * solo; un grupo se mueve en su sitio, sin fantasma), a su tamaño real. Va al
  * cuerpo del documento: un ancestro con transform lo movería.
@@ -163,9 +177,8 @@ export function DragGhost({
   return createPortal(
     <DragOverlay dropAnimation={null} modifiers={fromList ? [centerOnPointer] : modifier ? [modifier] : undefined}>
       {element ? (
-        // El fantasma toma el tamaño de lo que se arrastra: la ficha va centrada en él.
-        // `data-canvas-ghost`: Ctrl+rueda sobre él no cambia el zoom del navegador a medio arrastre
-        <div data-canvas-ghost="" className="flex size-full items-center justify-center">
+        // El fantasma toma el tamaño de lo que se arrastra: la ficha va centrada en él
+        <div ref={blockCtrlWheel} data-canvas-ghost="" className="flex size-full items-center justify-center">
           <span
             className={cn(
               "block cursor-grabbing drop-shadow-[0_12px_12px_rgb(15_23_42/0.35)] transition-opacity",

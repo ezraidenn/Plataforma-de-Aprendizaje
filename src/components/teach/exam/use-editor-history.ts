@@ -147,8 +147,17 @@ export function isUndoKey(e: { key: string; ctrlKey: boolean; metaKey: boolean; 
  * Ctrl+A o Ctrl+D (seleccionar todos los lugares, duplicar): mientras se
  * recorta la foto no hacen nada, y tampoco lo del navegador (seleccionar toda
  * la página, que luego se arrastraría en lugar del tirador; guardar un marcador).
+ * Donde se escribe siguen siendo del campo (Ctrl+A selecciona su texto).
  */
-export function blockEditorShortcut(e: { key: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean; preventDefault: () => void }): void {
+export function blockEditorShortcut(e: {
+  key: string;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  altKey: boolean;
+  target: EventTarget | null;
+  preventDefault: () => void;
+}): void {
+  if (isTypingTarget(e.target)) return;
   if ((e.ctrlKey || e.metaKey) && !e.altKey && /^[ad]$/i.test(e.key)) e.preventDefault();
 }
 

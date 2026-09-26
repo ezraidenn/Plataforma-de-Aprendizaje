@@ -208,28 +208,37 @@ export function useCanvasGestures(zoom: CanvasZoom) {
   const over = useRef(false);
   const fresh = useRef(false);
   const buttons = useRef(0);
-  /** Un gesto empezó en el lienzo y el botón sigue abajo. */
-  const pressed = useRef(false);
+  /** Un gesto empezó en el lienzo y el botón sigue abajo: quita sus escuchas de la ventana. */
+  const gesture = useRef<(() => void) | null>(null);
+  const endGesture = useCallback(() => {
+    gesture.current?.();
+    gesture.current = null;
+  }, []);
+  useEffect(() => endGesture, [endGesture]);
 
-  // Ctrl+rueda a medio gesto fuera del lienzo (sobre el fantasma de lo que se arrastra, que va al
-  // cuerpo del documento, o con el puntero ya fuera): tampoco el zoom del navegador
-  useEffect(() => {
+  /**
+   * Ctrl+rueda a medio gesto con el puntero ya fuera del lienzo: tampoco el
+   * zoom del navegador. Solo mientras dura el gesto: un escucha no pasivo en
+   * la ventana obliga al navegador a esperar al script en cada rueda (sin él
+   * desplaza en su propio hilo). Sobre el fantasma de lo que se arrastra desde
+   * la lista lo evita el fantasma mismo (`DragGhost`).
+   */
+  const startGesture = () => {
+    if (gesture.current) return;
     const onWheel = (e: WheelEvent) => {
-      const ghost = e.target instanceof Element && e.target.closest("[data-canvas-ghost]");
-      if (e.ctrlKey && e.buttons !== 0 && (pressed.current || ghost)) e.preventDefault();
-    };
-    const up = () => {
-      pressed.current = false;
+      // Se soltó sin que llegara el pointerup (fuera de la ventana): el gesto ya terminó
+      if (e.buttons === 0) return endGesture();
+      if (e.ctrlKey) e.preventDefault();
     };
     window.addEventListener("wheel", onWheel, { capture: true, passive: false });
-    window.addEventListener("pointerup", up, true);
-    window.addEventListener("pointercancel", up, true);
-    return () => {
+    window.addEventListener("pointerup", endGesture, true);
+    window.addEventListener("pointercancel", endGesture, true);
+    gesture.current = () => {
       window.removeEventListener("wheel", onWheel, { capture: true });
-      window.removeEventListener("pointerup", up, true);
-      window.removeEventListener("pointercancel", up, true);
+      window.removeEventListener("pointerup", endGesture, true);
+      window.removeEventListener("pointercancel", endGesture, true);
     };
-  }, []);
+  };
 
   // Nativo y no pasivo: el `onWheel` de React es pasivo y no puede evitar el zoom del navegador
   useEffect(() => {
@@ -309,9 +318,7 @@ export function useCanvasGestures(zoom: CanvasZoom) {
       onPointerMove: track,
       onPointerDown: track,
       // En captura: los tiradores y los lugares pueden no dejar pasar el pointerdown
-      onPointerDownCapture: () => {
-        pressed.current = true;
-      },
+      onPointerDownCapture: startGesture,
       onPointerUp: track,
       onPointerLeave: () => {
         over.current = false;

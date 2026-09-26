@@ -6,7 +6,7 @@ import { requireTeacher } from "@/server/auth/guards";
 import { getOwnedCourse } from "@/server/services/courses";
 import { getItem } from "@/server/services/tree";
 import { getExam, listQuestions } from "@/server/services/exams";
-import { studentsWithAttempts } from "@/server/services/exam-results";
+import { questionsAnsweredInProgress, studentsWithAttempts } from "@/server/services/exam-results";
 import { isImageQuestionType } from "@/lib/image-questions";
 import { ExamSettingsCard } from "@/components/teach/exam/exam-settings-card";
 import { QuestionList, type QuestionData } from "@/components/teach/exam/question-list";
@@ -59,6 +59,8 @@ export default async function ExamEditPage({
   const imageQuestionCount = rawQuestions.filter((q) => isImageQuestionType(q.type)).length;
   // Alumnos con un intento enviado: la publicación de resultados y el editor de fotos (cambiar una foto cambia sus revisiones)
   const attempted = studentsWithAttempts(itemId);
+  // Y las preguntas que alguien ya respondió en un intento en curso (su foto también pide confirmación)
+  const answeredInProgress = questionsAnsweredInProgress(itemId);
 
   return (
     <div className="space-y-4">
@@ -131,6 +133,7 @@ export default async function ExamEditPage({
         questions={questions}
         drawCount={exam.drawCount}
         hasAttempts={attempted > 0}
+        answeredInProgress={answeredInProgress}
       />
     </div>
   );

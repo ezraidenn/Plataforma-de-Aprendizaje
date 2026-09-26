@@ -246,6 +246,9 @@ export function ImageCanvas({
   // Alto fijo: el del lienzo al 100 % (borde, regla, margen, foto y el hueco de la barra
   // horizontal que sale al acercar), con 70 vh de tope
   const frame = Math.ceil(2 + (rulers ? RULER_PX : 0) + 2 * pad + Math.floor(zoom.fit) * board.aspect + zoom.bar);
+  // Por debajo del 100 % la foto va centrada; desde el 100 %, arriba: el hueco de la barra
+  // horizontal queda abajo (al acercar, la foto no brinca su mitad y el punto del cursor no se corre)
+  const centered = zoom.zoom < 1 - 1e-4;
   return (
     <div {...wrapperProps} className="relative min-w-0">
       <div
@@ -278,9 +281,12 @@ export function ImageCanvas({
           )}
           <div className="flex flex-1">
             {rulers && (
-              // La columna llega hasta abajo; la regla, centrada como la foto
+              // La columna llega hasta abajo; la regla, a la altura de la foto
               <div
-                className="sticky left-0 z-10 flex shrink-0 flex-col justify-center border-r bg-background"
+                className={cn(
+                  "sticky left-0 z-10 flex shrink-0 flex-col border-r bg-background",
+                  centered ? "justify-center" : "justify-start"
+                )}
                 style={{ width: RULER_PX }}
               >
                 <div className="shrink-0" style={{ height: boardHeight, marginBlock: pad }}>
@@ -288,7 +294,7 @@ export function ImageCanvas({
                 </div>
               </div>
             )}
-            <div className="flex flex-1 items-center justify-center">
+            <div className={cn("flex flex-1 justify-center", centered ? "items-center" : "items-start")}>
               <div className="shrink-0" data-pad={pad} style={{ padding: pad }}>
                 {photo}
               </div>

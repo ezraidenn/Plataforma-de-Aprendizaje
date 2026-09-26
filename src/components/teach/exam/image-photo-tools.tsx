@@ -45,13 +45,17 @@ import { isTypingTarget } from "./use-editor-history";
  * paso del historial, así que deshacer vuelve a la foto de antes (su archivo
  * sigue ahí). Un giro justo contrario al anterior solo lo deshace (no sube otra
  * foto). Mientras se prepara y sube, «Guardar» espera (`uploading`) y el botón
- * lleva el indicador. Si el examen ya tiene intentos, antes se pide
- * confirmación (una vez por editor abierto): sus revisiones se dibujan sobre la
- * foto de ahora.
+ * lleva el indicador. Si el examen ya tiene intentos (o la pregunta,
+ * respuestas en uno en curso), antes de recortar, girar o cambiar la foto
+ * («Cambiar foto» o soltar otra sobre ella) se pide confirmación, una vez por
+ * editor abierto: sus revisiones se dibujan sobre la foto de ahora.
  */
 
 type Uploading = "photo" | "icon" | null;
 type Kind = "crop" | "cw" | "ccw";
+/** Lo que espera la confirmación: recortar, girar, o cambiar la foto (por el archivo soltado, o eligiendo uno). */
+type Asked = { kind: Kind } | { kind: "change"; file: File | null };
+const ASKED_VERB: Record<Asked["kind"], string> = { crop: "Recortar", cw: "Girar", ccw: "Girar", change: "Cambiar" };
 type AnyConfig = ImageDragConfig | ImageClickConfig;
 
 export const CROP_CHOICES: { choice: CropChoice; label: string; title: string; said: string }[] = [
@@ -138,6 +142,7 @@ export function usePhotoTools({
   announce,
   rootRef,
   onPickPhoto,
+  onPhotoFile,
 }: {
   type: ImageQuestionType;
   imageFileId: string | null;
@@ -146,7 +151,7 @@ export function usePhotoTools({
   record: (fn: (prev: ImageQuestionValue) => ImageQuestionValue) => ImageQuestionValue;
   /** Deshacer el último paso (un giro contrario al anterior): false si no había. */
   undo: () => boolean;
-  /** El examen ya tiene intentos enviados: antes de recortar o girar, se confirma. */
+  /** El examen ya tiene intentos (o la pregunta, respuestas en uno en curso): antes de recortar, girar o cambiar la foto, se confirma. */
   hasAttempts?: boolean;
   uploading: Uploading;
   setUploading: (u: Uploading) => void;
@@ -157,12 +162,15 @@ export function usePhotoTools({
   rootRef: RefObject<HTMLDivElement | null>;
   /** «Cambiar foto»: elegir otro archivo. */
   onPickPhoto: () => void;
+  /** Subir otra foto (la soltada sobre la de ahora). */
+  onPhotoFile: (file: File) => void;
 }) {
   /** El recorte en curso, de qué foto y con qué tamaño en píxeles (para redondear como se hará). */
   const [crop, setCrop] = useState<{ fileId: string; rect: CropRect; choice: CropChoice; px: { w: number; h: number } | null } | null>(null);
   const [busy, setBusy] = useState<Kind | null>(null);
-  /** Lo que espera la confirmación de «ya tiene intentos». */
-  const [asking, setAsking] = useState<Kind | null>(null);
+  /** Lo que espera la confirmación de «ya tiene intentos»; `asked`, lo último preguntado (el texto no cambia mientras se cierra). */
+  const [asking, setAsking] = useState<Asked | null>(null);
+  const [asked, setAsked] = useState<Asked["kind"]>("crop");
   const confirmed = useRef(false);
   /** Lo que tenía el foco al preguntar: el diálogo no tiene botón que lo abra, al cerrarse vuelve ahí. */
   const returnFocus = useRef<HTMLElement | null>(null);
@@ -182,6 +190,15 @@ export function usePhotoTools({
     requestAnimationFrame(() => rootRef.current?.querySelector<HTMLElement>(selector)?.focus({ preventScroll: true }));
   const inEditor = () => !!rootRef.current?.contains(document.activeElement);
   const waitSaid = () => announce(uploading !== null ? "Espera a que termine la subida" : "Espera a que cargue la foto");
+
+  /** Con intentos (y sin confirmar aún en este editor), pregunta antes de tocar la foto: true si preguntó. */
+  function ask(what: Asked): boolean {
+    if (!hasAttempts || confirmed.current) return false;
+    returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setAsking(what);
+    setAsked(what.kind);
+    return true;
+  }
 
   function startCrop() {
     if (locked || !imageFileId) return waitSaid();
@@ -238,10 +255,7 @@ export function usePhotoTools({
     if (kind === "crop" && (!active || isFullCrop(active.rect))) {
       return announce("Mueve el rectángulo o sus tiradores para recortar: así la foto quedaría igual");
     }
-    if (hasAttempts && !confirmed.current) {
-      returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-      return setAsking(kind);
-    }
+    if (ask({ kind })) return;
     void transform(kind, inEditor());
   }
 
@@ -317,7 +331,14 @@ export function usePhotoTools({
     choose,
     applyCrop: () => run("crop"),
     rotate: (dir: "cw" | "ccw") => run(dir),
-    changePhoto: () => (uploading !== null ? waitSaid() : onPickPhoto()),
+    changePhoto: () => {
+      if (uploading !== null) return waitSaid();
+      if (!ask({ kind: "change", file: null })) onPickPhoto();
+    },
+    /** Otra foto soltada sobre la de ahora (con la confirmación si hay intentos). */
+    dropPhoto: (file: File) => {
+      if (!ask({ kind: "change", file })) onPhotoFile(file);
+    },
     /** El rectángulo sobre la foto (para `ImageCanvas`), solo mientras se recorta. */
     cover: active ? (
       <CropCover
@@ -330,7 +351,7 @@ export function usePhotoTools({
         onApply={() => run("crop")}
       />
     ) : null,
-    /** «Este examen ya tiene intentos…»: la confirmación antes de recortar o girar. */
+    /** «Este examen ya tiene intentos…»: la confirmación antes de recortar, girar o cambiar la foto. */
     dialog: (
       <AlertDialog open={asking !== null} onOpenChange={(open) => !open && setAsking(null)}>
         {/* En un portal, pero sus teclas suben por React hasta el editor: ahí no son atajos */}
@@ -348,17 +369,21 @@ export function usePhotoTools({
           <AlertDialogHeader>
             <AlertDialogTitle>Este examen ya tiene intentos</AlertDialogTitle>
             <AlertDialogDescription>
-              Recortar o girar la foto cambia cómo se ven sus revisiones. ¿Continuar?
+              {ASKED_VERB[asked]} la foto altera cómo se ven las revisiones de esos intentos: sus respuestas se dibujan
+              sobre la foto de ahora. ¿Continuar?
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
-                const kind = asking;
+                const what = asking;
                 confirmed.current = true;
                 setAsking(null);
-                if (kind) void transform(kind, !!rootRef.current?.contains(returnFocus.current));
+                if (!what) return;
+                // Elegir el archivo va aquí mismo: el clic en «Continuar» deja abrir el selector
+                if (what.kind === "change") return what.file ? onPhotoFile(what.file) : onPickPhoto();
+                void transform(what.kind, !!rootRef.current?.contains(returnFocus.current));
               }}
             >
               Continuar

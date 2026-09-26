@@ -119,6 +119,7 @@ export function QuestionList({
   questions,
   drawCount = null,
   hasAttempts = false,
+  answeredInProgress = [],
 }: {
   courseId: string;
   itemId: string;
@@ -127,6 +128,8 @@ export function QuestionList({
   drawCount?: number | null;
   /** El examen ya tiene intentos enviados (cambiar la foto de una pregunta cambia sus revisiones). */
   hasAttempts?: boolean;
+  /** Preguntas con respuestas guardadas en intentos en curso: cambiar su foto también pide confirmación. */
+  answeredInProgress?: string[];
 }) {
   const router = useRouter();
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -200,7 +203,7 @@ export function QuestionList({
                 <QuestionEditor
                   type={question.type}
                   initial={question}
-                  hasAttempts={hasAttempts}
+                  hasAttempts={hasAttempts || answeredInProgress.includes(question.id)}
                   onCancel={() => setEditingId(null)}
                   onSave={async (input) => {
                     const result = await updateQuestionAction(courseId, itemId, question.id, input);
@@ -404,7 +407,10 @@ function QuestionEditor({
   onCancel: () => void;
   /** Devuelve el mensaje de error del servidor o null si todo salió bien. */
   onSave: (input: QuestionFormInput) => Promise<string | null>;
-  /** La pregunta ya está en intentos enviados: recortar o girar su foto pide confirmación. */
+  /**
+   * El examen ya tiene intentos enviados (o esta pregunta, respuestas guardadas
+   * en un intento en curso): cambiar, recortar o girar su foto pide confirmación.
+   */
   hasAttempts?: boolean;
 }) {
   const [promptMd, setPromptMd] = useState(initial?.promptMd ?? "");
