@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState, type RefObject } from "react";
+import { newZoneKey } from "@/lib/image-editor-value";
 import {
   MAX_ZONES,
   clamp01,
@@ -234,7 +235,8 @@ export function useDragSelection({
       const z = zones[i];
       const p = { x: round4(clamp01(z.x + DUPLICATE_OFFSET)), y: round4(clamp01(z.y + DUPLICATE_OFFSET)) };
       const at = freeSpot(p, [...zones, ...added], aspect) ?? p;
-      added.push({ x: at.x, y: at.y, elementId: z.elementId });
+      // La copia es otro lugar: clave nueva (la del original sigue con él)
+      added.push({ x: at.x, y: at.y, elementId: z.elementId, key: newZoneKey([...zones, ...added]) });
     }
     const next = setConfig((c) =>
       c.zones.length + added.length > MAX_ZONES ? c : { ...c, zones: [...c.zones, ...added] }

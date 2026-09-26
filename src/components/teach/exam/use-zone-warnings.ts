@@ -2,6 +2,7 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { boxBounds, boxesOverlap, elementBox, elementView, type Box } from "@/lib/image-layout";
+import { overlapSaid } from "@/lib/image-editor-value";
 import { MIN_ZONE_GAP, overlapNumbers, relDistance, type ImageElement, type ImageZone } from "@/lib/image-questions";
 import { joinY } from "@/lib/plural";
 import { elementSizeAt } from "./use-canvas-tools";
@@ -72,7 +73,7 @@ export function useZoneWarnings({
   /** Dos lugares encimados (no se puede guardar), los primeros en orden de lectura. */
   const overlap = useMemo(() => {
     const pair = overlapNumbers(zones, aspect);
-    return pair ? `Los lugares ${pair[0]} y ${pair[1]} quedaron encimados: sepáralos un poco (así no se puede guardar).` : null;
+    return pair ? overlapSaid(pair) : null;
   }, [zones, aspect]);
   // A la vista lo dice la línea de «lo que impide guardar» (con los mismos números); aquí solo se
   // dice en voz alta. Lo que ya estaba al abrir no se anuncia; lo que aparece después, una vez

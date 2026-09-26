@@ -1,8 +1,9 @@
 import "server-only";
 import { and, eq, inArray, isNull, lte, sql } from "drizzle-orm";
 import { db } from "@/server/db";
-import { attemptAnswers, courseItems, courses, examAttempts, exams, notifications } from "@/server/db/schema";
+import { attemptAnswers, courseItems, courses, examAttempts, exams, notifications, questions } from "@/server/db/schema";
 import { resultsVisible } from "@/lib/exam-results";
+import { IMAGE_QUESTION_TYPES } from "@/lib/image-questions";
 import { notify } from "./notifications";
 
 /** Alumnos distintos con al menos un intento enviado o calificado. */
@@ -17,16 +18,24 @@ export function studentsWithAttempts(itemId: string): number {
 }
 
 /**
- * Preguntas del examen con respuestas ya guardadas en intentos EN CURSO (los
- * enviados los cuenta `studentsWithAttempts`): cambiar su foto descuadraría lo
- * que el alumno ya respondió sobre ella.
+ * Preguntas sobre imagen del examen con respuestas ya guardadas en intentos EN
+ * CURSO (los enviados los cuenta `studentsWithAttempts`): en el editor,
+ * cambiar, recortar o girar su foto pide confirmación. Las de otros tipos no
+ * tienen foto: no se cuentan.
  */
 export function questionsAnsweredInProgress(itemId: string): string[] {
   return db
     .selectDistinct({ id: attemptAnswers.questionId })
     .from(attemptAnswers)
     .innerJoin(examAttempts, eq(examAttempts.id, attemptAnswers.attemptId))
-    .where(and(eq(examAttempts.examItemId, itemId), eq(examAttempts.status, "in_progress")))
+    .innerJoin(questions, eq(questions.id, attemptAnswers.questionId))
+    .where(
+      and(
+        eq(examAttempts.examItemId, itemId),
+        eq(examAttempts.status, "in_progress"),
+        inArray(questions.type, [...IMAGE_QUESTION_TYPES])
+      )
+    )
     .all()
     .map((r) => r.id);
 }

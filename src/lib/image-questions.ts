@@ -27,7 +27,17 @@ export type ImageElement = {
 };
 /** Un elemento de «arrastrar a la imagen» tal como se dibuja: sin su id. */
 export type ImageItemView = Omit<ImageElement, "id">;
-export type ImageZone = Point & { elementId: string };
+export type ImageZone = Point & {
+  elementId: string;
+  /**
+   * Id estable del lugar (hasta MAX_ID caracteres): de él sale su ficha
+   * (`zoneKey`), así la respuesta del alumno sigue a su lugar aunque el maestro
+   * lo mueva o recorte o gire la foto. Las preguntas de antes no lo tienen: su
+   * ficha sale de las coordenadas, y el editor, al abrirlas, les pone de clave
+   * esas mismas coordenadas (la ficha no cambia).
+   */
+  key?: string;
+};
 export type ImageDragConfig = {
   aspect: number;
   /** Solo en preguntas anteriores al tamaño por elemento. */
@@ -52,6 +62,11 @@ export const MAX_ELEMENTS = 20;
 export const MAX_ZONES = 30;
 export const MAX_SPOTS = 10;
 export const MAX_LABEL = 60;
+/** Largo máximo de un id (de elemento, de archivo o la clave de un lugar). */
+const MAX_ID = 64;
+/** Lo más alargada que se acepta una imagen (la foto o un ícono): diez veces más alta que ancha, o al revés. */
+export const MAX_ASPECT = 10;
+export const MIN_ASPECT = 1 / MAX_ASPECT;
 
 /** Preguntas de antes: lado del ícono en px según su `iconSize`, sobre el ancho de referencia (REF_WIDTH, en image-layout). */
 export const ICON_PX: Record<IconSize, number> = { sm: 40, md: 56, lg: 72 };
@@ -75,9 +90,20 @@ export function normalizeRotation(r: number): number {
 
 const unit = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= 1;
 /** Proporción (alto / ancho) que se acepta: ni más de diez veces más ancha que alta, ni al revés. */
-export const validAspect = (a: unknown): a is number => typeof a === "number" && Number.isFinite(a) && a >= 0.1 && a <= 10;
+export const validAspect = (a: unknown): a is number =>
+  typeof a === "number" && Number.isFinite(a) && a >= MIN_ASPECT && a <= MAX_ASPECT;
 
-export const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
+/** `n` entre `min` y `max`. */
+export const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n));
+export const clamp01 = (n: number) => clamp(n, 0, 1);
+
+/**
+ * De dónde sale la ficha de un lugar: su clave o, en una pregunta de antes sin
+ * ella, sus coordenadas tal como están guardadas (el formato de siempre, así
+ * las respuestas ya guardadas siguen valiendo). Dos lugares no pueden dar la
+ * misma (lo revisa `imageDragProblem`).
+ */
+export const zoneKey = (z: Pick<ImageZone, "x" | "y" | "key">) => z.key ?? `${z.x},${z.y}`;
 
 /** URL de un archivo subido (la foto o un ícono). */
 export const fileUrl = (fileId: string) => `/api/files/${fileId}`;
@@ -134,7 +160,7 @@ export function imageDragProblem(config: unknown, hasImage: boolean): string | n
   const c = config as Partial<ImageDragConfig> | null;
   if (!c || !Array.isArray(c.elements) || !Array.isArray(c.zones)) return "Configura la pregunta";
   if (!validAspect(c.aspect)) return "Vuelve a subir la foto";
-  if (c.iconSize !== undefined && !["sm", "md", "lg"].includes(c.iconSize as string)) return "Elige el tamaño de los íconos";
+  if (c.iconSize !== undefined && !["sm", "md", "lg"].includes(c.iconSize as string)) return "La pregunta tiene un tamaño de íconos inválido";
   if (c.elements.length > MAX_ELEMENTS) return `Usa como máximo ${MAX_ELEMENTS} elementos`;
   const ids = new Set<string>();
   // Dos elementos que se ven igual no se distinguen en el banco del alumno
@@ -162,9 +188,16 @@ export function imageDragProblem(config: unknown, hasImage: boolean): string | n
   }
   if (c.zones.length === 0) return "Coloca al menos un elemento en la foto";
   if (c.zones.length > MAX_ZONES) return `Usa como máximo ${MAX_ZONES} lugares`;
+  // La clave es opcional (las preguntas de antes no la tienen); si viene, un texto corto
+  const keys = new Set<string>();
   for (const z of c.zones) {
     if (!z || !unit(z.x) || !unit(z.y)) return "Hay un lugar fuera de la foto";
     if (!ids.has(z.elementId)) return "Hay un lugar de un elemento que ya no existe";
+    if (z.key !== undefined && (typeof z.key !== "string" || !z.key || z.key.length > MAX_ID)) return "Hay un lugar con una clave inválida";
+    // Dos lugares con la misma ficha: una respuesta acreditaría los dos
+    const key = zoneKey(z);
+    if (keys.has(key)) return "Hay lugares repetidos";
+    keys.add(key);
   }
   if (overlapping(c.zones, c.aspect as number)) return OVERLAP_PROBLEM;
   return null;
@@ -252,7 +285,6 @@ export function readImageClick(q: { imageFileId: string | null; config: unknown 
   return { image: q.imageFileId, config: q.config as ImageClickConfig };
 }
 
-const MAX_ID = 64;
 const SIZES = ["sm", "md", "lg"];
 const record = (v: unknown): Record<string, unknown> =>
   v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
@@ -296,7 +328,11 @@ export function sanitizeImageConfig(type: "image_drag" | "image_click", raw: unk
         return compact({ id, kind: "text", text: typeof e.text === "string" ? e.text.trim() : undefined, size: finite(e.size), rotation: rot(e.rotation) });
       return compact({ id });
     }),
-    zones: list(c.zones).map((v) => compact({ ...point(v), elementId: shortId(record(v).elementId) })),
+    zones: list(c.zones).map((v) => {
+      const z = record(v);
+      // Una clave vacía se omite: el lugar se queda con la de sus coordenadas
+      return compact({ ...point(v), elementId: shortId(z.elementId), key: shortId(z.key) || undefined });
+    }),
   });
 }
 

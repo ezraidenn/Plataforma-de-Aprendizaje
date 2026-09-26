@@ -27,7 +27,7 @@ import { cn } from "@/lib/utils";
 import { HistoryButtons } from "./image-canvas-toolbar";
 import { ClickEditor } from "./image-click-editor";
 import { DragEditor } from "./image-drag-editor";
-import { usePhotoTools } from "./image-photo-tools";
+import { usePhotoTools, type Answered } from "./image-photo-tools";
 import { PreviewDialog } from "./preview-button";
 import { isTypingTarget, useEditorHistory, type HistoryOptions } from "./use-editor-history";
 
@@ -69,15 +69,15 @@ export function ImageQuestionEditor({
   value,
   onChange,
   onBusyChange,
-  hasAttempts = false,
+  answered = null,
 }: {
   type: ImageQuestionType;
   value: ImageQuestionValue;
   onChange: SetValue;
   /** Hay una subida en curso: mientras tanto no se guarda. */
   onBusyChange?: (busy: boolean) => void;
-  /** El examen ya tiene intentos (o la pregunta, respuestas en uno en curso): cambiar, recortar o girar la foto pide confirmación. */
-  hasAttempts?: boolean;
+  /** El examen ya tiene intentos, o la pregunta respuestas en uno en curso: cambiar, recortar o girar la foto pide confirmación. */
+  answered?: Answered;
 }) {
   const [uploading, setUploading] = useState<"photo" | "icon" | null>(null);
   /** Error de una subida o de la foto. */
@@ -179,7 +179,7 @@ export function ImageQuestionEditor({
     config,
     record,
     undo: history.undo,
-    hasAttempts,
+    answered,
     uploading,
     setUploading,
     setError,

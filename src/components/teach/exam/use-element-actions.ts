@@ -1,8 +1,9 @@
 "use client";
 
 import type { RefObject } from "react";
-import { DEFAULT_TEXT_SIZE } from "@/lib/image-layout";
+import { newZoneKey } from "@/lib/image-editor-value";
 import {
+  DEFAULT_TEXT_SIZE,
   MAX_ELEMENTS,
   MAX_ZONES,
   freeSpot,
@@ -76,7 +77,8 @@ export function useElementActions({
     // La mira del teclado acumula decimales; encima de otro lugar no: se corre lo justo
     const dropped = { x: round4(p.x), y: round4(p.y) };
     const at = freeSpot(dropped, zones, aspect) ?? dropped;
-    const zone = { x: at.x, y: at.y, elementId };
+    // Un lugar nuevo nace con su clave: la conserva al moverse, y con ella la respuesta del alumno
+    const zone: ImageZone = { x: at.x, y: at.y, elementId, key: newZoneKey(zones) };
     setConfig((c) => (c.zones.length >= MAX_ZONES ? c : { ...c, zones: [...c.zones, zone] }));
     setNotice(null);
     const n = readingNumbers([...zones, zone], aspect)[zones.length];

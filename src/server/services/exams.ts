@@ -28,7 +28,9 @@ import {
   parseDragAnswer,
   readImageClick,
   readImageDrag,
+  zoneKey,
   type ImageDragConfig,
+  type ImageZone,
 } from "@/lib/image-questions";
 
 export { listAttempts, computeFinalScorePercent };
@@ -65,14 +67,18 @@ export function orderingToken(attemptId: string, questionId: string, originalInd
 }
 
 /**
- * Ficha opaca de un lugar de «arrastrar a la imagen». Va por las coordenadas
- * del lugar tal como están guardadas (no hay dos iguales: la validación los
- * separa al menos MIN_ZONE_GAP), no por su posición en `config.zones`: si el
- * maestro quita o mueve un lugar con un intento en curso, ese lugar queda
- * vacío y los demás siguen valiendo, en vez de correrse y acreditar otro.
+ * Ficha opaca de un lugar de «arrastrar a la imagen». Va por la clave estable
+ * del lugar (`zoneKey`: su `key` o, en una pregunta de antes sin ella, sus
+ * coordenadas tal como están guardadas; no hay dos iguales, lo revisa la
+ * validación), no por su posición en `config.zones`. Así, con un intento en
+ * curso o ya enviado, el maestro puede mover el lugar, o recortar o girar la
+ * foto, y la respuesta sigue en ese lugar; si lo quita, ese lugar se va con su
+ * respuesta y los demás siguen valiendo, en vez de correrse y acreditar otro.
+ * Es el único sitio donde se calcula: el alumno, la calificación y la
+ * revisión la piden aquí.
  */
-export function imageZoneToken(attemptId: string, questionId: string, zone: { x: number; y: number }): string {
-  return opaqueToken("imgzone", attemptId, questionId, `${zone.x},${zone.y}`);
+export function imageZoneToken(attemptId: string, questionId: string, zone: Pick<ImageZone, "x" | "y" | "key">): string {
+  return opaqueToken("imgzone", attemptId, questionId, zoneKey(zone));
 }
 
 /**

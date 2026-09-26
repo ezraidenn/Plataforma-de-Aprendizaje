@@ -124,7 +124,8 @@ export function buildRunnerQuestions(attempt: ExamAttempt): RunnerQuestion[] {
       image = drag.image;
       imageDrag = {
         aspect: c.aspect,
-        // Revueltos: el orden no puede delatar a qué elemento pertenece cada lugar
+        // Revueltos: el orden no puede delatar a qué elemento pertenece cada lugar. Solo
+        // su ficha y su posición: ni su elemento ni su clave (la ficha sale de ella)
         zones: shuffle(c.zones.map((z) => ({ token: imageZoneToken(attempt.id, q.id, z), x: z.x, y: z.y }))),
         // Cada ficha con el tamaño, la proporción y el giro de su elemento
         items: shuffle(

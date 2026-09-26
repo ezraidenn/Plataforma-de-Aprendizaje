@@ -6,6 +6,7 @@
  *
  * Uso: pnpm smoke:image
  */
+import { createHmac } from "node:crypto";
 import { Readable } from "node:stream";
 import sharp from "sharp";
 import { and, eq, inArray, like, or } from "drizzle-orm";
@@ -15,6 +16,7 @@ import * as courses from "../src/server/services/courses";
 import * as tree from "../src/server/services/tree";
 import * as examsSvc from "../src/server/services/exams";
 import { buildReview, imageAnswerSummary } from "../src/server/services/exam-review";
+import { questionsAnsweredInProgress } from "../src/server/services/exam-results";
 import { exportExamCsv, countImageQuestions } from "../src/server/services/exam-csv";
 import { importQuestionInputs } from "../src/server/services/exam-import";
 import { parseCsv } from "../src/server/services/csv-core";
@@ -24,10 +26,15 @@ import { cleanupSmokeNotifications } from "./lib/smoke-cleanup";
 import { imagePreview, questionsToPreview } from "../src/lib/preview-question";
 import { clickReviewBoard, dragReviewBoard } from "../src/lib/image-boards";
 import {
+  DEFAULT_ICON_SIZE,
+  DEFAULT_TEXT_SIZE,
+  MAX_ASPECT,
   MAX_SPOTS,
+  MIN_ASPECT,
   MIN_ZONE_GAP,
   PRECISION_RADIUS,
   SNAP_RADIUS,
+  clamp,
   dragCopies,
   freeSpot,
   imageClickHits,
@@ -45,15 +52,16 @@ import {
   isImageQuestionType,
   readImageClick,
   readImageDrag,
+  normalizeRotation,
   relDistance,
   sanitizeImageConfig,
+  validAspect,
+  zoneKey,
   type ImageClickConfig,
   type ImageDragConfig,
 } from "../src/lib/image-questions";
-import { imageEditorProblem, initialImageValue, shapedImageValue } from "../src/lib/image-editor-value";
+import { imageEditorProblem, initialImageValue, newZoneKey, overlapSaid, shapedImageValue } from "../src/lib/image-editor-value";
 import {
-  DEFAULT_ICON_SIZE,
-  DEFAULT_TEXT_SIZE,
   alignDeltas,
   alphaBounds,
   boxBounds,
@@ -67,7 +75,6 @@ import {
   elementView,
   iconBoxPx,
   iconSizeRange,
-  normalizeRotation,
   rotateConfig,
   shownAtMinimum,
   gridStepFor,
@@ -533,6 +540,64 @@ function sanitizeChecks() {
   check("Leer señalar: completa y sin foto", readImageClick({ imageFileId: "foto", config: CLICK })?.config === CLICK && readImageClick({ imageFileId: null, config: CLICK }) === null);
 }
 
+function keyChecks() {
+  console.log("\n— Claves estables de los lugares");
+  const keyed: ImageDragConfig = { ...DRAG, zones: DRAG.zones.map((z, i) => ({ ...z, key: `k${i}` })) };
+  check("Con claves únicas: válida", imageDragProblem(keyed, true) === null, imageDragProblem(keyed, true));
+  check("Sin claves (pregunta de antes): sigue válida", imageDragProblem(DRAG, true) === null);
+  check("Con claves solo en algunos lugares: válida",
+    imageDragProblem({ ...DRAG, zones: DRAG.zones.map((z, i) => (i % 2 ? { ...z, key: `k${i}` } : z)) }, true) === null);
+  const twice = { ...keyed, zones: keyed.zones.map((z, i) => (i === 3 ? { ...z, key: "k0" } : z)) };
+  check("(e) Dos lugares con la misma clave: «Hay lugares repetidos»", imageDragProblem(twice, true) === "Hay lugares repetidos", imageDragProblem(twice, true));
+  // Una clave igual a las coordenadas de un lugar sin clave daría la misma ficha
+  const mixed = { ...DRAG, zones: DRAG.zones.map((z, i) => (i === 1 ? { ...z, key: "0.2,0.3" } : z)) };
+  check("(e) Una clave igual a la ficha de otro lugar (sus coordenadas): «Hay lugares repetidos»", imageDragProblem(mixed, true) === "Hay lugares repetidos", imageDragProblem(mixed, true));
+  const badKey = (key: unknown) => imageDragProblem({ ...DRAG, zones: [{ ...DRAG.zones[0], key }, ...DRAG.zones.slice(1)] }, true);
+  check("Clave vacía, larga o que no es texto: problema", ["", "x".repeat(65), 7].every((k) => badKey(k) === "Hay un lugar con una clave inválida"), [badKey(""), badKey(7)]);
+  check("La ficha sale de la clave o, sin ella, de las coordenadas de siempre",
+    zoneKey({ x: 0.2, y: 0.3 }) === "0.2,0.3" && zoneKey({ x: 0.2, y: 0.3, key: "k0" }) === "k0");
+
+  const clean = sanitizeImageConfig("image_drag", {
+    ...keyed,
+    zones: [...keyed.zones, { x: 0.5, y: 0.1, elementId: "reu", key: "" }, { x: 0.7, y: 0.1, elementId: "reu", key: "x".repeat(65) }, { x: 0.8, y: 0.5, elementId: "reu", key: 5 }],
+  }) as ImageDragConfig;
+  check("Saneo: conserva la clave de cada lugar", clean.zones.slice(0, 4).every((z, i) => z.key === `k${i}`), clean.zones);
+  check("Saneo: una clave vacía, larga o que no es texto se omite", clean.zones.slice(4).every((z) => !("key" in z)), clean.zones.slice(4));
+
+  // Abrir en el editor: cada lugar sin clave recibe la de sus coordenadas (su ficha no cambia)
+  const opened = initialImageValue("image_drag", "foto", DRAG).config as ImageDragConfig;
+  check("Editor: cada lugar de una pregunta de antes recibe de clave sus coordenadas",
+    opened.zones.every((z, i) => z.key === `${DRAG.zones[i].x},${DRAG.zones[i].y}` && zoneKey(z) === zoneKey(DRAG.zones[i])), opened.zones);
+  check("Editor: la clave que ya tenía se conserva", (initialImageValue("image_drag", "foto", keyed).config as ImageDragConfig).zones.every((z, i) => z.key === `k${i}`));
+  const dup = initialImageValue("image_drag", "foto", { ...keyed, zones: [...keyed.zones, { x: 0.5, y: 0.5, elementId: "reu", key: "k1" }] }).config as ImageDragConfig;
+  check("Editor: una clave repetida (algo guardado mal) se cambia por una nueva", dup.zones[1].key === "k1" && !!dup.zones[4].key && new Set(dup.zones.map((z) => z.key)).size === 5, dup.zones);
+  const fresh = Array.from({ length: 200 }).reduce<{ key: string }[]>((acc) => [...acc, { key: newZoneKey(acc) }], []);
+  check("Clave de un lugar nuevo: «z» y ocho caracteres, sin repetirse", new Set(fresh.map((z) => z.key)).size === 200 && fresh.every((z) => /^z[0-9a-z]{1,8}$/.test(z.key)), fresh.slice(0, 3));
+
+  // (d) Recortar y girar: los lugares se recolocan con su clave
+  const cropped = cropConfig("image_drag", keyed, { x: 0.1, y: 0.2, w: 0.85, h: 0.7 });
+  const croppedOut = cropConfig("image_drag", keyed, { x: 0.1, y: 0, w: 0.6, h: 1 });
+  const turned = rotateConfig("image_drag", keyed, "cw") as ImageDragConfig;
+  check("(d) Recortar conserva la clave de cada lugar", (cropped.config as ImageDragConfig).zones.map((z) => z.key).join() === "k0,k1,k2,k3", cropped.config);
+  check("(d) Recortar quita los de fuera con su clave; los demás la conservan",
+    croppedOut.removed === 1 && (croppedOut.config as ImageDragConfig).zones.map((z) => z.key).join() === "k0,k1,k3", croppedOut.config);
+  check("(d) Girar conserva la clave de cada lugar", turned.zones.map((z) => z.key).join() === "k0,k1,k2,k3", turned.zones);
+
+  console.log("\n— Una sola regla de diez a uno y detalles");
+  check("MAX_ASPECT y MIN_ASPECT: diez a uno", MAX_ASPECT === 10 && MIN_ASPECT === 0.1 && validAspect(10) && validAspect(0.1) && !validAspect(10.01) && !validAspect(0.099));
+  check("El recorte se detiene un poco antes: MAX_CROP_RATIO = MAX_ASPECT − 0.01", MAX_CROP_RATIO === MAX_ASPECT - 0.01 && MAX_CROP_RATIO === 9.99);
+  check("clamp", clamp(5, 0, 1) === 1 && clamp(-1, 0, 1) === 0 && clamp(0.5, 0, 1) === 0.5);
+  check("Un tamaño de íconos de antes que no es chico, mediano ni grande: problema",
+    imageDragProblem({ ...DRAG, iconSize: "xl" }, true) === "La pregunta tiene un tamaño de íconos inválido");
+  // Girar una foto alta acerca los lugares (medidos en fracciones del ancho nuevo): pueden quedar encimados
+  const tall: ImageDragConfig = { aspect: 2, elements: [{ id: "a", kind: "text", text: "A", size: 0.02 }], zones: [{ x: 0.5, y: 0.5, elementId: "a" }, { x: 0.5, y: 0.53, elementId: "a" }] };
+  const tallTurned = rotateConfig("image_drag", tall, "cw") as ImageDragConfig;
+  check("Girar una foto alta puede encimar lugares separados: el aviso de cambios lo dice con sus números",
+    !overlapNumbers(tall.zones, tall.aspect) && JSON.stringify(overlapNumbers(tallTurned.zones, tallTurned.aspect)) === "[1,2]" &&
+      overlapSaid([1, 2]) === "Los lugares 1 y 2 están encimados: sepáralos un poco para poder guardar",
+    tallTurned.zones);
+}
+
 function previewChecks() {
   console.log("\n— Vista previa del maestro (sin base)");
   const [choice] = questionsToPreview([
@@ -739,12 +804,44 @@ async function endToEnd() {
     const forged = examsSvc.imageDragPlacement(drag, JSON.stringify({ [z0]: "0123456789abcdef", [z1]: EL.ext }), attempt.id, qDrag);
     check("Fichas inventadas o ids de elemento no cuentan", forged.every((p) => p === undefined), forged);
 
-    // La ficha de un lugar va por sus coordenadas: si el maestro lo mueve, ese
-    // lugar queda vacío y los demás no cambian
-    const moved: ImageDragConfig = { ...drag, zones: drag.zones.map((z, i) => (i === 2 ? { ...z, x: 0.85 } : z)) };
+    // ─── Claves estables: la respuesta sigue a su lugar ───────────────────────
+    // (a) Una pregunta de antes (sin claves): su ficha es la de siempre, el HMAC
+    // de las coordenadas; al abrirla en el editor cada lugar recibe esas
+    // coordenadas de clave y su ficha no cambia
+    const oldFormat = (z: { x: number; y: number }) =>
+      createHmac("sha256", process.env.APP_SECRET ?? "dev-secret").update(["imgzone", attempt.id, qDrag, `${z.x},${z.y}`].join("|")).digest("hex").slice(0, 16);
+    check("(a) Sin claves: la ficha de cada lugar es la de antes (mismo formato)", drag.zones.every((z) => examsSvc.imageZoneToken(attempt.id, qDrag, z) === oldFormat(z)));
+    const opened = initialImageValue("image_drag", photo, drag).config as ImageDragConfig;
+    check("(a) Abierta en el editor: fichas idénticas a las de antes",
+      opened.zones.every((z, i) => !!z.key && examsSvc.imageZoneToken(attempt.id, qDrag, z) === oldFormat(drag.zones[i])));
+    const reopened = examsSvc.imageDragPlacement(sanitizeImageConfig("image_drag", opened) as ImageDragConfig, JSON.stringify(answer), attempt.id, qDrag);
+    check("(a) …y guardada así, la respuesta de antes sigue acreditando todo", imageDragScore(opened, reopened) === 1, reopened);
+
+    // (b) Mover un lugar (con su clave) conserva su respuesta
+    const moved: ImageDragConfig = { ...opened, zones: opened.zones.map((z, i) => (i === 2 ? { ...z, x: 0.85, y: 0.7 } : z)) };
     const afterMove = examsSvc.imageDragPlacement(moved, JSON.stringify(answer), attempt.id, qDrag);
-    check("Mover un lugar lo deja vacío; los demás siguen acreditados",
-      afterMove[2] === undefined && imageDragScore(moved, afterMove) === 0.75, afterMove);
+    check("(b) Mover un lugar conserva su respuesta (y los demás siguen acreditados)",
+      afterMove[2] === EL.sal && imageDragScore(moved, afterMove) === 1, afterMove);
+    // Sin clave (nunca se abrió en el editor), la ficha sigue siendo la de sus coordenadas
+    const movedOld: ImageDragConfig = { ...drag, zones: drag.zones.map((z, i) => (i === 2 ? { ...z, x: 0.85 } : z)) };
+    const afterMoveOld = examsSvc.imageDragPlacement(movedOld, JSON.stringify(answer), attempt.id, qDrag);
+    check("Sin clave, mover un lugar lo deja vacío (no acredita a otro)", afterMoveOld[2] === undefined && imageDragScore(movedOld, afterMoveOld) === 0.75, afterMoveOld);
+
+    // (c) Quitar un lugar se lleva su respuesta; las de los demás no se corren
+    const withoutFirst: ImageDragConfig = { ...opened, zones: opened.zones.slice(1) };
+    const afterRemove = examsSvc.imageDragPlacement(withoutFirst, JSON.stringify(answer), attempt.id, qDrag);
+    check("(c) Quitar un lugar no corre las respuestas de los demás",
+      JSON.stringify(afterRemove) === JSON.stringify([EL.ext, EL.sal, EL.reu]) && imageDragScore(withoutFirst, afterRemove) === 1, afterRemove);
+
+    // (d) Recortar y girar la foto recolocan los lugares con su clave: las respuestas siguen
+    const cut = cropConfig("image_drag", opened, { x: 0.1, y: 0.2, w: 0.85, h: 0.7 }).config as ImageDragConfig;
+    const turnedCfg = rotateConfig("image_drag", cut, "ccw") as ImageDragConfig;
+    const afterCut = examsSvc.imageDragPlacement(cut, JSON.stringify(answer), attempt.id, qDrag);
+    const afterTurn = examsSvc.imageDragPlacement(turnedCfg, JSON.stringify(answer), attempt.id, qDrag);
+    check("(d) Recortar y luego girar: cada respuesta sigue en su lugar",
+      imageDragProblem(turnedCfg, true) === null && imageDragScore(cut, afterCut) === 1 && imageDragScore(turnedCfg, afterTurn) === 1 &&
+        JSON.stringify(afterTurn) === JSON.stringify([EL.ext, EL.ext, EL.sal, EL.reu]),
+      { afterCut, afterTurn });
 
     const r = PRECISION_RADIUS.md;
     const marks = [
@@ -780,17 +877,32 @@ async function endToEnd() {
     check("Revisión de arrastrar sin colocaciones válidas: «Sin respuesta»",
       empty.yourAnswer === "Sin respuesta" && empty.board?.kind === "drag" && empty.board.zones.every((z) => z.placed === null), empty);
 
-    // ─── El maestro quita el primer lugar con un intento ya contestado ────────
-    // Los lugares que quedan siguen acreditados; con fichas por posición se
-    // corrían un lugar y la respuesta, toda bien puesta, valía 0.
+    // ─── El maestro edita la pregunta con un intento en curso ya contestado ───
+    // El alumno respondió una pregunta de antes (sin claves: fichas por
+    // coordenadas). El maestro la abre en el editor (cada lugar recibe su
+    // clave), quita el primer lugar, recorta y gira la foto, y guarda: los tres
+    // que quedan siguen acreditados. Con fichas por posición se corrían un lugar
+    // y la respuesta, toda bien puesta, valía 0; con fichas por coordenadas,
+    // recortar o girar dejaba todo en «Sin respuesta».
     // En su propio curso: con la secuencia obligatoria, un segundo examen aquí
     // quedaría bloqueado
     const editCourse = courses.createCourse({ ownerId: teacher, title: `${P} Editar con intento` });
     const editExam = tree.createItem({ courseId: editCourse.id, parentId: null, kind: "exam", title: `${P} Examen editado` });
     const qEdit = examsSvc.createQuestion(editExam.id, { type: "image_drag", promptMd: "Coloca cada señal", points: 3, config: drag, imageFileId: photo });
+    // Una pregunta de otro tipo, contestada (mal) en el mismo intento: no tiene foto, no cuenta
+    const qChoice = examsSvc.createQuestion(editExam.id, {
+      type: "single_choice",
+      promptMd: `${P} Opción`,
+      points: 1,
+      options: [
+        { textMd: "A", isCorrect: true },
+        { textMd: "B", isCorrect: false },
+      ],
+    });
     courses.publishCourse(editCourse.id);
     courses.enrollStudents(editCourse.id, [student], teacher);
     const open = examsSvc.startAttempt({ courseId: editCourse.id, studentId: student, examItemId: editExam.id });
+    check("En curso y sin respuestas: ninguna pregunta contestada", questionsAnsweredInProgress(editExam.id).length === 0);
     const zoneOf = (z: { x: number; y: number }) => examsSvc.imageZoneToken(open.id, qEdit, z);
     const itemOf = (elementId: string, copy: number) => examsSvc.imageItemToken(open.id, qEdit, elementId, copy);
     const allRight = {
@@ -800,11 +912,25 @@ async function endToEnd() {
       [zoneOf(drag.zones[3])]: itemOf(EL.reu, 0),
     };
     examsSvc.saveAnswer({ studentId: student, attemptId: open.id, questionId: qEdit, answerText: JSON.stringify(allRight) });
-    const trimmed: ImageDragConfig = { ...drag, zones: drag.zones.slice(1) };
+    const wrongOption = examsSvc.listQuestions(editExam.id).find((q) => q.id === qChoice)!.options.find((o) => !o.isCorrect)!.id;
+    examsSvc.saveAnswer({ studentId: student, attemptId: open.id, questionId: qChoice, selectedOptionIds: [wrongOption] });
+    check("Contestadas en un intento en curso: solo la de imagen (la de opción no tiene foto)",
+      JSON.stringify(questionsAnsweredInProgress(editExam.id)) === JSON.stringify([qEdit]), questionsAnsweredInProgress(editExam.id));
+    check("…y solo las de ese examen", !questionsAnsweredInProgress(exam.id).includes(qEdit));
+    // Lo que hace el editor: abrir, quitar el primer lugar, recortar y girar; lo que manda el navegador pasa por el saneo
+    const edited = initialImageValue("image_drag", photo, drag).config as ImageDragConfig;
+    const editedCut = cropConfig("image_drag", { ...edited, zones: edited.zones.slice(1) }, { x: 0.1, y: 0.1, w: 0.85, h: 0.8 });
+    const trimmed = sanitizeImageConfig("image_drag", rotateConfig("image_drag", editedCut.config, "cw")) as ImageDragConfig;
+    check("El editor lo deja guardable", editedCut.removed === 0 && imageDragProblem(trimmed, true) === null, imageDragProblem(trimmed, true));
     examsSvc.updateQuestion(qEdit, { type: "image_drag", promptMd: "Coloca cada señal", points: 3, config: trimmed, imageFileId: photo });
+    // El alumno recarga: sus fichas siguen en los lugares que quedan (el quitado se fue con la suya)
+    const reloaded = buildRunnerQuestions(open).find((q) => q.id === qEdit)?.imageDrag;
+    check("Al recargar, las fichas que puso siguen en los tres lugares que quedan",
+      reloaded?.zones.length === 3 && Object.keys(allRight).filter((t) => reloaded.zones.some((z) => z.token === t)).length === 3, reloaded?.zones);
     const afterEdit = examsSvc.submitAttempt({ courseId: editCourse.id, studentId: student, attemptId: open.id });
-    check("Quitar el primer lugar con el intento contestado: los otros tres siguen acreditados (3 de 3)",
+    check("Quitar el primer lugar y recortar y girar la foto con el intento contestado: los otros tres siguen acreditados (3 de 3)",
       afterEdit.status === "graded" && afterEdit.finalScore === 3, { status: afterEdit.status, score: afterEdit.finalScore });
+    check("Enviado el intento: ya no hay preguntas contestadas en curso", questionsAnsweredInProgress(editExam.id).length === 0);
     const editReview = buildReview(afterEdit).find((e) => e.questionId === qEdit);
     check("…y la revisión lo lee igual", editReview?.yourAnswer === "3 de 3 lugares correctos", editReview);
     check("…y el maestro al calificar ve lo mismo que el alumno",
@@ -812,6 +938,43 @@ async function endToEnd() {
     check("Resumen: una respuesta «{}» o «[]» se lee «Sin respuesta», no como contestada",
       imageAnswerSummary({ id: qEdit, type: "image_drag", imageFileId: photo, config: trimmed }, "{}", open.id) === "Sin respuesta" &&
         imageAnswerSummary({ id: qEdit, type: "image_drag", imageFileId: photo, config: trimmed }, "[]", open.id) === "Sin respuesta");
+
+    // ─── Una pregunta con claves: el alumno no las recibe y sus fichas las siguen ─
+    const keyCourse = courses.createCourse({ ownerId: teacher, title: `${P} Claves estables` });
+    const keyExam = tree.createItem({ courseId: keyCourse.id, parentId: null, kind: "exam", title: `${P} Examen con claves` });
+    const withKeys: ImageDragConfig = { ...drag, zones: drag.zones.map((z, i) => ({ ...z, key: `zimgClave${i}` })) };
+    const qKeys = examsSvc.createQuestion(keyExam.id, { type: "image_drag", promptMd: "Coloca cada señal", points: 4, config: withKeys, imageFileId: photo });
+    courses.publishCourse(keyCourse.id);
+    courses.enrollStudents(keyCourse.id, [student], teacher);
+    const keyAttempt = examsSvc.startAttempt({ courseId: keyCourse.id, studentId: student, examItemId: keyExam.id });
+    const keyRunner = buildRunnerQuestions(keyAttempt);
+    const keyJson = JSON.stringify(keyRunner);
+    const kd = keyRunner.find((q) => q.id === qKeys)?.imageDrag;
+    check("(f) El alumno no recibe las claves: cada lugar trae solo token, x e y",
+      !!kd && kd.zones.every((z) => Object.keys(z).sort().join() === "token,x,y") && !keyJson.includes("zimgClave") && !keyJson.includes('"key"'), kd?.zones);
+    const keyZone = (i: number) => examsSvc.imageZoneToken(keyAttempt.id, qKeys, withKeys.zones[i]);
+    const keyItem = (elementId: string, copy: number) => examsSvc.imageItemToken(keyAttempt.id, qKeys, elementId, copy);
+    const keyAnswer = { [keyZone(0)]: keyItem(EL.ext, 0), [keyZone(1)]: keyItem(EL.ext, 1), [keyZone(2)]: keyItem(EL.sal, 0), [keyZone(3)]: keyItem(EL.reu, 0) };
+    check("Las fichas de los lugares salen de sus claves", kd?.zones.every((z) => Object.keys(keyAnswer).includes(z.token)) === true);
+    examsSvc.saveAnswer({ studentId: student, attemptId: keyAttempt.id, questionId: qKeys, answerText: JSON.stringify(keyAnswer) });
+    // Con el intento en curso, el maestro mueve un lugar, recorta la foto y la gira
+    const keyMoved: ImageDragConfig = { ...withKeys, zones: withKeys.zones.map((z, i) => (i === 3 ? { ...z, x: 0.4, y: 0.7 } : z)) };
+    const keyEdited = sanitizeImageConfig(
+      "image_drag",
+      rotateConfig("image_drag", cropConfig("image_drag", keyMoved, { x: 0.05, y: 0.1, w: 0.9, h: 0.8 }).config, "ccw")
+    ) as ImageDragConfig;
+    examsSvc.updateQuestion(qKeys, { type: "image_drag", promptMd: "Coloca cada señal", points: 4, config: keyEdited, imageFileId: photo });
+    const keyReloaded = buildRunnerQuestions(keyAttempt).find((q) => q.id === qKeys)?.imageDrag;
+    check("Al recargar tras mover, recortar y girar: cada ficha sigue en su lugar (en su nueva posición)",
+      !!keyReloaded && Object.keys(keyAnswer).every((t) => keyReloaded.zones.some((z) => z.token === t)) &&
+        keyReloaded.zones.some((z) => z.token === keyZone(3) && z.x !== withKeys.zones[3].x),
+      keyReloaded?.zones);
+    const keyGraded = examsSvc.submitAttempt({ courseId: keyCourse.id, studentId: student, attemptId: keyAttempt.id });
+    check("Enviado: 4 de 4, todo acreditado", keyGraded.status === "graded" && keyGraded.finalScore === 4, { status: keyGraded.status, score: keyGraded.finalScore });
+    const keyReview = buildReview(keyGraded).find((e) => e.questionId === qKeys);
+    check("…y la revisión lo lee igual (sin «Sin respuesta» ni miniaturas vacías)",
+      keyReview?.yourAnswer === "4 de 4 lugares correctos" && keyReview.board?.kind === "drag" && keyReview.board.zones.every((z) => z.placed !== null && z.correct),
+      keyReview);
 
     const copyId = examsSvc.duplicateQuestion(exam.id, qDrag);
     const copied = examsSvc.listQuestions(exam.id).find((q) => q.id === copyId);
@@ -986,6 +1149,7 @@ async function main() {
   canvasChecks();
   photoChecks();
   sanitizeChecks();
+  keyChecks();
   previewChecks();
   await endToEnd();
   console.log(failures === 0 ? "\nTodo bien" : `\n${failures} fallo(s)`);

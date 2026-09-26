@@ -12,13 +12,14 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useStableHandler } from "@/components/exam/image-dnd";
-import { shapedImageValue as shaped, type ImageQuestionValue } from "@/lib/image-editor-value";
+import { overlapSaid, shapedImageValue as shaped, type ImageQuestionValue } from "@/lib/image-editor-value";
 import { boundSizes, cropConfig, rotateConfig } from "@/lib/image-layout";
 import { PhotoError, transformPhoto } from "@/lib/image-processing";
 import {
   fileUrl,
   iconNumbers,
   imageItemName,
+  overlapNumbers,
   validAspect,
   type ImageClickConfig,
   type ImageDragConfig,
@@ -48,15 +49,44 @@ import { isTypingTarget } from "./use-editor-history";
  * lleva el indicador. Si el examen ya tiene intentos (o la pregunta,
  * respuestas en uno en curso), antes de recortar, girar o cambiar la foto
  * («Cambiar foto» o soltar otra sobre ella) se pide confirmación, una vez por
- * editor abierto: sus revisiones se dibujan sobre la foto de ahora.
+ * editor abierto, diciendo lo que pasa con lo ya respondido (`askedText`).
  */
 
 type Uploading = "photo" | "icon" | null;
 type Kind = "crop" | "cw" | "ccw";
 /** Lo que espera la confirmación: recortar, girar, o cambiar la foto (por el archivo soltado, o eligiendo uno). */
 type Asked = { kind: Kind } | { kind: "change"; file: File | null };
-const ASKED_VERB: Record<Asked["kind"], string> = { crop: "Recortar", cw: "Girar", ccw: "Girar", change: "Cambiar" };
 type AnyConfig = ImageDragConfig | ImageClickConfig;
+
+/**
+ * Por qué tocar la foto pide confirmación: el examen ya tiene intentos
+ * enviados o calificados («attempts»), o esta pregunta tiene respuestas
+ * guardadas en un intento en curso («in_progress»). null: no la pide.
+ */
+export type Answered = "attempts" | "in_progress" | null;
+
+/**
+ * El título y el texto de la confirmación. En «arrastrar» cada lugar lleva
+ * su clave: recortar o girar lo recoloca con sus respuestas (salvo los que
+ * quedan fuera, que se quitan). En «señalar» los puntos correctos se
+ * recolocan, pero las marcas de los alumnos son coordenadas y no se mueven.
+ * Cambiar la foto no mueve nada. `outside`: lugares o puntos que el recorte deja fuera.
+ */
+function askedText(answered: NonNullable<Answered>, type: ImageQuestionType, kind: Asked["kind"], outside: number) {
+  const title = answered === "attempts" ? "Este examen ya tiene intentos" : "Hay alumnos respondiendo esta pregunta";
+  if (kind === "change") return { title, body: "Las revisiones se verán sobre la foto nueva." };
+  if (type === "image_drag") {
+    const kept = outside > 0 ? "se conservan, salvo las de los lugares que quedan fuera" : "se conservan";
+    return { title, body: `Las respuestas de los alumnos ${kept}; sus revisiones se verán sobre la foto nueva.` };
+  }
+  return {
+    title,
+    body:
+      answered === "attempts"
+        ? "Las marcas que ya pusieron los alumnos no se mueven: en sus revisiones pueden quedar fuera de los círculos (su calificación guardada no cambia)."
+        : "Las marcas que ya pusieron los alumnos no se mueven: sobre la foto nueva pueden quedar fuera de los círculos.",
+  };
+}
 
 export const CROP_CHOICES: { choice: CropChoice; label: string; title: string; said: string }[] = [
   { choice: "free", label: "Libre", title: "Cualquier proporción", said: "libre" },
@@ -81,8 +111,10 @@ const sizeSaid = (r: CropRect) => `Recorte: ${Math.round(r.w * 100)} % del ancho
 
 /**
  * Lo que cambió además de la foto: lo que quedó fuera, los elementos que se
- * quedaron sin lugar (el alumno los verá como distractores) y los tamaños que
- * se quedaron en su tope (se verán distintos que antes).
+ * quedaron sin lugar (el alumno los verá como distractores), los tamaños que
+ * se quedaron en su tope (se verán distintos que antes) y dos lugares que
+ * quedaron encimados (al girar una foto alta, las distancias en fracciones del
+ * ancho se achican; recortar solo las agranda).
  */
 function changesSaid(before: AnyConfig, after: AnyConfig, removed: number, scale: number, what: readonly [string, string]): string {
   const parts: string[] = [];
@@ -107,6 +139,8 @@ function changesSaid(before: AnyConfig, after: AnyConfig, removed: number, scale
     for (const [n, which] of [[bound.max, "máximo"], [bound.min, "mínimo"]] as const) {
       if (n > 0) parts.push(`${n} ${plural(n, "elemento se ajustó", "elementos se ajustaron")} a su tamaño ${which}.`);
     }
+    const pair = overlapNumbers(after.zones, after.aspect);
+    if (pair && !overlapNumbers(before.zones, before.aspect)) parts.push(`${overlapSaid(pair)}.`);
   }
   return parts.join(" ");
 }
@@ -134,7 +168,7 @@ export function usePhotoTools({
   config,
   record,
   undo,
-  hasAttempts = false,
+  answered = null,
   uploading,
   setUploading,
   setError,
@@ -151,8 +185,8 @@ export function usePhotoTools({
   record: (fn: (prev: ImageQuestionValue) => ImageQuestionValue) => ImageQuestionValue;
   /** Deshacer el último paso (un giro contrario al anterior): false si no había. */
   undo: () => boolean;
-  /** El examen ya tiene intentos (o la pregunta, respuestas en uno en curso): antes de recortar, girar o cambiar la foto, se confirma. */
-  hasAttempts?: boolean;
+  /** El examen ya tiene intentos, o la pregunta respuestas en uno en curso: antes de recortar, girar o cambiar la foto, se confirma. */
+  answered?: Answered;
   uploading: Uploading;
   setUploading: (u: Uploading) => void;
   setError: (e: string | null) => void;
@@ -168,9 +202,9 @@ export function usePhotoTools({
   /** El recorte en curso, de qué foto y con qué tamaño en píxeles (para redondear como se hará). */
   const [crop, setCrop] = useState<{ fileId: string; rect: CropRect; choice: CropChoice; px: { w: number; h: number } | null } | null>(null);
   const [busy, setBusy] = useState<Kind | null>(null);
-  /** Lo que espera la confirmación de «ya tiene intentos»; `asked`, lo último preguntado (el texto no cambia mientras se cierra). */
+  /** Lo que espera la confirmación; `asked`, su título y su texto (no cambian mientras se cierra). */
   const [asking, setAsking] = useState<Asked | null>(null);
-  const [asked, setAsked] = useState<Asked["kind"]>("crop");
+  const [asked, setAsked] = useState({ title: "", body: "" });
   const confirmed = useRef(false);
   /** Lo que tenía el foco al preguntar: el diálogo no tiene botón que lo abra, al cerrarse vuelve ahí. */
   const returnFocus = useRef<HTMLElement | null>(null);
@@ -191,12 +225,12 @@ export function usePhotoTools({
   const inEditor = () => !!rootRef.current?.contains(document.activeElement);
   const waitSaid = () => announce(uploading !== null ? "Espera a que termine la subida" : "Espera a que cargue la foto");
 
-  /** Con intentos (y sin confirmar aún en este editor), pregunta antes de tocar la foto: true si preguntó. */
+  /** Con respuestas guardadas (y sin confirmar aún en este editor), pregunta antes de tocar la foto: true si preguntó. */
   function ask(what: Asked): boolean {
-    if (!hasAttempts || confirmed.current) return false;
+    if (!answered || confirmed.current) return false;
     returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setAsking(what);
-    setAsked(what.kind);
+    setAsked(askedText(answered, type, what.kind, what.kind === "crop" ? outside : 0));
     return true;
   }
 
@@ -351,7 +385,7 @@ export function usePhotoTools({
         onApply={() => run("crop")}
       />
     ) : null,
-    /** «Este examen ya tiene intentos…»: la confirmación antes de recortar, girar o cambiar la foto. */
+    /** La confirmación antes de recortar, girar o cambiar la foto con respuestas ya guardadas (`askedText`). */
     dialog: (
       <AlertDialog open={asking !== null} onOpenChange={(open) => !open && setAsking(null)}>
         {/* En un portal, pero sus teclas suben por React hasta el editor: ahí no son atajos */}
@@ -367,11 +401,8 @@ export function usePhotoTools({
           }}
         >
           <AlertDialogHeader>
-            <AlertDialogTitle>Este examen ya tiene intentos</AlertDialogTitle>
-            <AlertDialogDescription>
-              {ASKED_VERB[asked]} la foto altera cómo se ven las revisiones de esos intentos: sus respuestas se dibujan
-              sobre la foto de ahora. ¿Continuar?
-            </AlertDialogDescription>
+            <AlertDialogTitle>{asked.title}</AlertDialogTitle>
+            <AlertDialogDescription>{asked.body} ¿Continuar?</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>

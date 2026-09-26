@@ -9,7 +9,8 @@ import { getExam, listQuestions } from "@/server/services/exams";
 import { questionsAnsweredInProgress, studentsWithAttempts } from "@/server/services/exam-results";
 import { isImageQuestionType } from "@/lib/image-questions";
 import { ExamSettingsCard } from "@/components/teach/exam/exam-settings-card";
-import { QuestionList, type QuestionData } from "@/components/teach/exam/question-list";
+import { QuestionList } from "@/components/teach/exam/question-list";
+import type { QuestionData } from "@/components/teach/exam/question-editor";
 import { ExamCsvActions } from "@/components/teach/bulk/exam-csv-dialog";
 import { AiImportDialog } from "@/components/teach/exam/ai-import-dialog";
 import { PreviewButton } from "@/components/teach/exam/preview-button";
@@ -59,8 +60,8 @@ export default async function ExamEditPage({
   const imageQuestionCount = rawQuestions.filter((q) => isImageQuestionType(q.type)).length;
   // Alumnos con un intento enviado: la publicación de resultados y el editor de fotos (cambiar una foto cambia sus revisiones)
   const attempted = studentsWithAttempts(itemId);
-  // Y las preguntas que alguien ya respondió en un intento en curso (su foto también pide confirmación)
-  const answeredInProgress = questionsAnsweredInProgress(itemId);
+  // Y las preguntas sobre imagen que alguien ya respondió en un intento en curso (su foto también pide confirmación)
+  const answeredInProgress = imageQuestionCount > 0 ? questionsAnsweredInProgress(itemId) : [];
 
   return (
     <div className="space-y-4">
