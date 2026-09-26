@@ -7,19 +7,28 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Checkbox } from "@/components/ui/checkbox";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import type { QuestionFormInput } from "@/server/actions/teacher-exams";
 import { HelpTip } from "@/components/help/help-tip";
 import { isImageQuestionType } from "@/lib/image-questions";
 import { initialImageValue, type ImageQuestionValue } from "@/lib/image-editor-value";
+import { categorizeProblem, type CategorizeConfig } from "@/lib/categorize";
+import { initialCategorizeValue } from "@/lib/categorize-editor-value";
+import { clozeProblem } from "@/lib/cloze";
+import { clozeConfigOf, initialClozeValue, type ClozeEditorValue } from "@/lib/cloze-editor-value";
+import { boardPreview } from "@/lib/preview-question";
+import { CategorizeEditor } from "./categorize-editor";
+import { ChoiceOptionsEditor } from "./choice-options-editor";
+import { ClozeEditor } from "./cloze-editor";
 import type { Answered } from "./image-photo-tools";
 import { ImagePreviewButton, ImageQuestionEditor } from "./image-question-editor";
+import { DraftPreviewButton } from "./preview-button";
 
 /**
  * El editor de una pregunta del banco (nueva o existente), dentro de la lista
  * de preguntas (`question-list.tsx`): enunciado, puntos y lo propio de cada
- * tipo; las preguntas sobre imagen, con `ImageQuestionEditor`. Aquí viven
+ * tipo; las preguntas sobre imagen, con `ImageQuestionEditor`, y las de
+ * clasificar y completar, con `CategorizeEditor` y `ClozeEditor`. Aquí viven
  * también los tipos y los nombres de los tipos de pregunta que usa la lista.
  */
 
@@ -47,9 +56,10 @@ export type QuestionData = {
   accepted: string[];
   pairs: { left: string; right: string }[];
   steps: string[];
-  /** image_drag/image_click: la foto y la config tal como se guardaron */
+  /** image_drag/image_click: la foto de fondo tal como se guardó */
   imageFileId: string | null;
-  imageConfig: unknown;
+  /** image_drag/image_click/categorize/cloze: la config tal como se guardó (la lee su editor); los demás tipos, null */
+  config: unknown;
 };
 
 export const TYPE_LABEL: Record<QuestionType, string> = {
@@ -83,7 +93,8 @@ export function QuestionEditor({
   /**
    * El examen ya tiene intentos enviados («attempts») o esta pregunta,
    * respuestas guardadas en un intento en curso («in_progress»): cambiar,
-   * recortar o girar su foto pide confirmación.
+   * recortar o girar su foto pide confirmación, y cambiar la forma de
+   * contestar de «completar» avisa que no se podrá guardar.
    */
   answered?: Answered;
 }) {
@@ -125,8 +136,11 @@ export function QuestionEditor({
     });
   // Preguntas sobre imagen: la foto y su config (los demás tipos no lo usan)
   const [image, setImage] = useState<ImageQuestionValue>(() =>
-    initialImageValue(type, initial?.imageFileId ?? null, initial?.imageConfig)
+    initialImageValue(type, initial?.imageFileId ?? null, initial?.config)
   );
+  // Clasificar y completar: su config (los demás tipos no la usan)
+  const [categorize, setCategorize] = useState(() => initialCategorizeValue(type === "categorize" ? initial?.config : null));
+  const [cloze, setCloze] = useState(() => initialClozeValue(type === "cloze" ? initial?.config : null));
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, startSaving] = useTransition();
@@ -136,7 +150,17 @@ export function QuestionEditor({
     setError(null);
     setImage(next);
   }, []);
+  const changeCategorize = useCallback((next: CategorizeConfig) => {
+    setError(null);
+    setCategorize(next);
+  }, []);
+  const changeCloze = useCallback((next: ClozeEditorValue) => {
+    setError(null);
+    setCloze(next);
+  }, []);
   const parsedPoints = Number(points);
+  // Clasificar y completar: lo que se guarda (en completar, solo lo de su forma de contestar)
+  const boardConfig = type === "categorize" ? categorize : type === "cloze" ? clozeConfigOf(cloze) : null;
 
   function addVariant() {
     const value = newVariant.trim();
@@ -161,6 +185,7 @@ export function QuestionEditor({
         ...(type === "matching" ? { pairs } : {}),
         ...(type === "ordering" ? { steps } : {}),
         ...(isImageQuestionType(type) ? { imageFileId: image.imageFileId, config: image.config } : {}),
+        ...(boardConfig ? { config: boardConfig } : {}),
       };
       const message = await onSave(input);
       if (message) setError(message);
@@ -200,6 +225,20 @@ export function QuestionEditor({
             points={Number.isFinite(parsedPoints) ? parsedPoints : 0}
           />
         )}
+        {(type === "categorize" || type === "cloze") && boardConfig && (
+          <DraftPreviewButton
+            problem={type === "categorize" ? categorizeProblem(boardConfig) : clozeProblem(boardConfig)}
+            build={() =>
+              boardPreview({
+                id: "vista-previa",
+                type,
+                promptMd,
+                points: Number.isFinite(parsedPoints) ? parsedPoints : 0,
+                config: boardConfig,
+              })
+            }
+          />
+        )}
       </div>
 
       <div className="grid gap-2">
@@ -227,88 +266,7 @@ export function QuestionEditor({
       </div>
 
       {(type === "single_choice" || type === "multiple_choice") && (
-        <div className="grid gap-2">
-          <Label>
-            Opciones{" "}
-            <span className="font-normal text-muted-foreground">
-              ({type === "single_choice" ? "marca la correcta" : "marca las correctas"})
-            </span>
-          </Label>
-          {type === "single_choice" ? (
-            <RadioGroup
-              value={singleCorrectIndex >= 0 ? String(singleCorrectIndex) : ""}
-              onValueChange={(v) =>
-                setOptions((prev) => prev.map((o, i) => ({ ...o, isCorrect: i === Number(v) })))
-              }
-              className="gap-2"
-            >
-              {options.map((option, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <RadioGroupItem value={String(i)} aria-label={`Opción ${i + 1} correcta`} />
-                  <Input
-                    value={option.textMd}
-                    onChange={(e) =>
-                      setOptions((prev) =>
-                        prev.map((o, j) => (j === i ? { ...o, textMd: e.target.value } : o))
-                      )
-                    }
-                    placeholder={`Opción ${i + 1}`}
-                  />
-                  <Button
-                    size="icon-sm"
-                    variant="ghost"
-                    aria-label={`Quitar opción ${i + 1}`}
-                    onClick={() => setOptions((prev) => prev.filter((_, j) => j !== i))}
-                  >
-                    <X aria-hidden />
-                  </Button>
-                </div>
-              ))}
-            </RadioGroup>
-          ) : (
-            <div className="grid gap-2">
-              {options.map((option, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <Checkbox
-                    checked={option.isCorrect}
-                    onCheckedChange={(checked) =>
-                      setOptions((prev) =>
-                        prev.map((o, j) => (j === i ? { ...o, isCorrect: checked === true } : o))
-                      )
-                    }
-                    aria-label={`Opción ${i + 1} correcta`}
-                  />
-                  <Input
-                    value={option.textMd}
-                    onChange={(e) =>
-                      setOptions((prev) =>
-                        prev.map((o, j) => (j === i ? { ...o, textMd: e.target.value } : o))
-                      )
-                    }
-                    placeholder={`Opción ${i + 1}`}
-                  />
-                  <Button
-                    size="icon-sm"
-                    variant="ghost"
-                    aria-label={`Quitar opción ${i + 1}`}
-                    onClick={() => setOptions((prev) => prev.filter((_, j) => j !== i))}
-                  >
-                    <X aria-hidden />
-                  </Button>
-                </div>
-              ))}
-            </div>
-          )}
-          <Button
-            size="sm"
-            variant="outline"
-            className="justify-self-start"
-            onClick={() => setOptions((prev) => [...prev, { textMd: "", isCorrect: false }])}
-          >
-            <Plus aria-hidden />
-            Agregar opción
-          </Button>
-        </div>
+        <ChoiceOptionsEditor type={type} options={options} setOptions={setOptions} />
       )}
 
       {type === "true_false" && (
@@ -501,6 +459,16 @@ export function QuestionEditor({
           value={image}
           onChange={changeImage}
           onBusyChange={setUploading}
+          answered={answered}
+        />
+      )}
+
+      {type === "categorize" && <CategorizeEditor value={categorize} onChange={changeCategorize} onBusyChange={setUploading} />}
+      {type === "cloze" && (
+        <ClozeEditor
+          value={cloze}
+          onChange={changeCloze}
+          savedMode={initial ? initialClozeValue(initial.config).mode : null}
           answered={answered}
         />
       )}

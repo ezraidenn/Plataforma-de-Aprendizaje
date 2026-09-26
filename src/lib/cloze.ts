@@ -50,6 +50,16 @@ export function parseCloze(text: string): { pieces: ClozePiece[]; blanks: ClozeB
   return { pieces, blanks };
 }
 
+/** Dónde está cada hueco en el texto, en orden: del primer «[» al último «]» de su marcador. */
+export function clozeBlankSpans(text: string): { start: number; end: number }[] {
+  return Array.from(text.matchAll(BLANK_RE), (m) => ({ start: m.index ?? 0, end: (m.index ?? 0) + m[0].length }));
+}
+
+/** Un hueco como marcador: la respuesta, sus variantes y, con «!», las incorrectas. */
+export function formatBlank(blank: ClozeBlank): string {
+  return `[[${[...blank.answers, ...blank.wrong.map((w) => `!${w}`)].join("|")}]]`;
+}
+
 /** Para comparar lo escrito: espacios juntos y, salvo que se exija, sin mayúsculas ni acentos (la ñ se conserva). */
 export function normalizeAnswer(s: string, opts: { matchCase?: boolean; matchAccents?: boolean }): string {
   let t = s.normalize("NFC").trim().replace(/\s+/g, " ");

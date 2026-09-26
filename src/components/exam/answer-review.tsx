@@ -18,12 +18,18 @@ import { cn } from "@/lib/utils";
  * tarjeta por tarjeta. Completar: el texto con lo contestado en verde (bien) o
  * rojo tachado (mal) y la respuesta correcta al lado; el lector lee el texto
  * entero con el resultado de cada hueco en su lugar.
+ * `solution`: el tablero es la solución (la vista previa del maestro): se ve
+ * igual, pero el lector dice dónde va cada tarjeta y qué va en cada hueco.
  */
-export function AnswerReview({ board }: { board: AnswerBoard }) {
-  return board.kind === "categorize" ? <CategorizeReview board={board} /> : <ClozeReview board={board} />;
+export function AnswerReview({ board, solution = false }: { board: AnswerBoard; solution?: boolean }) {
+  return board.kind === "categorize" ? (
+    <CategorizeReview board={board} solution={solution} />
+  ) : (
+    <ClozeReview board={board} solution={solution} />
+  );
 }
 
-function CategorizeReview({ board }: { board: CategorizeBoard }) {
+function CategorizeReview({ board, solution }: { board: CategorizeBoard; solution: boolean }) {
   const icons = iconNumbers([...board.groups.flatMap((g) => g.cards), ...board.unplaced].map((c) => c.view.fileId));
   const name = (v: CategorizeCardView) => imageItemName(v, icons);
   return (
@@ -59,7 +65,8 @@ function CategorizeReview({ board }: { board: CategorizeBoard }) {
         {board.groups.flatMap((g) =>
           g.cards.map((c, j) => (
             <li key={`${g.name}-${j}`}>
-              {name(c.view)}: {c.correct ? `correcto, en ${g.name}` : `la pusiste en ${g.name}; iba en ${c.expectedGroup}`}
+              {name(c.view)}:{" "}
+              {solution ? `va en ${g.name}` : c.correct ? `correcto, en ${g.name}` : `la pusiste en ${g.name}; iba en ${c.expectedGroup}`}
             </li>
           ))
         )}
@@ -93,19 +100,20 @@ type ClozeBlankReview = Extract<ClozeBoard["pieces"][number], { kind: "blank" }>
  * El texto se lee entero, también con lector de pantalla: en cada hueco, las
  * píldoras van ocultas y en su lugar se lee «(hueco N: pusiste X, correcto)».
  */
-function ClozeReview({ board }: { board: ClozeBoard }) {
+function ClozeReview({ board, solution }: { board: ClozeBoard; solution: boolean }) {
   let n = 0;
   return (
     <div className="whitespace-pre-line text-base leading-[2.3]">
       {board.pieces.map((p, i) =>
-        p.kind === "text" ? <Fragment key={i}>{renderBold(p.text)}</Fragment> : <ReviewBlank key={i} n={++n} blank={p} />
+        p.kind === "text" ? <Fragment key={i}>{renderBold(p.text)}</Fragment> : <ReviewBlank key={i} n={++n} blank={p} solution={solution} />
       )}
     </div>
   );
 }
 
 /** Lo que se lee de un hueco, en su lugar dentro de la oración. */
-function blankSummary(n: number, b: ClozeBlankReview): string {
+function blankSummary(n: number, b: ClozeBlankReview, solution: boolean): string {
+  if (solution) return `(hueco ${n}: ${b.expected})`;
   if (b.correct) return `(hueco ${n}: pusiste ${b.given}, correcto)`;
   if (b.given) return `(hueco ${n}: pusiste ${b.given}, incorrecto; iba ${b.expected})`;
   return `(hueco ${n}: sin respuesta; iba ${b.expected})`;
@@ -116,7 +124,7 @@ function blankSummary(n: number, b: ClozeBlankReview): string {
  * ✗ (o vacío) y la respuesta correcta al lado. Letra del color del texto (se
  * lee bien sobre el fondo teñido); el color va en el fondo, el borde y la marca.
  */
-function ReviewBlank({ n, blank }: { n: number; blank: ClozeBlankReview }) {
+function ReviewBlank({ n, blank, solution }: { n: number; blank: ClozeBlankReview; solution: boolean }) {
   const tag = "mx-0.5 inline-flex items-center gap-1 rounded-md px-1.5 align-baseline font-semibold leading-normal ring-1 ring-inset";
   const right = cn(tag, "bg-success/12 ring-success/60");
   return (
@@ -141,7 +149,7 @@ function ReviewBlank({ n, blank }: { n: number; blank: ClozeBlankReview }) {
           </>
         )}
       </span>
-      <span className="sr-only">{blankSummary(n, blank)}</span>
+      <span className="sr-only">{blankSummary(n, blank, solution)}</span>
     </>
   );
 }

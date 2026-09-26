@@ -9,15 +9,16 @@ import { rememberInspection, useIconInspection } from "./use-icon-inspection";
 
 /**
  * Los íconos del editor de «arrastrar». Subirlos: sin sus márgenes
- * transparentes y sin repetir uno que ya está en la lista. Los subidos antes
- * del recorte: toman la proporción de su archivo y, si les sobra margen,
- * ofrecen «Quitar margen» (se sube recortado y el elemento cambia de archivo;
- * el viejo se queda: deshacer vuelve a él).
+ * transparentes y sin repetir uno que ya está en la lista (`useIconUploads`,
+ * que también usan las tarjetas de «clasificar»). Los subidos antes del
+ * recorte: toman la proporción de su archivo y, si les sobra margen, ofrecen
+ * «Quitar margen» (se sube recortado y el elemento cambia de archivo; el viejo
+ * se queda: deshacer vuelve a él).
  */
 
 export const DUPLICATE = "Ya está en la lista: colócalo en varios lugares";
 const UNREADABLE = "No se pudo leer la imagen: usa un ícono PNG, JPG, WEBP o GIF.";
-const EMPTY_ICON = "Ese ícono está vacío (todo transparente): elige otra imagen.";
+export const EMPTY_ICON = "Ese ícono está vacío (todo transparente): elige otra imagen.";
 const NO_MARGIN = "Ese ícono ya no tiene margen.";
 const SAME_TRIMMED = "Ya hay en la lista un ícono igual sin margen: deja uno y colócalo en varios lugares.";
 
@@ -61,6 +62,78 @@ function prepare(file: File): Promise<PreparedIcon | null> {
 /** El Blob preparado como archivo para subirlo, con su nombre y su tipo. */
 const asFile = (icon: PreparedIcon) => new File([icon.blob], icon.name, { type: icon.blob.type });
 
+/**
+ * Subir íconos nuevos al editor: solo el dibujo (`prepareIcon`: sin márgenes
+ * transparentes, a un tamaño razonable y con un nombre neutro) y sin repetir
+ * uno que ya está. Recuerda el tamaño y la huella de cada archivo visto, así
+ * cada uno se descarga a lo más una vez.
+ */
+export function useIconUploads() {
+  /** Tamaño y huella de los íconos ya vistos (por archivo), para no subir dos veces el mismo. */
+  const iconPrints = useRef(new Map<string, { size: number; hash?: string }>());
+
+  /**
+   * ¿Alguno de los archivos `fileIds` tiene el mismo contenido que alguno de
+   * estos? Primero el tamaño; la huella, solo si coincide.
+   */
+  async function iconExists(fileIds: string[], candidates: Candidate[]): Promise<boolean> {
+    const sizes = new Set(candidates.map((c) => c.size));
+    const checks = [...new Set(fileIds)].map(async (fileId) => {
+      let known = iconPrints.current.get(fileId);
+      if (!known || (sizes.has(known.size) && !known.hash)) {
+        const res = await fetch(fileUrl(fileId)).catch(() => null);
+        if (!res?.ok) return false;
+        const length = res.headers.get("content-length");
+        if (length !== null && !sizes.has(Number(length))) {
+          // Otro tamaño: ni se descarga el resto
+          void res.body?.cancel();
+          iconPrints.current.set(fileId, { size: Number(length) });
+          return false;
+        }
+        const data = await res.arrayBuffer();
+        known = { size: data.byteLength, hash: await fingerprint(data) };
+        iconPrints.current.set(fileId, known);
+      }
+      for (const c of candidates) {
+        if (c.size === known.size && known.hash === (await c.print())) return true;
+      }
+      return false;
+    });
+    return (await Promise.all(checks)).some(Boolean);
+  }
+
+  /** Sube un ícono ya preparado y lo recuerda (su huella y que ya no tiene margen). */
+  async function uploadIcon(icon: PreparedIcon, print: Candidate): Promise<string> {
+    const fileId = await uploadFile(asFile(icon), "editor_image");
+    iconPrints.current.set(fileId, { size: print.size, hash: await print.print() });
+    rememberInspection(fileId, { ratio: icon.ratio, margin: false });
+    return fileId;
+  }
+
+  /**
+   * Prepara `file` y lo sube si no es igual a alguno de `fileIds`: ni el
+   * recorte (íconos nuevos) ni el archivo tal cual (subidos antes del recorte).
+   * «empty»: todo transparente; «duplicate»: ya está. Lanza Error con un
+   * mensaje para el maestro si no se puede leer o subir.
+   */
+  async function uploadNewIcon(
+    file: File,
+    fileIds: string[]
+  ): Promise<{ fileId: string; ratio: number } | "empty" | "duplicate"> {
+    const icon = await prepare(file);
+    if (!icon) return "empty";
+    const prepared = candidate(icon.blob);
+    if (await iconExists(fileIds, [prepared, candidate(file)])) return "duplicate";
+    return { fileId: await uploadIcon(icon, prepared), ratio: icon.ratio };
+  }
+
+  return { iconExists, uploadIcon, uploadNewIcon };
+}
+
+/** Los archivos de los íconos de la lista, sin el elemento `except`. */
+const iconFiles = (elements: ImageElement[], except?: string) =>
+  elements.flatMap((e) => (e.kind === "icon" && e.fileId && e.id !== except ? [e.fileId] : []));
+
 export function useEditorIcons({
   elements,
   uploading,
@@ -80,8 +153,7 @@ export function useEditorIcons({
   setConfig: (fn: (c: ImageDragConfig) => ImageDragConfig, options?: HistoryOptions) => void;
   nameOf: (id: string) => string;
 }) {
-  /** Tamaño y huella de los íconos ya vistos (por archivo), para no subir dos veces el mismo. */
-  const iconPrints = useRef(new Map<string, { size: number; hash?: string }>());
+  const icons = useIconUploads();
   /** Ícono al que se le está quitando el margen. */
   const [trimming, setTrimming] = useState<string | null>(null);
   /** Proporción y margen de cada archivo de ícono (para los subidos antes del recorte). */
@@ -105,49 +177,10 @@ export function useEditorIcons({
     );
   }, [elements, inspected, setConfig]);
 
-  /**
-   * ¿Ya hay en la lista (sin contar el elemento `except`) un ícono con el mismo
-   * contenido que alguno de estos? Primero el tamaño; la huella, solo si coincide.
-   */
-  async function iconExists(candidates: Candidate[], except?: string): Promise<boolean> {
-    const sizes = new Set(candidates.map((c) => c.size));
-    const checks = elements.map(async (e) => {
-      if (e.kind !== "icon" || !e.fileId || e.id === except) return false;
-      let known = iconPrints.current.get(e.fileId);
-      if (!known || (sizes.has(known.size) && !known.hash)) {
-        const res = await fetch(fileUrl(e.fileId)).catch(() => null);
-        if (!res?.ok) return false;
-        const length = res.headers.get("content-length");
-        if (length !== null && !sizes.has(Number(length))) {
-          // Otro tamaño: ni se descarga el resto
-          void res.body?.cancel();
-          iconPrints.current.set(e.fileId, { size: Number(length) });
-          return false;
-        }
-        const data = await res.arrayBuffer();
-        known = { size: data.byteLength, hash: await fingerprint(data) };
-        iconPrints.current.set(e.fileId, known);
-      }
-      for (const c of candidates) {
-        if (c.size === known.size && known.hash === (await c.print())) return true;
-      }
-      return false;
-    });
-    return (await Promise.all(checks)).some(Boolean);
-  }
-
   /** Un aviso de algo que no se hizo, a la vista y en voz alta. */
   function warn(text: string) {
     setNotice(text);
     announce(text);
-  }
-
-  /** Sube un ícono ya preparado y lo recuerda (su huella y que ya no tiene margen). */
-  async function uploadIcon(icon: PreparedIcon, print: Candidate): Promise<string> {
-    const fileId = await uploadFile(asFile(icon), "editor_image");
-    iconPrints.current.set(fileId, { size: print.size, hash: await print.print() });
-    rememberInspection(fileId, { ratio: icon.ratio, margin: false });
-    return fileId;
   }
 
   async function addIcon(file: File) {
@@ -156,14 +189,12 @@ export function useEditorIcons({
     setNotice(null);
     setUploading("icon");
     try {
-      // Solo el dibujo: sin márgenes transparentes y a un tamaño razonable
-      const icon = await prepare(file);
-      if (!icon) return warn(EMPTY_ICON);
-      // Repetido: el recorte (íconos nuevos) o el archivo tal cual (subidos antes del recorte)
-      const prepared = candidate(icon.blob);
-      if (await iconExists([prepared, candidate(file)])) return warn(DUPLICATE);
-      const fileId = await uploadIcon(icon, prepared);
-      const element: ImageElement = { id: newElementId(elements), kind: "icon", fileId, size: DEFAULT_ICON_SIZE, ratio: icon.ratio };
+      // Solo el dibujo (sin márgenes transparentes) y sin repetir uno de la lista
+      const uploaded = await icons.uploadNewIcon(file, iconFiles(elements));
+      if (uploaded === "empty") return warn(EMPTY_ICON);
+      if (uploaded === "duplicate") return warn(DUPLICATE);
+      const { fileId, ratio } = uploaded;
+      const element: ImageElement = { id: newElementId(elements), kind: "icon", fileId, size: DEFAULT_ICON_SIZE, ratio };
       setConfig((c) => (c.elements.length >= MAX_ELEMENTS ? c : { ...c, elements: [...c.elements, element] }));
       announce("Ícono agregado: arrástralo a la foto");
     } catch (err) {
@@ -196,8 +227,8 @@ export function useEditorIcons({
         return warn(NO_MARGIN);
       }
       const prepared = candidate(icon.blob);
-      if (await iconExists([prepared], id)) return warn(SAME_TRIMMED);
-      const fileId = await uploadIcon(icon, prepared);
+      if (await icons.iconExists(iconFiles(elements, id), [prepared])) return warn(SAME_TRIMMED);
+      const fileId = await icons.uploadIcon(icon, prepared);
       // Mientras subía se pudo deshacer su alta (o cambiar su archivo): entonces no se toca nada,
       // ni se crea un paso vacío ni se pierde lo que había para rehacer
       let applied = false as boolean;

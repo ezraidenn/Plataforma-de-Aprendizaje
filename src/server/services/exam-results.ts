@@ -18,10 +18,11 @@ export function studentsWithAttempts(itemId: string): number {
 }
 
 /**
- * Preguntas sobre imagen del examen con respuestas ya guardadas en intentos EN
- * CURSO (los enviados los cuenta `studentsWithAttempts`): en el editor,
- * cambiar, recortar o girar su foto pide confirmación. Las de otros tipos no
- * tienen foto: no se cuentan.
+ * Preguntas sobre imagen y de completar del examen con respuestas ya guardadas
+ * en intentos EN CURSO (los enviados los cuenta `studentsWithAttempts`): en el
+ * editor, cambiar, recortar o girar su foto pide confirmación, y en completar,
+ * cambiar la forma de contestar avisa que no se podrá guardar. Las de otros
+ * tipos no se cuentan.
  */
 export function questionsAnsweredInProgress(itemId: string): string[] {
   return db
@@ -33,7 +34,7 @@ export function questionsAnsweredInProgress(itemId: string): string[] {
       and(
         eq(examAttempts.examItemId, itemId),
         eq(examAttempts.status, "in_progress"),
-        inArray(questions.type, [...IMAGE_QUESTION_TYPES])
+        inArray(questions.type, [...IMAGE_QUESTION_TYPES, "cloze"])
       )
     )
     .all()

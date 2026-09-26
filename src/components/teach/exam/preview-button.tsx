@@ -56,6 +56,34 @@ export function PreviewButton({
   );
 }
 
+/**
+ * «Ver como alumno» de la pregunta que se está editando, sin guardarla: arma
+ * la vista previa al abrirse. Deshabilitado mientras haya un `problem` (dice cuál).
+ */
+export function DraftPreviewButton({ problem, build }: { problem: string | null; build: () => PreviewQuestion }) {
+  const [questions, setQuestions] = useState<PreviewQuestion[] | null>(null);
+  return (
+    <>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        disabled={!!problem}
+        title={problem ?? undefined}
+        onClick={() => setQuestions([build()])}
+      >
+        <Eye aria-hidden />
+        Ver como alumno
+      </Button>
+      <PreviewDialog
+        questions={questions}
+        onClose={() => setQuestions(null)}
+        description="Así verá el estudiante esta pregunta, aún sin guardar."
+      />
+    </>
+  );
+}
+
 /** El diálogo «Ver como alumno»: abierto mientras haya preguntas. */
 export function PreviewDialog({
   questions,

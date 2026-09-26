@@ -54,7 +54,8 @@ export default async function ExamEditPage({
       pairs: Array.isArray(config.pairs) ? config.pairs : [],
       steps: Array.isArray(config.steps) ? config.steps : [],
       imageFileId: q.imageFileId,
-      imageConfig: isImageQuestionType(q.type) ? q.config : null,
+      // La config entera solo la leen los editores que la usan tal cual
+      config: isImageQuestionType(q.type) || q.type === "categorize" || q.type === "cloze" ? q.config : null,
     };
   });
   // La IA nunca crea preguntas sobre imagen (ni, por ahora, de clasificar o
@@ -62,8 +63,11 @@ export default async function ExamEditPage({
   const imageQuestionCount = rawQuestions.filter((q) => isNotInCsvType(q.type)).length;
   // Alumnos con un intento enviado: la publicación de resultados y el editor de fotos (cambiar una foto cambia sus revisiones)
   const attempted = studentsWithAttempts(itemId);
-  // Y las preguntas sobre imagen que alguien ya respondió en un intento en curso (su foto también pide confirmación)
-  const answeredInProgress = rawQuestions.some((q) => isImageQuestionType(q.type)) ? questionsAnsweredInProgress(itemId) : [];
+  // Y las preguntas sobre imagen o de completar que alguien ya respondió en un intento en curso (su foto
+  // también pide confirmación; la forma de contestar de completar ya no se puede cambiar)
+  const answeredInProgress = rawQuestions.some((q) => isImageQuestionType(q.type) || q.type === "cloze")
+    ? questionsAnsweredInProgress(itemId)
+    : [];
 
   return (
     <div className="space-y-4">

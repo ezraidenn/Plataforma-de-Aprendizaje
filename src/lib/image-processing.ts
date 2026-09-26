@@ -26,11 +26,15 @@ const PNG_HEAVY_BYTES = 150 * 1024;
 const IMAGE_EXT: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif" };
 
 /**
- * Nombre neutro con que se sube una imagen del editor, nunca el del archivo
- * del maestro: «verduras-apio.png» diría a qué grupo va una tarjeta. El
- * servidor tampoco lo sirve (ver `contentDisposition`), pero así no queda ni en
- * la base ni en el disco. El sufijo al azar evita que todas se llamen igual en
- * la carpeta (cada nombre repetido suma « (2)», « (3)»… y tiene un tope).
+ * Nombre neutro con que se suben las fotos y los íconos de las preguntas, nunca
+ * el del archivo del maestro: «verduras-apio.png» diría a qué grupo va una
+ * tarjeta. El servidor tampoco lo sirve (ver `contentDisposition`), y así lo que
+ * se sube desde los editores de preguntas no lo guarda ni en la base ni en el
+ * disco. Sí conservan su nombre original las imágenes subidas antes de este
+ * cambio y las que se insertan en el editor de texto (`rich-text-editor.tsx`:
+ * instrucciones, contenidos, entregas), que no pasan por aquí. El sufijo al
+ * azar evita que todas se llamen igual en la carpeta (cada nombre repetido
+ * suma « (2)», « (3)»… y tiene un tope).
  * La extensión sale del tipo; si el navegador no lo dio, de la extensión de
  * `fromName` (el servidor adivina el tipo por ella).
  */

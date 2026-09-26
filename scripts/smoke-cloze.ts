@@ -36,7 +36,17 @@ import {
   sanitizeCloze,
   type ClozeBoard,
   type ClozeConfig,
+  clozeBlankSpans,
+  formatBlank,
 } from "../src/lib/cloze";
+import {
+  blankPartProblem,
+  clozeConfigOf,
+  distractorProblem,
+  initialClozeValue,
+  makeBlank,
+  replaceBlank,
+} from "../src/lib/cloze-editor-value";
 
 let failures = 0;
 function check(name: string, cond: boolean, detail?: unknown) {
@@ -138,6 +148,33 @@ function pureChecks() {
       }),
     mine);
   check("Solución en texto", clozeSolutionText(B) === "Hueco 1: París · Hueco 2: Roma", clozeSolutionText(B));
+
+  console.log("\n— Editor: el texto es la fuente de los huecos");
+  const T = "Francia: [[París|Paris|!Londres]]. Italia: [[Roma]].";
+  check("Dónde está cada hueco", JSON.stringify(clozeBlankSpans(T)) === JSON.stringify([{ start: 9, end: 33 }, { start: 43, end: 51 }]), clozeBlankSpans(T));
+  check("Hueco como marcador: respuestas y luego incorrectas", formatBlank({ answers: ["a", "b"], wrong: ["c"] }) === "[[a|b|!c]]");
+  const hole = makeBlank("La capital es París.", 14, 20);
+  check("Hacer hueco: envuelve la selección tal cual, con el cursor al final del hueco", "text" in hole && hole.text === "La capital es [[París.]]" && hole.caret === 22, hole);
+  const word = makeBlank("La capital es París .", 13, 20);
+  check("Hacer hueco: los espacios de las orillas quedan fuera", "text" in word && word.text === "La capital es [[París]] ." && word.caret === 21, word);
+  const empty = makeBlank("Hola ", 5, 5);
+  check("Hacer hueco sin selección: [[]] con el cursor dentro", "text" in empty && empty.text === "Hola [[]]" && empty.caret === 7, empty);
+  check("Hacer hueco dentro de otro: no", "error" in makeBlank(T, 12, 12) && "error" in makeBlank(T, 5, 15));
+  check("Hacer hueco junto a otro: sí", "text" in makeBlank(T, 33, 33));
+  check("Hacer hueco con corchetes o saltos de línea: no", "error" in makeBlank("a [b] c", 0, 7) && "error" in makeBlank("uno\ndos", 0, 7));
+  const rewritten = replaceBlank(T, 1, { answers: ["Roma", "Rome"], wrong: ["Milán"] });
+  check("Reescribir un hueco: solo su marcador cambia", rewritten === "Francia: [[París|Paris|!Londres]]. Italia: [[Roma|Rome|!Milán]].", rewritten);
+  check("Reescribir un hueco que no existe: nada", replaceBlank(T, 5, { answers: ["x"], wrong: [] }) === T);
+  const b0 = parseCloze(T).blanks[0];
+  check("Variante: sin marcas ni repetida", blankPartProblem("a|b", b0, "variant") !== null && blankPartProblem("Paris", b0, "variant") !== null && blankPartProblem("!x", b0, "variant") !== null && blankPartProblem("PARIS", b0, "variant") === null);
+  check("Incorrecta: ni la respuesta ni repetida", blankPartProblem("paris", b0, "wrong") === "Es la respuesta correcta" && blankPartProblem("londres", b0, "wrong") === "Ya está en la lista" && blankPartProblem("Berlín", b0, "wrong") === null);
+  check("Distractor: ni repetido ni una respuesta, sin «|»", distractorProblem("madrid", ["Madrid"], ["Roma"]) !== null && distractorProblem("roma", [], ["Roma"]) !== null && distractorProblem("a|b", [], []) !== null && distractorProblem("Lisboa", ["Madrid"], ["Roma"]) === null);
+  const opened = initialClozeValue({ text: "[[a]]", mode: "bank", distractors: ["b"], matchCase: true });
+  check("Abrir: todo lo guardado; sin nada, escribir", opened.mode === "bank" && opened.distractors[0] === "b" && opened.matchCase && initialClozeValue(null).mode === "write" && initialClozeValue(null).text === "");
+  check("Guardar: solo lo de su forma de contestar",
+    JSON.stringify(clozeConfigOf(opened)) === '{"text":"[[a]]","mode":"bank","distractors":["b"]}' &&
+      JSON.stringify(clozeConfigOf({ ...opened, mode: "write" })) === '{"text":"[[a]]","mode":"write","matchCase":true}' &&
+      JSON.stringify(clozeConfigOf({ ...opened, mode: "select" })) === '{"text":"[[a]]","mode":"select"}');
 }
 
 // ─── Recorrido contra la base ────────────────────────────────────────────────

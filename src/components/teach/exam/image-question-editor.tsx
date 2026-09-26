@@ -1,11 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
-import { CheckCircle2, CircleAlert, Eye, ImagePlus, Loader2, TriangleAlert } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { CheckCircle2, CircleAlert, ImagePlus, Loader2, TriangleAlert } from "lucide-react";
 import { useFileDrop } from "@/components/exam/image-dnd";
 import { LiveRegion, useAnnouncer } from "@/components/exam/live-region";
-import { imagePreview, type PreviewQuestion } from "@/lib/preview-question";
+import { imagePreview } from "@/lib/preview-question";
 import { neutralImageName } from "@/lib/image-processing";
 import { EDITOR_IMAGE_ACCEPT, uploadFile } from "@/lib/upload-client";
 import { EDITOR_IMAGE_MAX_BYTES } from "@/lib/upload-types";
@@ -29,7 +28,7 @@ import { HistoryButtons } from "./image-canvas-toolbar";
 import { ClickEditor } from "./image-click-editor";
 import { DragEditor } from "./image-drag-editor";
 import { usePhotoTools, type Answered } from "./image-photo-tools";
-import { PreviewDialog } from "./preview-button";
+import { DraftPreviewButton } from "./preview-button";
 import { isTypingTarget, useEditorHistory, type HistoryOptions } from "./use-editor-history";
 
 /**
@@ -371,8 +370,8 @@ function PhotoDrop({
   );
 }
 
-/** Botones de una sola elección (la precisión de «señalar»). */
-function Segmented<T extends string>({
+/** Botones de una sola elección (la precisión de «señalar», la forma de contestar de «completar»). */
+export function Segmented<T extends string>({
   label,
   value,
   options,
@@ -420,38 +419,13 @@ export function ImagePreviewButton({
   promptMd: string;
   points: number;
 }) {
-  const [questions, setQuestions] = useState<PreviewQuestion[] | null>(null);
   const current = shaped(type, value);
-  const problem = imageQuestionProblem(type, current);
   return (
-    <>
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        disabled={!!problem}
-        title={problem ?? undefined}
-        onClick={() =>
-          setQuestions([
-            imagePreview({
-              id: "vista-previa",
-              type,
-              promptMd,
-              points,
-              imageFileId: current.imageFileId,
-              config: current.config,
-            }),
-          ])
-        }
-      >
-        <Eye aria-hidden />
-        Ver como alumno
-      </Button>
-      <PreviewDialog
-        questions={questions}
-        onClose={() => setQuestions(null)}
-        description="Así verá el estudiante esta pregunta, aún sin guardar."
-      />
-    </>
+    <DraftPreviewButton
+      problem={imageQuestionProblem(type, current)}
+      build={() =>
+        imagePreview({ id: "vista-previa", type, promptMd, points, imageFileId: current.imageFileId, config: current.config })
+      }
+    />
   );
 }

@@ -32,7 +32,6 @@ import {
 import { fileUrl } from "@/lib/image-questions";
 import { QuestionEditor, TYPE_LABEL, type QuestionData, type QuestionType } from "./question-editor";
 
-// «Clasificar en grupos» y «Completar el texto» entran al selector cuando tengan su editor
 const QUESTION_TYPES: QuestionType[] = [
   "single_choice",
   "multiple_choice",
@@ -43,6 +42,8 @@ const QUESTION_TYPES: QuestionType[] = [
   "open_text",
   "image_drag",
   "image_click",
+  "categorize",
+  "cloze",
 ];
 
 function formatPoints(points: number): string {
@@ -71,7 +72,7 @@ export function QuestionList({
   drawCount?: number | null;
   /** El examen ya tiene intentos enviados: cambiar, recortar o girar la foto de una pregunta pide confirmación. */
   hasAttempts?: boolean;
-  /** Preguntas con respuestas guardadas en intentos en curso: cambiar su foto también pide confirmación. */
+  /** Preguntas con respuestas guardadas en intentos en curso: cambiar su foto también pide confirmación (y en completar, cambiar la forma de contestar avisa). */
   answeredInProgress?: string[];
 }) {
   const router = useRouter();

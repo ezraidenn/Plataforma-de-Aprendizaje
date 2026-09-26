@@ -43,6 +43,7 @@ import {
   sanitizeCategorize,
   type CategorizeConfig,
 } from "../src/lib/categorize";
+import { initialCategorizeValue, newCategorizeId } from "../src/lib/categorize-editor-value";
 
 let failures = 0;
 function check(name: string, cond: boolean, detail?: unknown) {
@@ -130,6 +131,19 @@ function pureChecks() {
       }),
     mine);
   check("Solución en texto, con los íconos numerados", categorizeSolutionText(C) === "Frutas: Manzana, Pera · Verduras: Zanahoria, Ícono 1", categorizeSolutionText(C));
+
+  console.log("\n— Editor");
+  const fresh = initialCategorizeValue(null);
+  check("Pregunta nueva: dos grupos vacíos, sin tarjetas", fresh.groups.length === 2 && fresh.groups.every((g) => g.name === "") && fresh.cards.length === 0 && fresh.groups[0].id !== fresh.groups[1].id, fresh);
+  check("Abrir lo guardado: tal cual", JSON.stringify(initialCategorizeValue(C)) === JSON.stringify(C), initialCategorizeValue(C));
+  const messy = initialCategorizeValue({
+    groups: [{ id: "g1", name: "A" }, { id: "g1", name: "B" }, { name: "sin clave" }, { id: "g2" }],
+    cards: [{ id: "c1", kind: "text", text: "x", groupId: "g1" }, { id: "c2", kind: "text", text: "y", groupId: "nada" }, { id: "c3", kind: "icon", groupId: "g2" }],
+  });
+  check("Abrir: sin grupos repetidos ni tarjetas de grupos que no existen o sin archivo",
+    JSON.stringify(messy) === JSON.stringify({ groups: [{ id: "g1", name: "A" }, { id: "g2", name: "" }], cards: [{ id: "c1", kind: "text", text: "x", groupId: "g1" }] }), messy);
+  const id = newCategorizeId("c", [{ id: "c1" }]);
+  check("Clave nueva: con su prefijo y distinta", /^c[a-z0-9]+$/.test(id) && id !== "c1" && id.length <= 64, id);
 }
 
 // ─── Recorrido contra la base ────────────────────────────────────────────────
