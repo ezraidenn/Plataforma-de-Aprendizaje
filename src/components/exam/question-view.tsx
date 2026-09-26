@@ -12,11 +12,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { CategorizeControl } from "@/components/student/categorize-control";
+import { ClozeControl } from "@/components/student/cloze-control";
 import { ImageClickControl } from "@/components/student/image-click-control";
 import { ImageDragControl } from "@/components/student/image-drag-control";
 import { OrderingControl } from "@/components/student/ordering-control";
 import type { RunnerQuestion } from "@/components/student/types";
 import { parseClickAnswer, parseMapAnswer } from "@/lib/image-questions";
+import { renderBold } from "./render-bold";
 
 /**
  * Una pregunta tal como la ve el alumno: enunciado, puntos y el control de su
@@ -24,12 +27,8 @@ import { parseClickAnswer, parseMapAnswer } from "@/lib/image-questions";
  * alumno», para que la vista previa sea idéntica.
  */
 
-/** Negritas **así** sin dependencias; el resto se muestra tal cual. */
-export function renderBold(text: string): React.ReactNode[] {
-  return text
-    .split(/\*\*(.+?)\*\*/g)
-    .map((part, i) => (i % 2 === 1 ? <strong key={i}>{part}</strong> : <span key={i}>{part}</span>));
-}
+// Vive aparte (la usan también los controles y la revisión); se reexporta para quien la importa de aquí
+export { renderBold };
 
 export type AnswerState = { selectedOptionIds: string[]; answerText: string };
 
@@ -280,7 +279,7 @@ export function QuestionControls({
           onChange={(placement) => onChange({ answerText: JSON.stringify(placement) })}
         />
       ) : (
-        <ImageUnavailable />
+        <QuestionUnavailable />
       );
 
     case "image_click":
@@ -292,13 +291,35 @@ export function QuestionControls({
           onChange={(marks) => onChange({ answerText: JSON.stringify(marks) })}
         />
       ) : (
-        <ImageUnavailable />
+        <QuestionUnavailable />
+      );
+
+    case "categorize":
+      return q.categorize ? (
+        <CategorizeControl
+          config={q.categorize}
+          answerText={answer.answerText}
+          onChange={(placement) => onChange({ answerText: JSON.stringify(placement) })}
+        />
+      ) : (
+        <QuestionUnavailable />
+      );
+
+    case "cloze":
+      return q.cloze ? (
+        <ClozeControl
+          config={q.cloze}
+          answerText={answer.answerText}
+          onChange={(filled) => onChange({ answerText: JSON.stringify(filled) })}
+        />
+      ) : (
+        <QuestionUnavailable />
       );
   }
 }
 
-/** Pregunta sobre imagen a la que le falta la foto o su configuración. */
-function ImageUnavailable() {
+/** Pregunta a la que le falta su configuración (o, sobre imagen, la foto). */
+function QuestionUnavailable() {
   return (
     <p className="rounded-lg border border-dashed px-3 py-2 text-sm text-muted-foreground">
       Esta pregunta no se puede mostrar. Avísale a tu instructor.

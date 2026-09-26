@@ -40,6 +40,7 @@ import {
   type AnswerState,
 } from "@/components/exam/question-view";
 import { ImageReview } from "@/components/exam/image-review";
+import { AnswerReview } from "@/components/exam/answer-review";
 import {
   saveAnswerAction,
   startAttemptAction,
@@ -691,9 +692,14 @@ export function ExamRunner({
                           showSolution={entry.result !== "correct"}
                         />
                       )}
+                      {entry.answerBoard && (
+                        // Clasificar y completar: lo que puso, si acertó y a dónde iba
+                        <AnswerReview board={entry.answerBoard} />
+                      )}
                       {entry.result !== "correct" &&
                         entry.result !== "pending" &&
                         !entry.board &&
+                        !entry.answerBoard &&
                         entry.correctAnswer && (
                           <p className="text-sm">
                             <span className="text-muted-foreground">
