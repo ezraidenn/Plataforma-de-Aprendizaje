@@ -354,7 +354,7 @@ async function build(row: Row): Promise<Built> {
           folio: cert.c.folio,
           issued: fmtDate(cert.c.issuedAt),
           validUntil: cert.c.expiresAt ? fmtDate(cert.c.expiresAt) : null,
-          courseUrl: courseUrl(base, cert.c.courseId),
+          courseUrl: `${base}/dashboard#certificados`,
           verifyUrl: `${base}/verify/${encodeURIComponent(cert.c.folio)}`,
         });
       }
@@ -367,7 +367,7 @@ async function build(row: Row): Promise<Built> {
         issued: fmtDate(cert.c.issuedAt),
         expires: fmtDate(cert.c.expiresAt),
         daysLeft: Math.max(1, Math.ceil((cert.c.expiresAt.getTime() - Date.now()) / 86_400_000)),
-        courseUrl: courseUrl(base, cert.c.courseId),
+        courseUrl: `${base}/dashboard#certificados`,
       });
     }
     case "pendientes": {
