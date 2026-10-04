@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { coverImageFor, getBranding } from "@/server/services/branding";
 import { listPublishedCoursesPublic } from "@/server/services/courses";
 import { cn } from "@/lib/utils";
@@ -99,8 +100,10 @@ export default function LoginPage() {
           </div>
           <LoginForm />
           <p className="mt-6 text-center text-[13px] text-muted-foreground">
-            ¿Olvidaste tu contraseña? Solicita el restablecimiento a tu instructor o al
-            administrador.
+            <Link href="/recuperar" className="font-medium text-foreground underline-offset-4 hover:underline">
+              ¿Olvidaste tu contraseña?
+            </Link>{" "}
+            Te mandamos un enlace a tu correo para elegir una nueva.
           </p>
         </div>
       </section>

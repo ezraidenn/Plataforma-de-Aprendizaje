@@ -110,6 +110,7 @@ export async function importStudentsCsvAction(input: {
       actorId: user.id,
       enrollCourseId,
       enrollDuplicates: Boolean(input.enrollDuplicates) && enrollCourseId !== null,
+      invite: true,
     });
     revalidatePath("/teach/students");
     revalidatePath("/teach/dashboard");

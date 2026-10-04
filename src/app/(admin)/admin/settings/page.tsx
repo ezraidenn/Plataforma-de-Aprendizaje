@@ -18,6 +18,7 @@ import { storageRootInfo } from "@/server/services/storage";
 import { appUrlInfo } from "@/server/services/app-url";
 import { StorageCard } from "@/components/admin/storage-card";
 import { AiCard } from "@/components/admin/settings/ai-card";
+import { MailCard } from "@/components/admin/settings/mail-card";
 import { getAiSettings } from "@/server/services/ai-settings";
 import {
   adminListJobs,
@@ -276,6 +277,9 @@ export default async function AdminSettingsPage({
           fileCount={stats.files.count}
           sizeLabel={formatBytes(stats.files.totalBytes)}
         />
+
+        {/* Correo: servicio del club, prueba de envío y últimos correos */}
+        <MailCard />
 
         {/* Inteligencia artificial: la clave de OpenAI para «Importar con IA» */}
         <AiCard {...getAiSettings()} />

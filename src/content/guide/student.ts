@@ -157,6 +157,12 @@ export const STUDENT_GUIDE: RoleGuide = {
           title: "Notificaciones",
           text: "La campana de la barra superior te avisa cuando califican una tarea, cuando un curso nuevo está disponible o cuando se emite tu certificado. Cuando ya las revisaste, bórralas con la ✕ o con «Borrar todas» para dejarla en limpio.",
         },
+        {
+          title: "Correos",
+          text: "También te llegan correos: al darte de alta (para crear tu contraseña), al inscribirte en un curso, al aprobar (con tu certificado) y cuando cambia tu contraseña. En «Ajustes → Avisos por correo» puedes apagar los recordatorios de pendientes, los de certificados por vencer y los avisos de tus instructores. ¿Olvidaste tu contraseña? En la pantalla de inicio, «¿Olvidaste tu contraseña?» te manda un enlace para elegir una nueva.",
+          href: "/ajustes",
+          hrefLabel: "Ajustes",
+        },
       ],
     },
   ],

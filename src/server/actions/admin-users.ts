@@ -15,6 +15,11 @@ import {
   type DeleteUserImpact,
   type Role,
 } from "@/server/services/admin";
+import { db } from "@/server/db";
+import { users } from "@/server/db/schema";
+import { eq } from "drizzle-orm";
+import { accessMailMessage, queueAccessMail, queueMail } from "@/server/mail/outbox";
+import { audit } from "@/server/services/audit";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const ROLES: Role[] = ["admin", "teacher", "student"];
@@ -29,7 +34,9 @@ export async function newAdminTempPasswordAction(): Promise<{ password: string }
   return { password: generateTempPassword() };
 }
 
-export type AdminCreateUserResult = { ok: true; userId: string } | { error: string };
+export type AdminCreateUserResult =
+  | { ok: true; userId: string; mail: { sent: boolean; message: string } }
+  | { error: string };
 
 export async function adminCreateUserAction(input: {
   fullName: string;
@@ -56,9 +63,10 @@ export async function adminCreateUserAction(input: {
       password: input.password,
       role: input.role,
     });
+    const mail = accessMailMessage(queueMail({ kind: "bienvenida", userId }), email);
     revalidatePath("/admin/users");
     revalidatePath("/admin/settings");
-    return { ok: true, userId };
+    return { ok: true, userId, mail };
   } catch (err) {
     return { error: errorMessage(err, "No se pudo crear el usuario. Intenta de nuevo.") };
   }
@@ -142,6 +150,23 @@ export async function adminResetPasswordAction(
   } catch (err) {
     return { error: errorMessage(err, "No se pudo restablecer la contraseña. Intenta de nuevo.") };
   }
+}
+
+/**
+ * Manda por correo el acceso: bienvenida si nunca ha entrado; si ya entraba,
+ * un enlace de 24 h para elegir contraseña nueva.
+ */
+export async function adminSendAccessMailAction(
+  userId: string
+): Promise<{ ok: true; message: string } | { error: string }> {
+  const actor = await requireAdmin();
+  const target = db.select({ email: users.email }).from(users).where(eq(users.id, userId)).get();
+  if (!target) return { error: "Usuario no encontrado" };
+  const r = queueAccessMail(userId, actor.fullName);
+  const out = accessMailMessage(r, target.email);
+  if (!out.sent) return { error: out.message };
+  audit(actor.id, "send_access_mail", "users", userId, { mode: r?.mode });
+  return { ok: true, message: out.message };
 }
 
 export type AdminSetActiveResult = { ok: true } | { error: string };

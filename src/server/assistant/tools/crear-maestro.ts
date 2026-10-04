@@ -5,6 +5,7 @@ import { users } from "@/server/db/schema";
 import { adminCreateUser, adminSetCanEditBranding } from "@/server/services/admin";
 import { BOM, csvLine } from "@/server/services/csv-core";
 import { generateTempPassword } from "@/server/auth/passwords";
+import { queueMail } from "@/server/mail/outbox";
 import { normalizeStudentEmail, normalizeStudentName, studentDraftProblem } from "@/lib/student-draft";
 import type { AssistantBlock, ProposalRow } from "@/lib/assistant-blocks";
 import { createExport, exportFileName } from "../exports";
@@ -111,6 +112,7 @@ export const crearMaestro: AssistantTool = {
       return { text: `No se creó la cuenta: ${err instanceof Error ? err.message : "falló el alta"}.` };
     }
     if (identidad) adminSetCanEditBranding(ctx.user.id, id, true);
+    const correo = queueMail({ kind: "bienvenida", userId: id });
 
     // La contraseña se genera una vez y no se vuelve a ver: va en una descarga
     // de la conversación, que caduca a las 24 horas
@@ -120,8 +122,10 @@ export const crearMaestro: AssistantTool = {
     const text =
       `${row.cells.nombre} ya tiene cuenta de maestro (${row.cells.correo})` +
       (identidad ? " y puede editar la identidad de la empresa." : ".") +
-      " Sus datos de acceso están en la descarga de aquí abajo: guárdalos, la contraseña no se vuelve a mostrar." +
-      " Dile que la cambie en cuanto entre, desde Ajustes → Contraseña.";
+      (correo?.status === "pendiente"
+        ? " Le llega un correo de bienvenida para crear su contraseña. Por si no lo recibe, la contraseña temporal está en la descarga de aquí abajo: guárdala, no se vuelve a mostrar."
+        : " Sus datos de acceso están en la descarga de aquí abajo: guárdalos, la contraseña no se vuelve a mostrar." +
+          " Dile que la cambie en cuanto entre, desde Ajustes → Contraseña.");
     const blocks: AssistantBlock[] = [
       { type: "download", label: "Descargar los datos de acceso", href: `/api/assistant/export/${exportId}`, detail: "Caduca en 24 horas" },
       { type: "links", links: [{ label: "Ver usuarios", href: "/admin/users", icon: "user" }] },

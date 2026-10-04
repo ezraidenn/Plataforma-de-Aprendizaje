@@ -7,6 +7,7 @@ import { audit } from "@/server/services/audit";
 import { cohortStudentIds, findCohortByName } from "@/server/services/cohorts";
 import { getOwnedCourse, listCourseStudents } from "@/server/services/courses";
 import { notify } from "@/server/services/notifications";
+import { queueMail } from "@/server/mail/outbox";
 import { isStudentVisible } from "@/server/services/student-scope";
 import type { AssistantBlock, ProposalRow } from "@/lib/assistant-blocks";
 import { IDLE_DAYS, courseFilters, sinEntrarCondition, sinEntregarCondition } from "../queries";
@@ -212,6 +213,10 @@ export const avisar: AssistantTool = {
     ),
     alumno_ids: strList("Solo con «ids»: ids de los alumnos, de buscar_alumno (lista vacía en los demás casos)"),
     grupo: str("Solo con «grupo»: nombre del grupo del curso («» en los demás casos)"),
+    por_correo: strEnum(
+      "«si» si el usuario pidió que el aviso también llegue por correo; «no» para solo la campana (lo normal). El alumno puede tener apagados los avisos por correo en sus Ajustes",
+      ["no", "si"]
+    ),
   }),
   roles: ["admin", "teacher"],
   // Escribe a personas y no se puede deshacer: SIEMPRE por tabla de revisión
@@ -261,9 +266,10 @@ export const avisar: AssistantTool = {
     }
 
     const rows = toRows(destinatarios, ctx);
+    const porCorreo = param(params, "por_correo") === "si";
     const proposalId = createProposal("avisar", ctx, ctx.messageId, {
       // La cabecera dice lo que se va a hacer; el título del aviso ya se lee en la vista previa
-      title: `Mandar un aviso a ${rows.length} ${rows.length === 1 ? "alumno" : "alumnos"}`,
+      title: `Mandar un aviso${porCorreo ? " (campana y correo)" : ""} a ${rows.length} ${rows.length === 1 ? "alumno" : "alumnos"}`,
       applyLabel: "Mandar aviso",
       columns: COLUMNS,
       rows,
@@ -272,6 +278,7 @@ export const avisar: AssistantTool = {
         courseTitle: course?.title ?? "",
         titulo,
         mensaje,
+        porCorreo,
       },
     });
 
@@ -280,6 +287,7 @@ export const avisar: AssistantTool = {
     const bloqueadas = rows.length - ok;
     const partes = [`Se creó una propuesta con ${rows.length} destinatario(s): a ${ok} les llegaría el aviso${donde}`];
     if (bloqueadas > 0) partes.push(`${bloqueadas} con aviso (no es tu alumno o ya no existe)`);
+    if (porCorreo) partes.push("también saldrá por correo a quien no lo tenga apagado");
     partes.push("el usuario verá la vista previa y la tabla antes de mandarlo; no se puede deshacer");
     return {
       forModel: `${partes.join("; ")}.`,
@@ -296,6 +304,7 @@ export const avisar: AssistantTool = {
     const titulo = limpiarTitulo(String(payload.titulo ?? ""));
     const mensaje = limpiarMensaje(String(payload.mensaje ?? ""));
     if (!titulo || !mensaje) return { text: "No se mandó el aviso: se perdió el título o el mensaje." };
+    const porCorreo = payload.porCorreo === true;
 
     const courseId = String(payload.courseId ?? "");
     const course = courseId ? getOwnedCourse(courseId, ctx.user) : null;
@@ -327,6 +336,13 @@ export const avisar: AssistantTool = {
             courseId: course?.id ?? null,
             courseTitle: course?.title ?? null,
           });
+          if (porCorreo) {
+            queueMail({
+              kind: "aviso",
+              userId: studentId,
+              payload: { title: titulo, message: mensaje, from: ctx.user.fullName, courseId: course?.id ?? null, courseTitle: course?.title ?? null },
+            });
+          }
         }
       });
       audit(ctx.user.id, "assistant_avisar", "courses", course?.id, {
@@ -334,10 +350,12 @@ export const avisar: AssistantTool = {
         conversationId: ctx.conversationId,
         alumnos: destinos.length,
         titulo,
+        porCorreo,
       });
     }
 
     let text = `El aviso le llegó a ${destinos.length} alumno(s)${course ? ` de ${course.title}` : ""}.`;
+    if (porCorreo && destinos.length > 0) text += " También sale por correo (en unos minutos) a quien no tenga apagados los avisos por correo.";
     if (motivos.length > 0) text += ` ${motivos.length} no lo recibieron: ${[...new Set(motivos)].join("; ")}.`;
     return { text, blocks: [enlaces(course?.id ?? "")] };
   },

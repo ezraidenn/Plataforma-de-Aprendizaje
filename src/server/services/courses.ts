@@ -35,6 +35,7 @@ import {
   getCohort,
   type CohortFilter,
 } from "./cohorts";
+import { queueEnrollmentMail } from "@/server/mail/outbox";
 import { audit } from "./audit";
 import { fileIdsForCourse } from "./storage-layout";
 import { getItems } from "./tree";
@@ -411,9 +412,11 @@ export function enrollStudents(
     for (const studentId of studentIds.filter((id) => valid.has(id))) {
       const current = getCurrentEnrollment(courseId, studentId);
       if (!current) {
+        const enrollmentId = nanoid();
         db.insert(enrollments)
-          .values({ id: nanoid(), courseId, studentId, enrolledBy, cohortId, cycle: 1 })
+          .values({ id: enrollmentId, courseId, studentId, enrolledBy, cohortId, cycle: 1 })
           .run();
+        queueEnrollmentMail(studentId, enrollmentId);
         count++;
       } else if (current.status === "dropped") {
         restoreEnrollmentRow(current.id, { cohortId });

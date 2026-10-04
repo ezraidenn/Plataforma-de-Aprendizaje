@@ -7,6 +7,7 @@ import {
   Copy,
   EllipsisVertical,
   KeyRound,
+  Mail,
   Palette,
   Loader2,
   Trash2,
@@ -61,6 +62,7 @@ import {
   adminDeleteUserAction,
   adminDeleteUserPreviewAction,
   adminResetPasswordAction,
+  adminSendAccessMailAction,
   adminSetActiveAction,
   adminUpdateUserAction,
 } from "@/server/actions/admin-users";
@@ -149,6 +151,14 @@ export function UserActions({
         setRoleOpen(false);
         router.refresh();
       }
+    });
+  }
+
+  function sendAccessMail() {
+    startTransition(async () => {
+      const result = await adminSendAccessMailAction(user.id);
+      if ("error" in result) toast.error(result.error);
+      else toast.success(result.message);
     });
   }
 
@@ -254,6 +264,12 @@ export function UserActions({
             <KeyRound aria-hidden />
             Restablecer contraseña
           </DropdownMenuItem>
+          {user.active && (
+            <DropdownMenuItem onSelect={sendAccessMail}>
+              <Mail aria-hidden />
+              Enviar acceso por correo
+            </DropdownMenuItem>
+          )}
           <DropdownMenuItem
             onSelect={() => {
               setNextRole(user.role);

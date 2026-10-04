@@ -55,10 +55,18 @@
    # APP_URL=http://192.168.1.50:3000
    # Carpeta de respaldos (ideal: otro disco o carpeta de red)
    BACKUP_DIR=D:\respaldos-plataforma
+   # Correo: servicio de correo de la red del club (orquestador). La clave es
+   # secreta: solo vive aquí, nunca en el repositorio ni en el navegador.
+   # Sin estas dos variables la plataforma funciona igual, pero no manda correos.
+   CORREO_API_URL=http://10.0.0.10:8025
+   CORREO_API_KEY=<clave-del-servicio-de-correo>
    ```
    > ⚠️ `APP_SECRET` distinto al de desarrollo y **nunca** se cambia después
    > (invalidaría la verificación de certificados ya emitidos).
    > La dirección detectada se ve en **Administración → Configuración → Dirección en la red**.
+   > Es también la que llevan los enlaces de los correos: con DHCP, **reserva la IP
+   > del servidor en el router** para que los enlaces enviados sigan sirviendo.
+   > El estado del correo y un botón de prueba están en **Administración → Configuración → Correo**.
 3. En una terminal dentro de `C:\plataforma`:
    ```powershell
    pnpm install
@@ -247,4 +255,6 @@ alguien tocó las carpetas del NAS.
 | El maestro no ve «Importar con IA» (examen o Estudiantes) | No hay clave de OpenAI guardada | Administración → Configuración → Inteligencia artificial: pegar la clave, «Probar conexión» y Guardar |
 | «No hay conexión con OpenAI» al probar o al importar | El servidor no tiene internet o el firewall/proxy bloquea `api.openai.com` | Permitir la salida HTTPS (443) del servidor a `api.openai.com` |
 | La tarjeta de IA dice que la clave ya no se puede leer | Cambió `APP_SECRET` (p. ej. se llevó la base a otro equipo sin su `.env`) | Volver a pegar la clave y Guardar; la clave se cifra con `APP_SECRET` |
+| No llegan los correos | Faltan `CORREO_API_URL`/`CORREO_API_KEY`, el servicio de correo no responde o la dirección es de prueba (`@*.local`) | Administración → Configuración → Correo: ver el estado de cada correo (pasa el puntero sobre «Falló» o «No se envió» para leer el motivo) y «Enviarme un correo de prueba» |
+| Los enlaces de los correos no abren | Cambió la IP del servidor después de enviarlos | Reservar la IP del servidor en el router (DHCP) o fijar `APP_URL`; reenviar con «Enviar acceso por correo» |
 | La foto de iPhone no se acepta al importar con IA | Está en HEIC (formato de Apple que OpenAI no lee) | En el iPhone: Ajustes → Cámara → Formatos → «Más compatible», o guardarla como JPG antes de subirla |

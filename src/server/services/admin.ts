@@ -24,6 +24,7 @@ import {
 import { hashPassword } from "@/server/auth/passwords";
 import { enqueueJob } from "@/server/jobs/queue";
 import { storageRoot } from "./storage";
+import { queueMail } from "@/server/mail/outbox";
 import { audit } from "./audit";
 
 export type Role = "admin" | "teacher" | "student";
@@ -116,6 +117,10 @@ export function adminUpdateUser(
   if (taken) throw new Error("Ya existe un usuario con ese correo");
 
   db.update(users).set({ fullName, email, updatedAt: new Date() }).where(eq(users.id, userId)).run();
+  if (email !== target.email) {
+    // Aviso de seguridad al correo anterior
+    queueMail({ kind: "cambio_cuenta", userId, to: target.email, payload: { what: "email", at: Date.now(), account: target.email, newEmail: email } });
+  }
   audit(actorId, "update_user", "users", userId, {
     ...(fullName !== target.fullName && { fullName: { from: target.fullName, to: fullName } }),
     ...(email !== target.email && { email: { from: target.email, to: email } }),

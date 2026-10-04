@@ -22,7 +22,7 @@ export const ADMIN_GUIDE: RoleGuide = {
         },
         {
           title: "Menú de acciones por usuario",
-          text: "El menú ⋯ de cada fila permite: editar datos (nombre y correo con el que inicia sesión), restablecer contraseña (una temporal o la que escribas), cambiar rol, activar/desactivar y —en maestros— conceder «Puede editar identidad».",
+          text: "El menú ⋯ de cada fila permite: editar datos (nombre y correo con el que inicia sesión), restablecer contraseña (una temporal o la que escribas), enviar el acceso por correo (bienvenida si nunca ha entrado; si ya entraba, un enlace de 24 horas para elegir contraseña nueva), cambiar rol, activar/desactivar y —en maestros— conceder «Puede editar identidad».",
           ui: ["Editar datos", "Restablecer contraseña", "Cambiar rol", "Desactivar"],
         },
         {
@@ -147,6 +147,14 @@ export const ADMIN_GUIDE: RoleGuide = {
           hrefLabel: "Configuración",
           ui: ["Probar conexión", "Guardar", "Quitar clave"],
           tip: "Modelo recomendado: gpt-5.6-terra; gpt-5.6-luna es más económico. Si cambia el APP_SECRET del .env (por ejemplo, al mover la base a otro equipo), vuelve a pegar la clave.",
+        },
+        {
+          title: "Correo",
+          text: "La plataforma manda correos por el servicio de correo del club: bienvenida para crear la contraseña (el enlace no caduca y sirve una vez), restablecer contraseña, avisos de cambios en la cuenta, inscripciones, certificados, certificados por vencer, pendientes del alumno, el resumen diario del maestro y los avisos que un maestro pide mandar también por correo. En «Configuración → Correo» ves si está configurado, cuántos salieron, los últimos correos con su estado y puedes enviarte uno de prueba.",
+          href: "/admin/settings",
+          hrefLabel: "Configuración",
+          ui: ["Enviarme un correo de prueba"],
+          tip: "Los enlaces de los correos llevan la dirección en la red del servidor: reserva su IP en el router para que no cambie. Las cuentas con correo de prueba (@….local) nunca reciben correos.",
         },
       ],
     },

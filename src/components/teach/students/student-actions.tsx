@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Copy, EllipsisVertical, KeyRound, TriangleAlert, UserRoundCheck, UserRoundX } from "lucide-react";
+import { Check, Copy, EllipsisVertical, KeyRound, Mail, TriangleAlert, UserRoundCheck, UserRoundX } from "lucide-react";
 import { toast } from "sonner";
 import { copyToClipboard } from "@/lib/clipboard";
 import { Button } from "@/components/ui/button";
@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   resetStudentPasswordAction,
+  sendStudentAccessMailAction,
   setStudentActiveAction,
 } from "@/server/actions/teacher-students";
 import { SHARED_STUDENT_DEACTIVATE_MSG, SHARED_STUDENT_RESET_MSG } from "@/lib/student-account";
@@ -64,6 +65,14 @@ export function StudentActions({
         return;
       }
       setNewPassword(result.password);
+    });
+  }
+
+  function sendAccessMail() {
+    startTransition(async () => {
+      const result = await sendStudentAccessMailAction(student.id);
+      if ("error" in result) toast.error(result.error);
+      else toast.success(result.message);
     });
   }
 
@@ -125,6 +134,12 @@ export function StudentActions({
             >
               <KeyRound aria-hidden />
               Restablecer contraseña
+            </DropdownMenuItem>
+          )}
+          {canResetPassword && student.active && (
+            <DropdownMenuItem onSelect={sendAccessMail}>
+              <Mail aria-hidden />
+              Enviar acceso por correo
             </DropdownMenuItem>
           )}
           <DropdownMenuSeparator />

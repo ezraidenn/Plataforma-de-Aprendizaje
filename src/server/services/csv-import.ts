@@ -7,6 +7,7 @@ import { findOrCreateCohort } from "./cohorts";
 import { BOM, csvLine } from "./csv-core";
 import { generateTempPassword } from "@/server/auth/passwords";
 import { normalizeStudentEmail, normalizeStudentName } from "@/lib/student-draft";
+import { queueMail } from "@/server/mail/outbox";
 import { audit } from "./audit";
 
 // ─── Parseo y validación ─────────────────────────────────────────────────────
@@ -196,6 +197,8 @@ export async function importStudents(opts: {
   cohortByEmail?: Record<string, string>;
   /** Acción de auditoría (por defecto «import_csv») */
   auditAction?: string;
+  /** Mandar a cada cuenta nueva el correo de bienvenida para crear su contraseña */
+  invite?: boolean;
 }): Promise<ImportResult> {
   const { rows } = validateStudentsCsv(opts.csvText);
 
@@ -237,6 +240,7 @@ export async function importStudents(opts: {
       });
       created++;
       toEnroll.push({ id, email: row.email });
+      if (opts.invite) queueMail({ kind: "bienvenida", userId: id });
       resultLines.push(
         [
           row.fullName,

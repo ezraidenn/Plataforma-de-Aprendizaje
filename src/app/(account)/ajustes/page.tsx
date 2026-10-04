@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
 import { Settings } from "lucide-react";
 import { requireUser } from "@/server/auth/guards";
-import { canEditBranding, getOwnProfile } from "@/server/services/profile";
+import { MAIL_PREFS, canEditBranding, getMailPrefs, getOwnProfile } from "@/server/services/profile";
 import { getBranding } from "@/server/services/branding";
 import { PageHeader } from "@/components/shell/page-header";
 import { ProfileCard } from "@/components/account/profile-card";
 import { PasswordCard } from "@/components/account/password-card";
+import { MailPrefsCard } from "@/components/account/mail-prefs-card";
 import { IdentityCard } from "@/components/account/identity-card";
 import { GuideLinkCard, SessionCard } from "@/components/account/session-cards";
 
@@ -22,6 +23,7 @@ export default async function AjustesPage() {
   };
   const showIdentity = canEditBranding(user);
   const branding = showIdentity ? getBranding() : null;
+  const mailPrefs = getMailPrefs(user.id);
 
   return (
     <div className="space-y-6">
@@ -38,6 +40,8 @@ export default async function AjustesPage() {
       />
 
       <PasswordCard className={`${CARD} anim-d2`} />
+
+      {mailPrefs && <MailPrefsCard prefs={mailPrefs} available={MAIL_PREFS[user.role]} className={`${CARD} anim-d2`} />}
 
       {branding && (
         <IdentityCard

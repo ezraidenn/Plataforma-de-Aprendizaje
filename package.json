@@ -42,6 +42,7 @@
     "smoke:image": "node --conditions=react-server --import tsx scripts/smoke-image-questions.ts",
     "smoke:cloze": "node --conditions=react-server --import tsx scripts/smoke-cloze.ts",
     "smoke:categorize": "node --conditions=react-server --import tsx scripts/smoke-categorize.ts",
+    "smoke:mail": "node --conditions=react-server --import tsx scripts/smoke-mail.ts",
     "certs:backfill": "node --conditions=react-server --import tsx scripts/backfill-certificates.ts",
     "certs:backfill-teacher": "node --conditions=react-server --import tsx scripts/backfill-certificates.ts",
     "help:shots": "node scripts/help-shots.cjs",

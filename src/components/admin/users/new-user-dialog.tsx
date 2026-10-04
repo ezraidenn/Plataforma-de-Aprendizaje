@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Check, Copy, Loader2, Plus, RefreshCw, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
+import { MailSentNote } from "@/components/auth/mail-sent-note";
 import { copyToClipboard } from "@/lib/clipboard";
 import { Button } from "@/components/ui/button";
 import {
@@ -45,9 +46,12 @@ export function NewUserDialog() {
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<Role>("student");
   const [password, setPassword] = useState("");
-  const [created, setCreated] = useState<{ email: string; password: string; role: Role } | null>(
-    null
-  );
+  const [created, setCreated] = useState<{
+    email: string;
+    password: string;
+    role: Role;
+    mail: { sent: boolean; message: string };
+  } | null>(null);
   const [copied, setCopied] = useState(false);
   const [pending, startTransition] = useTransition();
   const [regenerating, startRegenerate] = useTransition();
@@ -85,7 +89,7 @@ export function NewUserDialog() {
         toast.error(result.error);
         return;
       }
-      setCreated({ email: email.trim().toLowerCase(), password, role });
+      setCreated({ email: email.trim().toLowerCase(), password, role, mail: result.mail });
       toast.success("Usuario creado");
       router.refresh();
     });
@@ -133,6 +137,7 @@ export function NewUserDialog() {
                 Si se pierde, tendrás que restablecerla desde el menú del usuario.
               </p>
             </div>
+            <MailSentNote mail={created.mail} />
             <DialogFooter>
               <Button
                 variant="outline"

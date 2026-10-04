@@ -125,6 +125,7 @@ export async function importAiStudentsAction(input: {
       enrollDuplicates: Boolean(input.enrollDuplicates) && enrollCourseId !== null,
       cohortByEmail,
       auditAction: "ai_import_students",
+      invite: true,
     });
     revalidatePath("/teach/students");
     revalidatePath("/teach/dashboard");

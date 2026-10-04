@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { BookPlus, Check, Copy, Loader2, Plus, RefreshCw, TriangleAlert, UserCheck } from "lucide-react";
 import { toast } from "sonner";
+import { MailSentNote } from "@/components/auth/mail-sent-note";
 import { copyToClipboard } from "@/lib/clipboard";
 import { Button } from "@/components/ui/button";
 import {
@@ -32,7 +33,12 @@ export function NewStudentDialog({ urlTrigger = false }: { urlTrigger?: boolean 
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [created, setCreated] = useState<{ email: string; password: string; studentId: string } | null>(null);
+  const [created, setCreated] = useState<{
+    email: string;
+    password: string;
+    studentId: string;
+    mail: { sent: boolean; message: string };
+  } | null>(null);
   // El correo ya es de un alumno del pool: se matricula ese, no se duplica
   const [existing, setExisting] = useState<{ email: string; fullName: string; studentId: string } | null>(null);
   const [copied, setCopied] = useState(false);
@@ -81,7 +87,7 @@ export function NewStudentDialog({ urlTrigger = false }: { urlTrigger?: boolean 
         setExisting({ email: email.trim().toLowerCase(), ...result.existing });
         return;
       }
-      setCreated({ email: email.trim().toLowerCase(), password, studentId: result.studentId });
+      setCreated({ email: email.trim().toLowerCase(), password, studentId: result.studentId, mail: result.mail });
       toast.success("Estudiante creado");
       router.refresh();
     });
@@ -139,6 +145,7 @@ export function NewStudentDialog({ urlTrigger = false }: { urlTrigger?: boolean 
                   Si se pierde, tendrás que restablecerla desde el menú del estudiante.
                 </p>
               </div>
+              <MailSentNote mail={created.mail} />
               <DialogFooter>
                 <Button
                   variant="outline"

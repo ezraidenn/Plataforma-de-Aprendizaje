@@ -164,7 +164,7 @@ export const TEACHER_GUIDE: RoleGuide = {
         },
         {
           title: "Perfil del estudiante y portafolio",
-          text: "Haz clic en un alumno para ver su última conexión, cursos con progreso, certificados (incluso revocados) y acciones: restablecer contraseña, desactivar. «Portafolio ZIP» descarga todos sus certificados para el expediente físico.",
+          text: "Haz clic en un alumno para ver su última conexión, cursos con progreso, certificados (incluso revocados) y acciones: restablecer contraseña, enviar el acceso por correo, desactivar. «Portafolio ZIP» descarga todos sus certificados para el expediente físico.",
           ui: ["Portafolio ZIP", "Restablecer contraseña"],
         },
         {

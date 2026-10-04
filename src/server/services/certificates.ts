@@ -20,6 +20,7 @@ import { audit } from "./audit";
 import { appUrl } from "./app-url";
 import { computeExpiry } from "@/lib/validity";
 import { notify } from "./notifications";
+import { queueMail } from "@/server/mail/outbox";
 
 export type CertificateTemplate = typeof certificateTemplates.$inferSelect;
 export type Certificate = typeof certificates.$inferSelect;
@@ -628,6 +629,7 @@ export async function issueCertificate(enrollmentId: string): Promise<Certificat
     courseId: course.id,
     courseTitle: course.title,
   });
+  queueMail({ kind: "certificado", userId: enrollment.studentId, ref: id, once: true, payload: { certificateId: id } });
 
   // El certificado es el documento que la empresa enseña a una auditoría: su
   // emisión tiene que dejar rastro. La emite el sistema al completarse el

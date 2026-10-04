@@ -30,6 +30,8 @@ import { issueCertificate } from "@/server/services/certificates";
 import { listAttempts, computeFinalScorePercent } from "@/server/services/exam-scoring";
 import { notify } from "@/server/services/notifications";
 import { runResultsAvailable } from "@/server/services/exam-results";
+import { startMailLane } from "@/server/mail/outbox";
+import { runMailSchedule } from "@/server/mail/scheduler";
 
 const execFileAsync = promisify(execFile);
 
@@ -339,6 +341,19 @@ export function startWorker() {
   };
   resultsPass();
   setInterval(resultsPass, 5 * 60_000);
+
+  // Correos: carril de envío propio y revisiones diarias (vencimientos,
+  // pendientes del alumno, resumen del maestro)
+  startMailLane();
+  const mailSchedule = () => {
+    try {
+      runMailSchedule();
+    } catch (err) {
+      console.error("[worker] correos programados:", err);
+    }
+  };
+  setTimeout(mailSchedule, 60_000).unref?.();
+  setInterval(mailSchedule, 10 * 60_000);
 
   let busy = false;
   setInterval(async () => {

@@ -5,6 +5,7 @@ import { db } from "@/server/db";
 import { sessions, users } from "@/server/db/schema";
 import { hashPassword, verifyPassword } from "@/server/auth/passwords";
 import { SESSION_COOKIE } from "@/server/auth/sessions";
+import { queueMail } from "@/server/mail/outbox";
 import { audit } from "./audit";
 
 async function sha256Hex(input: string): Promise<string> {
@@ -62,6 +63,7 @@ export async function changeOwnPassword(opts: {
     db.delete(sessions).where(eq(sessions.userId, opts.userId)).run();
   }
   audit(opts.userId, "change_own_password", "user", opts.userId);
+  queueMail({ kind: "cambio_cuenta", userId: opts.userId, payload: { what: "password", at: Date.now(), account: user.email } });
 }
 
 /** Solo maestro/admin pueden cambiar su nombre (los estudiantes no). */
@@ -102,4 +104,36 @@ export async function updateOwnEmail(opts: {
 
   db.update(users).set({ email, updatedAt: new Date() }).where(eq(users.id, row.id)).run();
   audit(row.id, "update_own_email", "user", row.id, { from: row.email, to: email });
+  // El aviso va al correo ANTERIOR: si no fue la persona, ahí se entera
+  queueMail({ kind: "cambio_cuenta", userId: row.id, to: row.email, payload: { what: "email", at: Date.now(), account: row.email, newEmail: email } });
+}
+
+// ─── Avisos por correo ───────────────────────────────────────────────────────
+
+/** Correos que cada quien puede apagar; los de cuenta y seguridad siempre llegan. */
+export const MAIL_PREFS = {
+  student: ["mailReminders", "mailExpiry", "mailNotices"],
+  teacher: ["mailDigest"],
+  admin: ["mailDigest"],
+} as const;
+export type MailPref = "mailReminders" | "mailExpiry" | "mailNotices" | "mailDigest";
+
+export function getMailPrefs(userId: string): Record<MailPref, boolean> | null {
+  return (
+    db
+      .select({
+        mailReminders: users.mailReminders,
+        mailExpiry: users.mailExpiry,
+        mailNotices: users.mailNotices,
+        mailDigest: users.mailDigest,
+      })
+      .from(users)
+      .where(eq(users.id, userId))
+      .get() ?? null
+  );
+}
+
+export function setMailPref(user: { id: string; role: "admin" | "teacher" | "student" }, pref: MailPref, on: boolean) {
+  if (!(MAIL_PREFS[user.role] as readonly string[]).includes(pref)) throw new Error("Ese aviso no aplica a tu cuenta");
+  db.update(users).set({ [pref]: on, updatedAt: new Date() }).where(eq(users.id, user.id)).run();
 }

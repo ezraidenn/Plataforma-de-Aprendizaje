@@ -39,9 +39,76 @@ export const users = sqliteTable(
     lastLoginAt: integer("last_login_at", { mode: "timestamp_ms" }),
     // Maestros con permiso para editar la identidad de la empresa (logo, portada)
     canEditBranding: integer("can_edit_branding", { mode: "boolean" }).notNull().default(false),
+    // Correos que la persona puede apagar desde Ajustes (los de cuenta, matrícula y
+    // certificado siempre se mandan)
+    mailReminders: integer("mail_reminders", { mode: "boolean" }).notNull().default(true),
+    mailExpiry: integer("mail_expiry", { mode: "boolean" }).notNull().default(true),
+    mailNotices: integer("mail_notices", { mode: "boolean" }).notNull().default(true),
+    mailDigest: integer("mail_digest", { mode: "boolean" }).notNull().default(true),
     ...timestamps,
   },
   (t) => [index("users_role_idx").on(t.role), index("users_active_idx").on(t.active)]
+);
+
+/**
+ * Enlaces de un solo uso que llegan por correo: «invite» (crear la contraseña
+ * la primera vez; no caduca) y «reset» (restablecerla; caduca). Se guarda el
+ * SHA-256 del token, nunca el token: quien lea la base no puede usarlos.
+ */
+export const accountTokens = sqliteTable(
+  "account_tokens",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    purpose: text("purpose", { enum: ["invite", "reset"] }).notNull(),
+    // null = no caduca (invitación)
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }),
+    usedAt: integer("used_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (t) => [index("account_tokens_user_idx").on(t.userId, t.purpose)]
+);
+
+/**
+ * Cada correo que la plataforma manda (o decidió no mandar): sirve para
+ * contestar «¿le llegó?», para no repetir (clase + referencia) y para respetar
+ * los topes por persona. El contenido no se guarda.
+ */
+export const emailLog = sqliteTable(
+  "email_log",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").references(() => users.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    // Para no repetir: curso, certificado, fecha del resumen… (vacío = sin control)
+    ref: text("ref").notNull().default(""),
+    toAddress: text("to_address").notNull(),
+    subject: text("subject").notNull().default(""),
+    status: text("status", { enum: ["pendiente", "enviado", "fallido", "omitido"] })
+      .notNull()
+      .default("pendiente"),
+    // Datos para armar el correo al enviarlo (nunca contraseñas ni tokens)
+    payload: text("payload", { mode: "json" }).notNull().default("{}"),
+    attempts: integer("attempts").notNull().default(0),
+    // Reintento programado (servicio caído o límite de envíos)
+    runAfter: integer("run_after", { mode: "timestamp_ms" }),
+    // Id que devuelve el servicio de correo (para consultar su estado)
+    providerId: text("provider_id"),
+    error: text("error"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+    sentAt: integer("sent_at", { mode: "timestamp_ms" }),
+  },
+  (t) => [
+    index("email_log_user_idx").on(t.userId, t.kind, t.ref),
+    index("email_log_created_idx").on(t.createdAt),
+    index("email_log_status_idx").on(t.status, t.runAfter),
+  ]
 );
 
 export const sessions = sqliteTable(

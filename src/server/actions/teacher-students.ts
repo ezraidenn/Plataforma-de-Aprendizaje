@@ -29,6 +29,9 @@ import {
   purgeDroppedEnrollments,
 } from "@/server/services/courses";
 import { isDeleteConfirmed } from "@/lib/delete-confirm";
+import { accessMailMessage, queueAccessMail, queueMail } from "@/server/mail/outbox";
+import { users } from "@/server/db/schema";
+import { eq } from "drizzle-orm";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -47,7 +50,7 @@ export async function newTempPasswordAction(): Promise<NewTempPasswordResult> {
 }
 
 export type CreateStudentResult =
-  | { ok: true; studentId: string }
+  | { ok: true; studentId: string; mail: { sent: boolean; message: string } }
   /** El correo ya es de un alumno del pool: se abre su ficha para matricularlo */
   | { existing: { studentId: string; fullName: string } }
   | { error: string };
@@ -80,9 +83,10 @@ export async function createStudentAction(input: {
     if (createdBy !== user.id) {
       audit(user.id, "create_student", "users", studentId, { onBehalfOf: createdBy });
     }
+    const mail = accessMailMessage(queueMail({ kind: "bienvenida", userId: studentId }), email);
     revalidatePath("/teach/students");
     revalidatePath("/teach/dashboard");
-    return { ok: true, studentId };
+    return { ok: true, studentId, mail };
   } catch (err) {
     if (err instanceof ExistingStudentError) {
       return { existing: { studentId: err.studentId, fullName: err.fullName } };
@@ -109,6 +113,28 @@ export async function resetStudentPasswordAction(studentId: string): Promise<Res
   } catch {
     return { error: "No se pudo restablecer la contraseña. Intenta de nuevo." };
   }
+}
+
+/**
+ * Manda por correo el acceso del alumno: bienvenida si nunca ha entrado; si ya
+ * entraba, un enlace de 24 h para elegir contraseña nueva. Mismo permiso que
+ * restablecer la contraseña.
+ */
+export async function sendStudentAccessMailAction(
+  studentId: string
+): Promise<{ ok: true; message: string } | { error: string }> {
+  const user = await requireTeacher();
+  const perms = studentAccountPermissions(user, studentId);
+  if (!perms.canResetPassword) {
+    return { error: perms.mine ? SHARED_STUDENT_RESET_MSG : NOT_YOUR_STUDENT_MSG };
+  }
+  const target = db.select({ email: users.email }).from(users).where(eq(users.id, studentId)).get();
+  if (!target) return { error: "Alumno no encontrado" };
+  const r = queueAccessMail(studentId, user.fullName);
+  const out = accessMailMessage(r, target.email);
+  if (!out.sent) return { error: out.message };
+  audit(user.id, "send_access_mail", "users", studentId, { mode: r?.mode });
+  return { ok: true, message: out.message };
 }
 
 export type SetStudentActiveResult = { ok: true } | { error: string };

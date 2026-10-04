@@ -7,6 +7,7 @@ import { certificates, cohorts, courses, enrollments, users } from "@/server/db/
 import { matchesSearch } from "@/server/db/search";
 import { EXPIRING_WINDOW_DAYS } from "@/lib/validity";
 import { latestCycleOnly } from "./enrollment-scope";
+import { queueEnrollmentMail } from "@/server/mail/outbox";
 import { audit } from "./audit";
 import { findOrCreateCohort, getCohort } from "./cohorts";
 
@@ -197,6 +198,7 @@ export function renewCertificates(
           cohortId: newCohortId,
         })
         .run();
+      queueEnrollmentMail(enrollment.studentId, newId);
       db.update(certificates)
         .set({ renewalState: "renewed", renewalAt: now, renewedEnrollmentId: newId })
         .where(eq(certificates.id, cert.id))

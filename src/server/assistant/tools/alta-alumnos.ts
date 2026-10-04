@@ -172,6 +172,7 @@ export const altaAlumnos: AssistantTool = {
       enrollDuplicates: !!course,
       cohortByEmail,
       auditAction: "assistant_alta_alumnos",
+      invite: true,
     });
 
     // Creadas, matriculadas y omitidas por separado: así se ve qué pasó con las
@@ -187,7 +188,7 @@ export const altaAlumnos: AssistantTool = {
     // descarga de la conversación, que caduca a las 24 horas
     if (result.created > 0 && result.resultCsv) {
       const exportId = createExport(ctx.conversationId, exportFileName("altas"), result.resultCsv);
-      text += " Las contraseñas se generaron automáticamente y están en la descarga de aquí abajo: guárdala, no se vuelven a mostrar.";
+      text += " A cada cuenta nueva le llega un correo de bienvenida para crear su contraseña. Por si alguien no lo recibe, las contraseñas temporales están en la descarga de aquí abajo: guárdala, no se vuelven a mostrar.";
       blocks.push({
         type: "download",
         label: "Descargar las contraseñas",

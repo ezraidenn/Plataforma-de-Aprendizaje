@@ -5,7 +5,8 @@ import { VIEW_COOKIE, isDocumentLoad, stripCookie } from "@/lib/view-context";
 // chequeo optimista de presencia de cookie. La validación real de la sesión
 // y del rol la hacen los guards en cada layout/página (server components).
 
-const PUBLIC_PATHS = ["/login", "/verify"];
+// Las de acceso por correo (crear/restablecer contraseña) también: se abren sin sesión
+const PUBLIC_PATHS = ["/login", "/verify", "/crear-contrasena", "/restablecer", "/recuperar"];
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;

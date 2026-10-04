@@ -7,6 +7,8 @@ import {
   changeOwnPassword,
   updateOwnEmail,
   updateOwnName,
+  setMailPref,
+  type MailPref,
 } from "@/server/services/profile";
 import {
   updateBranding,
@@ -15,6 +17,18 @@ import {
 } from "@/server/services/branding";
 
 export type AccountActionResult = { ok: true } | { error: string };
+
+/** Enciende o apaga un aviso por correo opcional de la propia cuenta. */
+export async function setMailPrefAction(pref: MailPref, on: boolean): Promise<AccountActionResult> {
+  const user = await requireUser();
+  try {
+    setMailPref(user, pref, on);
+  } catch (err) {
+    return { error: err instanceof Error && err.message ? err.message : "No se pudo guardar" };
+  }
+  revalidatePath("/ajustes");
+  return { ok: true };
+}
 
 function errorMessage(err: unknown, fallback: string): string {
   return err instanceof Error && err.message ? err.message : fallback;
